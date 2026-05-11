@@ -7,20 +7,22 @@ Small Python CLI for testing a simple RAG pipeline on public BEIR benchmarks wit
 Install the base project and test tools:
 
 ```bash
-uv sync --group dev
+uv sync --frozen --group dev
 ```
 
 Install vector retrieval support when using `--retrievers vector` or `bm25,vector`:
 
 ```bash
-uv sync --extra vector --group dev
+uv sync --frozen --extra vector --group dev
 ```
 
 Install optional RAGAS judge metrics:
 
 ```bash
-uv sync --extra vector --extra ragas --group dev
+uv sync --frozen --extra vector --extra ragas --group dev
 ```
+
+Direct runtime, optional, and test dependencies are pinned exactly in `pyproject.toml`, with `numpy` and `scikit-learn` pinned by Python-version markers to preserve Python 3.10 compatibility. `uv.lock` pins the full transitive environment; use `--frozen` for reproducible installs and runs.
 
 ## Groq Keys
 
