@@ -21,6 +21,7 @@ DEFAULT_GROQ_KEYS_PATH = Path(".secrets/groq_key.env")
 DEFAULT_UPLOAD_REGISTRY_PATH = Path(".secrets/kaggle_notebooks.jsonl")
 DEFAULT_REPO_URL = "https://github.com/sontungkieu/true-chat.git"
 DEFAULT_HOSTNAME = "https://chatpb.ccat.io.vn"
+DEFAULT_PROXY_STARTUP_TIMEOUT_S = 900
 TOKEN_ENV_NAMES = (
     "CLOUDFLARE_TUNNEL_TOKEN",
     "CF_TUNNEL_TOKEN",
@@ -63,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     cloudflare_token = resolve_cloudflare_token(args, repo_root)
+    if args.proxy_startup_timeout_s <= 0:
+        raise SystemExit("--proxy-startup-timeout-s must be positive.")
     expected_commit = args.expected_commit or local_head_commit(repo_root)
     if not args.allow_dirty and has_tracked_changes(repo_root):
         raise SystemExit(
@@ -96,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_commit=expected_commit,
             cloudflare_token=cloudflare_token,
             hostname=args.hostname,
+            proxy_startup_timeout_s=args.proxy_startup_timeout_s,
             groq_key_env_b64=groq_key_env_b64,
         )
         if args.no_push:
@@ -119,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
                 "repo_ref": args.repo_ref,
                 "expected_commit": expected_commit,
                 "hostname": args.hostname,
+                "proxy_startup_timeout_s": args.proxy_startup_timeout_s,
                 "embedded_groq_keys": bool(groq_key_env_b64),
             },
         )
@@ -144,6 +149,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--expected-commit", default=None, help="Commit hash the notebook must see after clone. Defaults to local HEAD.")
     parser.add_argument("--allow-dirty", action="store_true", help="Allow upload even when tracked local files are modified.")
     parser.add_argument("--hostname", default=DEFAULT_HOSTNAME, help="Public Cloudflare hostname to print in the notebook.")
+    parser.add_argument(
+        "--proxy-startup-timeout-s",
+        type=int,
+        default=DEFAULT_PROXY_STARTUP_TIMEOUT_S,
+        help="Seconds the Kaggle notebook waits for rag-bench serve to become healthy.",
+    )
     parser.add_argument("--title", default=None, help="Kaggle notebook title.")
     parser.add_argument("--slug", default=None, help="Kaggle notebook slug. Defaults to a timestamped slug.")
     parser.add_argument("--cloudflare-token", default=None, help="Cloudflare tunnel token. Prefer env/file to avoid shell history.")
@@ -371,6 +382,7 @@ def write_staging_files(
     expected_commit: str,
     cloudflare_token: str,
     hostname: str,
+    proxy_startup_timeout_s: int,
     groq_key_env_b64: str | None,
 ) -> None:
     notebook_name = "true_chat_rag_proxy_kaggle.ipynb"
@@ -382,6 +394,7 @@ def write_staging_files(
                 expected_commit=expected_commit,
                 cloudflare_token=cloudflare_token,
                 hostname=hostname,
+                proxy_startup_timeout_s=proxy_startup_timeout_s,
                 groq_key_env_b64=groq_key_env_b64,
             ),
             ensure_ascii=False,
@@ -417,12 +430,14 @@ def build_notebook(
     expected_commit: str,
     cloudflare_token: str,
     hostname: str,
+    proxy_startup_timeout_s: int = DEFAULT_PROXY_STARTUP_TIMEOUT_S,
     groq_key_env_b64: str | None = None,
 ) -> dict[str, Any]:
     cells = [
         markdown_cell(
             "# True Chat RAG Proxy on Kaggle\n\n"
-            "This notebook clones the repo, starts the FastAPI RAG proxy, and connects it to a Cloudflare named tunnel."
+            "This notebook clones the repo, starts the FastAPI RAG proxy, and connects it to a Cloudflare named tunnel.",
+            cell_id="intro",
         ),
         code_cell(
             "from pathlib import Path\n"
@@ -431,11 +446,14 @@ def build_notebook(
             f"REPO_REF = {repo_ref!r}\n"
             f"EXPECTED_COMMIT = {expected_commit!r}\n"
             f"PUBLIC_HOSTNAME = {hostname!r}\n"
+            f"PROXY_STARTUP_TIMEOUT_S = {proxy_startup_timeout_s!r}\n"
             "WORKDIR = Path('/kaggle/working')\n"
             "REPO_DIR = WORKDIR / 'true-chat'\n"
             "print('Repo:', REPO_URL, 'ref:', REPO_REF)\n"
             "print('Expected commit:', EXPECTED_COMMIT)\n"
             "print('Public URL:', PUBLIC_HOSTNAME)\n"
+            "print('Proxy startup timeout:', PROXY_STARTUP_TIMEOUT_S, 'seconds')\n",
+            cell_id="config",
         ),
         code_cell(
             "subprocess.run(['python', '-m', 'pip', 'install', '-q', 'uv'], check=True)\n"
@@ -447,7 +465,13 @@ def build_notebook(
             "print('Cloned to', REPO_DIR)\n"
             "print('Actual commit:', actual_commit)\n"
             "if actual_commit != EXPECTED_COMMIT:\n"
-            "    raise RuntimeError(f'Commit mismatch: expected {EXPECTED_COMMIT}, got {actual_commit}. Push local commit before running this notebook.')\n"
+            "    raise RuntimeError(f'Commit mismatch: expected {EXPECTED_COMMIT}, got {actual_commit}. Push local commit before running this notebook.')\n",
+            cell_id="clone-repo",
+        ),
+        code_cell(
+            "subprocess.run(['uv', 'sync', '--frozen', '--no-dev'], cwd=REPO_DIR, check=True)\n"
+            "print('uv environment synced')\n",
+            cell_id="sync-deps",
         ),
     ]
     if groq_key_env_b64:
@@ -458,7 +482,8 @@ def build_notebook(
                 "secrets_dir.mkdir(exist_ok=True)\n"
                 f"GROQ_KEY_ENV_B64 = {groq_key_env_b64!r}\n"
                 "(secrets_dir / 'groq_key.env').write_text(base64.b64decode(GROQ_KEY_ENV_B64).decode('utf-8'))\n"
-                "print('Wrote .secrets/groq_key.env from embedded notebook payload')\n"
+                "print('Wrote .secrets/groq_key.env from embedded notebook payload')\n",
+                cell_id="write-embedded-groq-keys",
             )
         )
     else:
@@ -483,7 +508,8 @@ def build_notebook(
                 "    (secrets_dir / 'groq_key.env').write_text(groq_env.strip() + '\\n')\n"
                 "    print('Wrote .secrets/groq_key.env from Kaggle secrets')\n"
                 "except Exception as exc:\n"
-                "    raise RuntimeError('Add Kaggle secret GROQ_KEY_ENV with alias=value lines, or GROQ_API_KEY for one key.') from exc\n"
+                "    raise RuntimeError('Add Kaggle secret GROQ_KEY_ENV with alias=value lines, or GROQ_API_KEY for one key.') from exc\n",
+                cell_id="write-kaggle-groq-keys",
             )
         )
     cells.extend(
@@ -494,32 +520,59 @@ def build_notebook(
                 "    url = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64'\n"
                 "    urllib.request.urlretrieve(url, cloudflared)\n"
                 "    cloudflared.chmod(0o755)\n"
-                "print('cloudflared ready:', cloudflared)\n"
+                "print('cloudflared ready:', cloudflared)\n",
+                cell_id="download-cloudflared",
             ),
             code_cell(
                 f"CLOUDFLARE_TUNNEL_TOKEN = {cloudflare_token!r}\n"
                 "assert CLOUDFLARE_TUNNEL_TOKEN and CLOUDFLARE_TUNNEL_TOKEN != 'REPLACE_ME'\n"
+                "proxy_log_path = WORKDIR / 'rag-proxy.log'\n"
+                "def print_proxy_log_tail(lines=120):\n"
+                "    if not proxy_log_path.exists():\n"
+                "        print('Proxy log does not exist yet:', proxy_log_path)\n"
+                "        return\n"
+                "    text = proxy_log_path.read_text(errors='replace')\n"
+                "    tail = '\\n'.join(text.splitlines()[-lines:])\n"
+                "    print(f'--- tail {proxy_log_path} ---')\n"
+                "    print(tail or '(empty)')\n"
+                "    print('--- end proxy log tail ---')\n"
                 "proxy_cmd = [\n"
-                "    'uv', 'run', '--frozen', 'rag-bench', 'serve',\n"
+                "    'uv', 'run', '--frozen', '--no-sync', 'rag-bench', 'serve',\n"
                 "    '--host', '0.0.0.0', '--port', '8000',\n"
                 "    '--bench', 'scifact', '--retriever', 'bm25', '--top-k', '3', '--image-top-k', '5',\n"
                 "    '--max-context-chars', '2500', '--max-completion-tokens', '128',\n"
                 "    '--key-tpm', '6000', '--key-rpm', '30', '--rate-limit-scope', 'per-key',\n"
                 "]\n"
-                "proxy_log = open('/kaggle/working/rag-proxy.log', 'w')\n"
-                "proxy = subprocess.Popen(proxy_cmd, cwd=REPO_DIR, stdout=proxy_log, stderr=subprocess.STDOUT, text=True)\n"
-                "for _ in range(90):\n"
+                "proxy_env = {**os.environ, 'PYTHONUNBUFFERED': '1'}\n"
+                "proxy_log = open(proxy_log_path, 'w', buffering=1)\n"
+                "proxy = subprocess.Popen(proxy_cmd, cwd=REPO_DIR, env=proxy_env, stdout=proxy_log, stderr=subprocess.STDOUT, text=True)\n"
+                "deadline = time.time() + PROXY_STARTUP_TIMEOUT_S\n"
+                "last_report = 0.0\n"
+                "while time.time() < deadline:\n"
+                "    exit_code = proxy.poll()\n"
+                "    if exit_code is not None:\n"
+                "        proxy_log.close()\n"
+                "        print_proxy_log_tail(200)\n"
+                "        raise RuntimeError(f'RAG proxy exited before becoming healthy with code {exit_code}')\n"
                 "    try:\n"
                 "        urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()\n"
                 "        break\n"
-                "    except Exception:\n"
+                "    except Exception as exc:\n"
+                "        now = time.time()\n"
+                "        if now - last_report >= 30:\n"
+                "            print(f'Waiting for RAG proxy health check: {int(deadline - now)}s left; last error: {type(exc).__name__}: {exc}')\n"
+                "            print_proxy_log_tail(40)\n"
+                "            last_report = now\n"
                 "        time.sleep(2)\n"
                 "else:\n"
                 "    proxy.terminate()\n"
-                "    raise RuntimeError('RAG proxy did not become healthy. Check /kaggle/working/rag-proxy.log')\n"
+                "    proxy_log.close()\n"
+                "    print_proxy_log_tail(200)\n"
+                "    raise RuntimeError(f'RAG proxy did not become healthy within {PROXY_STARTUP_TIMEOUT_S}s')\n"
                 "print('RAG proxy healthy at http://127.0.0.1:8000')\n"
                 "print('Starting Cloudflare tunnel. Open:', PUBLIC_HOSTNAME)\n"
-                "subprocess.run([str(cloudflared), 'tunnel', '--no-autoupdate', 'run', '--token', CLOUDFLARE_TUNNEL_TOKEN], check=True)\n"
+                "subprocess.run([str(cloudflared), 'tunnel', '--no-autoupdate', 'run', '--token', CLOUDFLARE_TUNNEL_TOKEN], check=True)\n",
+                cell_id="serve-and-tunnel",
             ),
         ]
     )
@@ -534,13 +587,14 @@ def build_notebook(
     }
 
 
-def markdown_cell(source: str) -> dict[str, Any]:
-    return {"cell_type": "markdown", "metadata": {}, "source": source.splitlines(keepends=True)}
+def markdown_cell(source: str, *, cell_id: str) -> dict[str, Any]:
+    return {"cell_type": "markdown", "id": cell_id, "metadata": {}, "source": source.splitlines(keepends=True)}
 
 
-def code_cell(source: str) -> dict[str, Any]:
+def code_cell(source: str, *, cell_id: str) -> dict[str, Any]:
     return {
         "cell_type": "code",
+        "id": cell_id,
         "execution_count": None,
         "metadata": {},
         "outputs": [],

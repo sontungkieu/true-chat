@@ -175,6 +175,8 @@ The script also accepts `--cloudflare-token-file` or token values in `.secrets/.
 
 The Kaggle notebook expects a Kaggle secret named `GROQ_KEY_ENV` containing `.secrets/groq_key.env` style `alias=value` lines, or a single `GROQ_API_KEY` secret. If the local working tree has tracked changes, the upload script fails by default so the expected commit really represents the code Kaggle will clone; commit and push first, or use `--allow-dirty` only for a deliberate mismatch test.
 
+On Kaggle, the generated notebook now runs `uv sync --frozen --no-dev` before starting the proxy, then launches `rag-bench serve` with `uv run --frozen --no-sync`. It waits up to `900` seconds for `/health` by default, prints periodic health-check progress, and includes a tail of `/kaggle/working/rag-proxy.log` if the proxy exits or times out. Override the wait with `--proxy-startup-timeout-s` if Kaggle dependency sync or BEIR startup is slower.
+
 For a private throwaway notebook, the script can embed local Groq keys directly into a generated cell instead of using Kaggle Secrets:
 
 ```bash

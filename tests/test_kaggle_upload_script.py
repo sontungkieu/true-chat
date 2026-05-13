@@ -46,8 +46,13 @@ def test_build_notebook_checks_expected_commit_and_injects_tunnel_token() -> Non
     assert "EXPECTED_COMMIT = 'abc123'" in source
     assert "actual_commit != EXPECTED_COMMIT" in source
     assert "CLOUDFLARE_TUNNEL_TOKEN = 'cf-token'" in source
+    assert "PROXY_STARTUP_TIMEOUT_S = 900" in source
+    assert "uv', 'sync', '--frozen', '--no-dev'" in source
+    assert "uv', 'run', '--frozen', '--no-sync'" in source
+    assert "print_proxy_log_tail" in source
     assert "LOCAL_PATCH" not in source
     assert "UserSecretsClient" in source
+    assert all(cell.get("id") for cell in notebook["cells"])
 
 
 def test_build_notebook_can_embed_groq_key_env_payload() -> None:
@@ -78,6 +83,7 @@ def test_write_staging_files_creates_private_kernel_metadata(tmp_path: Path) -> 
         expected_commit="abc123",
         cloudflare_token="cf-token",
         hostname="https://chat.example.com",
+        proxy_startup_timeout_s=900,
         groq_key_env_b64=None,
     )
 

@@ -247,7 +247,9 @@ Status: implemented in the current working tree; pending final commit.
    - Use the `codemaivanngu` account entry from `.secrets/all-kaggle.json` by default.
    - Inject a Cloudflare named tunnel token into the generated notebook immediately before upload without printing it.
    - Inject the local `HEAD` commit as `EXPECTED_COMMIT`; the Kaggle notebook fails if the cloned repo commit differs.
-   - Keep the notebook simple: clone repo, verify commit, load Groq keys from Kaggle secrets, start `rag-bench serve`, then run `cloudflared tunnel run`.
+   - Keep the notebook simple: clone repo, verify commit, pre-sync `uv` dependencies, load Groq keys from Kaggle secrets, start `rag-bench serve`, then run `cloudflared tunnel run`.
+   - Give the proxy a longer Kaggle startup window, print periodic health-check progress, and dump the proxy log tail when startup fails.
+   - Add notebook cell ids to avoid Kaggle/nbformat missing-id warnings.
    - Add optional `--embed-groq-keys` to write `.secrets/groq_key.env` into a generated notebook cell for private throwaway kernels.
    - Record successful uploads in `.secrets/kaggle_notebooks.jsonl` and add list/delete commands for API-key cleanup.
 
@@ -272,6 +274,7 @@ Status: implemented in the current working tree; pending final commit.
 - Reproduce RAGAS judge run with `bash scripts/run_ragas_benchmarks.sh`; increase `LIMIT` and `RAGAS_LIMIT` only when time/quota allow.
 - Render/upload Kaggle notebook with `scripts/upload_kaggle_rag_proxy_notebook.py --account codemaivanngu --credentials .secrets/all-kaggle.json`.
 - Confirm `--embed-groq-keys`, `--list-uploads`, and delete registry commands work without printing secret values.
+- Confirm Kaggle startup logs show `uv environment synced`; if `/health` still times out, read the emitted `/kaggle/working/rag-proxy.log` tail.
 
 ## Benchmark Snapshot
 
