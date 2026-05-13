@@ -583,11 +583,6 @@
       display: grid;
     }
 
-    .model-selector-wrap {
-      position: relative;
-      min-width: 0;
-    }
-
     .model-selector {
       display: inline-flex;
       align-items: center;
@@ -599,22 +594,13 @@
       color: var(--text);
       font-size: 16px;
       font-weight: 620;
-      transition: background 0.13s ease;
-    }
-
-    .model-selector:hover {
-      background: var(--surface-soft);
+      cursor: default;
     }
 
     .model-name {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    .model-caret {
-      color: var(--muted);
-      font-size: 12px;
     }
 
     .model-menu {
@@ -1899,14 +1885,8 @@
           <button class="icon-btn mobile-menu" id="openSidebar" type="button" title="Open sidebar" aria-label="Open sidebar">
             <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg>
           </button>
-          <div class="model-selector-wrap">
-            <button class="model-selector" id="modelSelector" type="button" title="__MODEL_LABEL__" aria-haspopup="menu" aria-expanded="false">
-              <span class="model-name" id="activeTitle">__MODEL_LABEL__</span>
-              <span class="model-caret" aria-hidden="true">
-                <svg class="svg-icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg>
-              </span>
-            </button>
-            <div class="model-menu" id="modelMenu" role="menu" hidden></div>
+          <div class="model-selector" title="__MODEL_LABEL__">
+            <span class="model-name" id="activeTitle">__MODEL_LABEL__</span>
           </div>
         </div>
         <div class="topbar-right">
@@ -1997,8 +1977,6 @@
     const conversationList = document.getElementById("conversationList");
     const brandModel = document.getElementById("brandModel");
     const activeTitle = document.getElementById("activeTitle");
-    const modelSelector = document.getElementById("modelSelector");
-    const modelMenu = document.getElementById("modelMenu");
     const composer = document.getElementById("composer");
     const promptInput = document.getElementById("prompt");
     const sendButton = document.getElementById("send");
@@ -2178,13 +2156,11 @@
       if (event.target === imageLightbox) closeImageLightbox();
     });
     document.getElementById("cancelEdit").addEventListener("click", cancelEditMode);
-    modelSelector.addEventListener("click", toggleModelMenu);
     responseModeButton.addEventListener("click", (event) => toggleComposerToolMenu("mode", event));
     imageRewriteButton.addEventListener("click", toggleImageRewrite);
     searchToolButton.addEventListener("click", (event) => toggleComposerToolMenu("search", event));
     modelToolButton.addEventListener("click", (event) => toggleComposerToolMenu("model", event));
     document.addEventListener("click", (event) => {
-      if (!event.target.closest(".model-selector-wrap")) closeModelMenu();
       if (!event.target.closest("#composerToolMenu") && !event.target.closest(".menu-chip")) {
         closeComposerToolMenu();
       }
@@ -2192,7 +2168,6 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeImageLightbox();
-        closeModelMenu();
         closeComposerToolMenu();
       }
     });
@@ -2396,54 +2371,10 @@
         option.title = model;
         modelChoiceInput.appendChild(option);
       }
-      renderModelMenu();
-    }
-
-    function renderModelMenu() {
-      modelMenu.textContent = "";
-      const selected = selectedModel();
-      for (const model of MODEL_CHOICES) {
-        const option = document.createElement("button");
-        option.type = "button";
-        option.className = "model-option" + (model === selected ? " active" : "");
-        option.setAttribute("role", "menuitemradio");
-        option.setAttribute("aria-checked", model === selected ? "true" : "false");
-        option.title = model;
-
-        const label = document.createElement("span");
-        label.textContent = modelLabel(model);
-        const check = document.createElement("span");
-        check.className = "model-check";
-        check.textContent = model === selected ? "✓" : "";
-        option.append(label, check);
-
-        option.addEventListener("click", () => {
-          settings.model = normalizeModelChoice(model);
-          modelChoiceInput.value = settings.model;
-          saveSettingsFromInputs();
-          closeModelMenu();
-        });
-        modelMenu.appendChild(option);
-      }
-    }
-
-    function toggleModelMenu(event) {
-      event.stopPropagation();
-      closeComposerToolMenu();
-      renderModelMenu();
-      const shouldOpen = modelMenu.hidden;
-      modelMenu.hidden = !shouldOpen;
-      modelSelector.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
-    }
-
-    function closeModelMenu() {
-      modelMenu.hidden = true;
-      modelSelector.setAttribute("aria-expanded", "false");
     }
 
     function toggleComposerToolMenu(kind, event) {
       event.stopPropagation();
-      closeModelMenu();
       if (activeComposerMenu === kind && !composerToolMenu.hidden) {
         closeComposerToolMenu();
         return;
@@ -2585,7 +2516,6 @@
       activeTitle.title = model;
       brandModel.textContent = label;
       brandModel.title = model;
-      modelSelector.title = model;
       app.dataset.model = model;
       app.dataset.retriever = selectedRetriever();
       if (toolModel) toolModel.textContent = shortModelLabel(model);

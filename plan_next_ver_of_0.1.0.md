@@ -213,11 +213,11 @@ Status: implemented in the current working tree; pending final commit.
    - Keep the bottom composer inside the visible viewport, including the phone safe-area inset.
    - Make the mobile document overlay full-screen so chat content does not remain visible behind the panel.
 
-30. Enable the topbar generation model dropdown
+30. Keep the topbar model display minimal
    - Status: done.
-   - Turn the top model label/caret into an actual dropdown menu.
-   - Let users switch between available Groq generation models from the topbar without opening sidebar settings.
-   - Persist the selected model through the existing local settings path.
+   - Show the selected generation model as a static topbar label.
+   - Remove the redundant topbar dropdown and caret to keep the header compact.
+   - Keep model switching in the composer `Model` chip and sidebar settings.
 
 31. Add mobile swipe gesture for opening the chat sidebar
    - Status: done.
@@ -241,6 +241,16 @@ Status: implemented in the current working tree; pending final commit.
    - Keep composer chips and inline citation pills visually stable when the UI font scale is increased.
    - Rename retrieved-context labels to `Citations and related documents` / `Trích dẫn và tài liệu liên quan`.
 
+33. Add Kaggle notebook upload script
+   - Status: done.
+   - Add `scripts/upload_kaggle_rag_proxy_notebook.py` to render and push a private Kaggle notebook.
+   - Use the `codemaivanngu` account entry from `.secrets/all-kaggle.json` by default.
+   - Inject a Cloudflare named tunnel token into the generated notebook immediately before upload without printing it.
+   - Inject the local `HEAD` commit as `EXPECTED_COMMIT`; the Kaggle notebook fails if the cloned repo commit differs.
+   - Keep the notebook simple: clone repo, verify commit, load Groq keys from Kaggle secrets, start `rag-bench serve`, then run `cloudflared tunnel run`.
+   - Add optional `--embed-groq-keys` to write `.secrets/groq_key.env` into a generated notebook cell for private throwaway kernels.
+   - Record successful uploads in `.secrets/kaggle_notebooks.jsonl` and add list/delete commands for API-key cleanup.
+
 ## Verification
 
 - `uv lock --check`
@@ -260,6 +270,8 @@ Status: implemented in the current working tree; pending final commit.
 - Benchmark SciFact retrieval-only across baseline, deterministic, vector, and LLM-query strategies and record the run paths/results.
 - Regenerate benchmark report with `python3 scripts/summarize_benchmarks.py ... --output benchmark_results/retrieval_strategy_bench_2026-05-12.md`.
 - Reproduce RAGAS judge run with `bash scripts/run_ragas_benchmarks.sh`; increase `LIMIT` and `RAGAS_LIMIT` only when time/quota allow.
+- Render/upload Kaggle notebook with `scripts/upload_kaggle_rag_proxy_notebook.py --account codemaivanngu --credentials .secrets/all-kaggle.json`.
+- Confirm `--embed-groq-keys`, `--list-uploads`, and delete registry commands work without printing secret values.
 
 ## Benchmark Snapshot
 

@@ -153,8 +153,8 @@ def test_chat_page() -> None:
     assert "TF-IDF" in response.text
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
-    assert "modelMenu" in response.text
-    assert "toggleModelMenu" in response.text
+    assert "modelSelector" not in response.text
+    assert "toggleModelMenu" not in response.text
     assert "responseModeTool" in response.text
     assert "imageRewriteTool" in response.text
     assert "menu-chip" in response.text
