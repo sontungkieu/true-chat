@@ -250,6 +250,7 @@ Status: implemented in the current working tree; pending final commit.
    - Keep the notebook simple: clone repo, verify commit, pre-sync `uv` dependencies, load Groq keys from Kaggle secrets, start `rag-bench serve`, then run `cloudflared tunnel run`.
    - Give the proxy a longer Kaggle startup window, print periodic health-check progress, and dump the proxy log tail when startup fails.
    - Add notebook cell ids to avoid Kaggle/nbformat missing-id warnings.
+   - Add a SciFact Hugging Face parquet/qrels fallback when the upstream BEIR zip host times out on Kaggle.
    - Add optional `--embed-groq-keys` to write `.secrets/groq_key.env` into a generated notebook cell for private throwaway kernels.
    - Record successful uploads in `.secrets/kaggle_notebooks.jsonl` and add list/delete commands for API-key cleanup.
 
@@ -275,6 +276,7 @@ Status: implemented in the current working tree; pending final commit.
 - Render/upload Kaggle notebook with `scripts/upload_kaggle_rag_proxy_notebook.py --account codemaivanngu --credentials .secrets/all-kaggle.json`.
 - Confirm `--embed-groq-keys`, `--list-uploads`, and delete registry commands work without printing secret values.
 - Confirm Kaggle startup logs show `uv environment synced`; if `/health` still times out, read the emitted `/kaggle/working/rag-proxy.log` tail.
+- Confirm SciFact can load from the Hugging Face fallback when `ir_datasets`/BEIR direct download fails.
 
 ## Benchmark Snapshot
 
