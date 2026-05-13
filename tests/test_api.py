@@ -133,6 +133,10 @@ def test_chat_page() -> None:
     assert "TF-IDF" in response.text
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
+    assert "modelMenu" in response.text
+    assert "toggleModelMenu" in response.text
+    assert "startChatSwipe" in response.text
+    assert "touchstart" in response.text
     assert "__AVAILABLE_RETRIEVERS_JSON__" not in response.text
     assert "__DEFAULT_RETRIEVER_JSON__" not in response.text
     assert "__AVAILABLE_MODELS_JSON__" not in response.text
@@ -156,6 +160,9 @@ def test_chat_page() -> None:
     assert "fetchAssistantJson" in response.text
     assert "Model returned an empty answer" in response.text
     assert 'data-app="rag-chat"' in response.text
+    assert "viewport-fit=cover" in response.text
+    assert "--safe-bottom" in response.text
+    assert "syncViewportHeight" in response.text
     assert 'fetch("/v1/chat/completions"' in response.text
     assert "stream: true" in response.text
     assert 'buffer.split("\\n\\n")' in response.text

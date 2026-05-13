@@ -206,6 +206,25 @@ Status: implemented in the current working tree; pending final commit.
    - Preflight Groq aliases before RAGAS to skip restricted organizations and use local sentence-transformer embeddings instead of requiring OpenAI embeddings.
    - Record RAGAS smoke results for BM25, Hybrid RRF, and Vector Rerank in the benchmark report.
 
+29. Fix mobile viewport fit for the built-in UI
+   - Status: done.
+   - Use `viewport-fit=cover`, dynamic visual viewport height, and safe-area CSS variables.
+   - Keep the mobile topbar/menu button inside the tappable viewport on phones with browser chrome or display cutouts.
+   - Keep the bottom composer inside the visible viewport, including the phone safe-area inset.
+   - Make the mobile document overlay full-screen so chat content does not remain visible behind the panel.
+
+30. Enable the topbar generation model dropdown
+   - Status: done.
+   - Turn the top model label/caret into an actual dropdown menu.
+   - Let users switch between available Groq generation models from the topbar without opening sidebar settings.
+   - Persist the selected model through the existing local settings path.
+
+31. Add mobile swipe gesture for opening the chat sidebar
+   - Status: done.
+   - Detect right-swipe gestures from the chat area on narrow viewports.
+   - Ignore gestures while the sidebar or document overlay is already open.
+   - Require a clear horizontal swipe threshold so normal vertical chat scrolling is not interrupted.
+
 ## Verification
 
 - `uv lock --check`
@@ -217,7 +236,8 @@ Status: implemented in the current working tree; pending final commit.
   - response appears,
   - source doc ids render,
   - no page reload,
-  - mobile width layout remains usable.
+  - mobile width layout remains usable,
+  - phone safe-area layout keeps the menu button visible and the composer inside the screen.
 - Confirm `rag-bench run --retrievers bm25,tfidf,vector` and `rag-bench serve --retriever bm25` still use registry-backed strategy ids.
 - Benchmark SciFact retrieval-only across baseline, deterministic, vector, and LLM-query strategies and record the run paths/results.
 - Regenerate benchmark report with `python3 scripts/summarize_benchmarks.py ... --output benchmark_results/retrieval_strategy_bench_2026-05-12.md`.
