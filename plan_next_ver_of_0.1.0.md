@@ -225,6 +225,22 @@ Status: implemented in the current working tree; pending final commit.
    - Ignore gestures while the sidebar or document overlay is already open.
    - Require a clear horizontal swipe threshold so normal vertical chat scrolling is not interrupted.
 
+32. Add lightweight `/img` retrieval mode and composer controls
+   - Status: done.
+   - Register `image-digits` as an image retrieval strategy backed by the bundled scikit-learn digits dataset.
+   - Route `/img ...` and `/image ...` chat commands to the image retriever without spending a Groq answer-generation call.
+   - Return 5 image results by default and expose a local `Images` setting that sends `image_top_k`/`k_img` for image modes.
+   - Return image metadata and inline SVG data URLs through the existing `rag.retrieved` metadata path.
+   - Support three chat response modes: text only, text plus related images, and images only.
+   - Let text plus related images use a model-written image query after the text answer; let image-only mode optionally rewrite the image query.
+   - Render image thumbnails as a dedicated answer grid with a dark click-to-enlarge lightbox instead of citation chips or retrieved-context rows.
+   - Turn composer chips into controls: response mode, image-query rewrite, direct Search menu, and direct Model menu beside the input.
+   - Add divider plus down-caret affordances to menu-style composer chips so adjustable controls are clear.
+   - Hide the image-query rewrite toggle outside image-capable modes and remove the static SciFact label from the composer.
+   - Align composer dropdown menus with the chip that opened them, clamp them inside the composer, and close them when clicking elsewhere.
+   - Keep composer chips and inline citation pills visually stable when the UI font scale is increased.
+   - Rename retrieved-context labels to `Citations and related documents` / `Trích dẫn và tài liệu liên quan`.
+
 ## Verification
 
 - `uv lock --check`
@@ -239,6 +255,8 @@ Status: implemented in the current working tree; pending final commit.
   - mobile width layout remains usable,
   - phone safe-area layout keeps the menu button visible and the composer inside the screen.
 - Confirm `rag-bench run --retrievers bm25,tfidf,vector` and `rag-bench serve --retriever bm25` still use registry-backed strategy ids.
+- Confirm `/img digit 7` returns image results with thumbnails and no live Groq generation call.
+- Confirm Images-only mode returns a thumbnail grid, click-to-enlarge lightbox works, and Text+images appends related images below the text answer.
 - Benchmark SciFact retrieval-only across baseline, deterministic, vector, and LLM-query strategies and record the run paths/results.
 - Regenerate benchmark report with `python3 scripts/summarize_benchmarks.py ... --output benchmark_results/retrieval_strategy_bench_2026-05-12.md`.
 - Reproduce RAGAS judge run with `bash scripts/run_ragas_benchmarks.sh`; increase `LIMIT` and `RAGAS_LIMIT` only when time/quota allow.

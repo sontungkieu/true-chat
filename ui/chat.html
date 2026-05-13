@@ -668,6 +668,14 @@
       font-size: 13px;
     }
 
+    .composer-tool-menu {
+      top: auto;
+      bottom: var(--composer-menu-bottom, 54px);
+      left: var(--composer-menu-left, 12px);
+      min-width: min(260px, calc(100vw - 52px));
+      max-width: min(360px, calc(100vw - 52px));
+    }
+
     .status-pill {
       display: inline-flex;
       align-items: center;
@@ -803,6 +811,30 @@
       overflow-x: hidden;
       overflow-y: auto;
       padding: 16px 18px;
+    }
+
+    .doc-image-wrap {
+      display: none;
+      margin: 0 0 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface-soft);
+      padding: 14px;
+    }
+
+    .doc-image-wrap.show {
+      display: grid;
+      place-items: center;
+    }
+
+    .doc-image {
+      display: block;
+      width: min(280px, 100%);
+      max-height: 360px;
+      border-radius: 10px;
+      image-rendering: pixelated;
+      background: #ffffff;
+      object-fit: contain;
     }
 
     .doc-content pre {
@@ -1104,17 +1136,18 @@
     .citation-ref {
       display: inline-grid;
       place-items: center;
-      min-width: 22px;
-      height: 22px;
-      margin: 0 2px;
+      min-width: 1.7em;
+      height: 1.7em;
+      margin: 0 0.18em;
       border: 1px solid var(--border);
       border-radius: 999px;
       background: var(--surface-soft);
       color: var(--muted-strong);
-      font-size: 12px;
+      padding: 0 0.45em;
+      font-size: 0.74em;
       font-weight: 650;
       line-height: 1;
-      vertical-align: 0.05em;
+      vertical-align: 0.04em;
       transition: background 0.13s ease, color 0.13s ease, border-color 0.13s ease;
     }
 
@@ -1157,6 +1190,21 @@
       text-align: left;
     }
 
+    .rag-row.has-thumb {
+      grid-template-columns: 44px 42px minmax(0, 1fr);
+      align-items: center;
+    }
+
+    .rag-thumb {
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #ffffff;
+      image-rendering: pixelated;
+      object-fit: contain;
+    }
+
     .rag-row:hover,
     .rag-row.active {
       background: var(--surface);
@@ -1168,19 +1216,99 @@
       white-space: nowrap;
     }
 
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+      max-width: 560px;
+    }
+
+    .image-card {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+      padding: 8px;
+      text-align: left;
+      transition: border-color 0.13s ease, background 0.13s ease, transform 0.13s ease;
+    }
+
+    .image-card:hover {
+      border-color: var(--border-strong);
+      background: var(--surface-soft);
+      transform: translateY(-1px);
+    }
+
+    .image-card img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 10px;
+      background: #ffffff;
+      image-rendering: pixelated;
+      object-fit: contain;
+    }
+
+    .image-caption {
+      overflow: hidden;
+      color: var(--muted-strong);
+      font-size: 12px;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .image-lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      place-items: center;
+      background: rgba(0, 0, 0, 0.82);
+      padding: max(22px, var(--safe-top)) max(18px, var(--safe-right)) max(22px, var(--safe-bottom)) max(18px, var(--safe-left));
+    }
+
+    .image-lightbox.show {
+      display: grid;
+    }
+
+    .image-lightbox img {
+      display: block;
+      width: min(78vmin, 720px);
+      height: min(78vmin, 720px);
+      border-radius: 18px;
+      background: #ffffff;
+      image-rendering: pixelated;
+      object-fit: contain;
+      box-shadow: 0 30px 100px rgba(0, 0, 0, 0.46);
+    }
+
+    .lightbox-close {
+      position: absolute;
+      top: max(14px, var(--safe-top));
+      right: max(14px, var(--safe-right));
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+    }
+
     .composer-wrap {
       background: linear-gradient(to top, var(--page) 78%, rgba(255, 255, 255, 0));
       padding: 10px max(16px, var(--safe-right)) calc(18px + var(--safe-bottom)) max(16px, var(--safe-left));
     }
 
     .composer {
+      position: relative;
       width: min(780px, 100%);
       margin: 0 auto;
       border: 1px solid var(--border);
       border-radius: 28px;
       background: rgba(255, 255, 255, 0.94);
       box-shadow: var(--composer-shadow);
-      overflow: hidden;
+      overflow: visible;
       backdrop-filter: blur(18px);
       transition: border-color 0.13s ease, box-shadow 0.13s ease;
     }
@@ -1247,23 +1375,109 @@
       align-items: center;
       gap: 6px;
       min-width: 0;
-      overflow: hidden;
+      max-width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+    }
+
+    .composer-tools::-webkit-scrollbar {
+      display: none;
     }
 
     .tool-chip {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      min-height: 28px;
+      min-width: 0;
+      max-width: min(210px, 44vw);
+      min-height: 2.35em;
       border: 1px solid var(--border);
       border-radius: 999px;
       color: var(--muted);
       background: var(--surface);
-      padding: 0 9px;
+      padding: 0 0.78em;
       font-size: 12px;
-      line-height: 1;
+      line-height: 1.2;
+      overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      cursor: pointer;
+      transition: background 0.13s ease, border-color 0.13s ease, color 0.13s ease;
+    }
+
+    .tool-chip[hidden] {
+      display: none;
+    }
+
+    .menu-chip {
+      padding-right: 0.52em;
+    }
+
+    .tool-chip:hover,
+    .tool-chip.active {
+      border-color: var(--border-strong);
+      background: var(--surface-soft);
+      color: var(--text);
+    }
+
+    .tool-chip.active {
+      border-color: var(--accent);
+      background: var(--text);
+      color: var(--surface);
+    }
+
+    .tool-chip .svg-icon {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 auto;
+    }
+
+    .tool-chip > span:not(.chip-divider):not(.chip-caret) {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chip-divider {
+      width: 1px;
+      height: 1.15em;
+      margin-left: 2px;
+      background: var(--border-strong);
+      opacity: 0.9;
+      flex: 0 0 auto;
+    }
+
+    .chip-caret {
+      display: grid;
+      place-items: center;
+      width: 1.2em;
+      height: 1.2em;
+      color: var(--muted);
+      flex: 0 0 auto;
+    }
+
+    .tool-chip:hover .chip-caret,
+    .tool-chip.active .chip-caret,
+    .tool-chip[aria-expanded="true"] .chip-caret {
+      color: currentColor;
+    }
+
+    .tool-chip.active .chip-divider,
+    .tool-chip[aria-expanded="true"] .chip-divider {
+      background: currentColor;
+      opacity: 0.34;
+    }
+
+    .tool-chip[aria-expanded="true"] {
+      border-color: var(--border-strong);
+      background: var(--surface-soft);
+      color: var(--text);
+    }
+
+    .tool-chip[aria-expanded="true"] .chip-caret {
+      transform: rotate(180deg);
     }
 
     .send-btn {
@@ -1394,6 +1608,13 @@
         max-width: calc(100vw - 68px);
       }
 
+      .composer-tool-menu {
+        bottom: var(--composer-menu-bottom, 52px);
+        left: var(--composer-menu-left, 10px);
+        min-width: min(260px, calc(100vw - 52px));
+        max-width: calc(100vw - 52px);
+      }
+
       .welcome {
         align-items: start;
         padding-top: 58px;
@@ -1427,9 +1648,11 @@
 
       .composer-tools {
         max-width: calc(100vw - 92px);
+        overflow-x: auto;
+        scrollbar-width: none;
       }
 
-      .tool-chip:nth-child(n + 3) {
+      .composer-tools::-webkit-scrollbar {
         display: none;
       }
 
@@ -1494,7 +1717,6 @@
     .mini-action,
     .meta-line,
     .source-chip,
-    .citation-ref,
     .think-details,
     .think-details summary,
     .think-text,
@@ -1625,6 +1847,10 @@
             <select id="searchChoice"></select>
           </div>
           <div class="field">
+            <label for="imageTopK" data-i18n="imageTopK">Images</label>
+            <input id="imageTopK" type="number" min="1" max="20" step="1" value="5">
+          </div>
+          <div class="field">
             <label for="languageMode" data-i18n="language">Language</label>
             <select id="languageMode">
               <option value="en">English</option>
@@ -1703,14 +1929,31 @@
               </div>
               <textarea class="composer-input" id="prompt" rows="1" autocomplete="off" placeholder="Send a message" autofocus></textarea>
               <div class="composer-bar">
-	                <div class="composer-tools" aria-label="Active RAG settings">
-	                  <span class="tool-chip">RAG</span>
-	                  <span class="tool-chip">SciFact</span>
-	                  <span class="tool-chip" id="toolSearch">BM25</span>
-	                  <span class="tool-chip" id="toolModel">Llama 3.1</span>
-	                </div>
+                <div class="composer-tools" aria-label="Active RAG settings">
+                  <button class="tool-chip menu-chip" id="responseModeTool" type="button" aria-haspopup="menu" aria-expanded="false" title="Response mode">
+                    <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m8 13 2.5-2.5L15 15"></path><circle cx="16" cy="9" r="1"></circle></svg>
+                    <span id="toolMode">Text</span>
+                    <span class="chip-divider" aria-hidden="true"></span>
+                    <span class="chip-caret" aria-hidden="true"><svg class="svg-icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span>
+                  </button>
+                  <button class="tool-chip" id="imageRewriteTool" type="button" aria-pressed="false" title="Rewrite image query">
+                    <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10"></path><path d="M4 12h16"></path><path d="M4 17h8"></path><path d="m17 7 3 3-3 3"></path></svg>
+                    <span data-i18n="rewrite">Rewrite</span>
+                  </button>
+                  <button class="tool-chip menu-chip" id="searchTool" type="button" aria-haspopup="menu" aria-expanded="false">
+                    <span id="toolSearch">BM25</span>
+                    <span class="chip-divider" aria-hidden="true"></span>
+                    <span class="chip-caret" aria-hidden="true"><svg class="svg-icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span>
+                  </button>
+                  <button class="tool-chip menu-chip" id="modelTool" type="button" aria-haspopup="menu" aria-expanded="false">
+                    <span id="toolModel">Llama 3.1</span>
+                    <span class="chip-divider" aria-hidden="true"></span>
+                    <span class="chip-caret" aria-hidden="true"><svg class="svg-icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span>
+                  </button>
+                </div>
                 <button class="send-btn" id="send" type="submit" title="Send" aria-label="Send"></button>
               </div>
+              <div class="model-menu composer-tool-menu" id="composerToolMenu" role="menu" hidden></div>
             </form>
           </section>
         </div>
@@ -1719,17 +1962,27 @@
           <div class="doc-header">
             <div class="doc-heading">
               <strong id="docTitle">Document</strong>
-              <span id="docSubtitle">Retrieved context</span>
+              <span id="docSubtitle">Citations and related documents</span>
             </div>
             <button class="icon-btn" id="closeDoc" type="button" title="Close document" aria-label="Close document">
               <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
             </button>
           </div>
           <div class="doc-meta" id="docMeta"></div>
-          <div class="doc-content"><pre id="docText"></pre></div>
+          <div class="doc-content">
+            <div class="doc-image-wrap" id="docImageWrap"><img class="doc-image" id="docImage" alt=""></div>
+            <pre id="docText"></pre>
+          </div>
         </aside>
       </div>
     </main>
+  </div>
+
+  <div class="image-lightbox" id="imageLightbox" aria-modal="true" role="dialog" aria-label="Image preview">
+    <button class="icon-btn lightbox-close" id="closeLightbox" type="button" title="Close image" aria-label="Close image">
+      <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+    </button>
+    <img id="lightboxImage" alt="">
   </div>
 
   <script>
@@ -1750,11 +2003,18 @@
     const promptInput = document.getElementById("prompt");
     const sendButton = document.getElementById("send");
     const notice = document.getElementById("notice");
+    const responseModeButton = document.getElementById("responseModeTool");
+    const imageRewriteButton = document.getElementById("imageRewriteTool");
+    const searchToolButton = document.getElementById("searchTool");
+    const modelToolButton = document.getElementById("modelTool");
+    const composerToolMenu = document.getElementById("composerToolMenu");
+    const toolMode = document.getElementById("toolMode");
     const toolSearch = document.getElementById("toolSearch");
     const toolModel = document.getElementById("toolModel");
     const apiKeyInput = document.getElementById("apiKey");
     const modelChoiceInput = document.getElementById("modelChoice");
     const searchChoiceInput = document.getElementById("searchChoice");
+    const imageTopKInput = document.getElementById("imageTopK");
     const languageModeInput = document.getElementById("languageMode");
     const devModeInput = document.getElementById("devMode");
     const themeModeInput = document.getElementById("themeMode");
@@ -1765,11 +2025,17 @@
     const docTitle = document.getElementById("docTitle");
     const docSubtitle = document.getElementById("docSubtitle");
     const docMeta = document.getElementById("docMeta");
+    const docImageWrap = document.getElementById("docImageWrap");
+    const docImage = document.getElementById("docImage");
     const docText = document.getElementById("docText");
+    const imageLightbox = document.getElementById("imageLightbox");
+    const lightboxImage = document.getElementById("lightboxImage");
+    const closeLightboxButton = document.getElementById("closeLightbox");
     let activeController = null;
     let selectedSource = null;
     let editingUserIndex = null;
     let chatSwipeStart = null;
+    let activeComposerMenu = null;
     const ICONS = {
       copy: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
       edit: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>',
@@ -1787,6 +2053,7 @@
         proxyApiKey: "Proxy API key",
         model: "Model",
         searchAlgorithm: "Search",
+        imageTopK: "Images",
         language: "Language",
         devMode: "Dev mode",
         theme: "Theme",
@@ -1808,13 +2075,14 @@
         assistant: "Assistant",
         copy: "Copy",
         edit: "Edit",
+        rewrite: "Rewrite",
         rename: "Rename",
         renameChat: "Rename chat",
         renameChatPrompt: "Rename chat",
         deleteChat: "Delete chat",
         retry: "Retry",
         reasoning: "Reasoning",
-        retrievedContext: "Retrieved context",
+        retrievedContext: "Citations and related documents",
         openDocument: "Open document",
         editingQuestion: "Editing question",
         document: "Document",
@@ -1837,6 +2105,7 @@
         proxyApiKey: "Proxy API key",
         model: "Mô hình",
         searchAlgorithm: "Tìm kiếm",
+        imageTopK: "Số ảnh",
         language: "Ngôn ngữ",
         devMode: "Chế độ dev",
         theme: "Giao diện",
@@ -1858,13 +2127,14 @@
         assistant: "Trợ lý",
         copy: "Sao chép",
         edit: "Sửa",
+        rewrite: "Viết lại",
         rename: "Đổi tên",
         renameChat: "Đổi tên đoạn chat",
         renameChatPrompt: "Đổi tên đoạn chat",
         deleteChat: "Xoá đoạn chat",
         retry: "Thử lại",
         reasoning: "Suy luận",
-        retrievedContext: "Ngữ cảnh truy xuất",
+        retrievedContext: "Trích dẫn và tài liệu liên quan",
         openDocument: "Mở tài liệu",
         editingQuestion: "Đang sửa câu hỏi",
         document: "Tài liệu",
@@ -1903,19 +2173,35 @@
     document.getElementById("closeSidebar").addEventListener("click", closeSidebar);
     document.getElementById("sidebarBackdrop").addEventListener("click", closeSidebar);
     document.getElementById("closeDoc").addEventListener("click", closeDocPanel);
+    closeLightboxButton.addEventListener("click", closeImageLightbox);
+    imageLightbox.addEventListener("click", (event) => {
+      if (event.target === imageLightbox) closeImageLightbox();
+    });
     document.getElementById("cancelEdit").addEventListener("click", cancelEditMode);
     modelSelector.addEventListener("click", toggleModelMenu);
+    responseModeButton.addEventListener("click", (event) => toggleComposerToolMenu("mode", event));
+    imageRewriteButton.addEventListener("click", toggleImageRewrite);
+    searchToolButton.addEventListener("click", (event) => toggleComposerToolMenu("search", event));
+    modelToolButton.addEventListener("click", (event) => toggleComposerToolMenu("model", event));
     document.addEventListener("click", (event) => {
       if (!event.target.closest(".model-selector-wrap")) closeModelMenu();
+      if (!event.target.closest("#composerToolMenu") && !event.target.closest(".menu-chip")) {
+        closeComposerToolMenu();
+      }
     });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeModelMenu();
+      if (event.key === "Escape") {
+        closeImageLightbox();
+        closeModelMenu();
+        closeComposerToolMenu();
+      }
     });
 
     for (const input of [
       apiKeyInput,
       modelChoiceInput,
       searchChoiceInput,
+      imageTopKInput,
       languageModeInput,
       devModeInput,
       themeModeInput,
@@ -1945,7 +2231,7 @@
         activeController.abort();
         return;
       }
-      const text = promptInput.value.trim();
+      let text = promptInput.value.trim();
       if (!text) return;
       promptInput.value = "";
       resizePrompt();
@@ -1991,8 +2277,11 @@
           apiKey: String(parsed.apiKey || ""),
           model: String(parsed.model || defaultModelChoice()),
           search: String(parsed.search || parsed.retriever || DEFAULT_RETRIEVER),
+          imageTopK: Number(parsed.imageTopK || 5),
           language: ["en", "vi"].includes(parsed.language) ? parsed.language : "en",
           devMode: Boolean(parsed.devMode),
+          responseMode: normalizeResponseMode(parsed.responseMode || (parsed.imageMode ? "image" : "text")),
+          imageRewrite: Boolean(parsed.imageRewrite),
           theme: ["light", "colorful", "system"].includes(parsed.theme) ? parsed.theme : "light",
           fontScale: Number(parsed.fontScale || 100),
           maxTokens: Number(parsed.maxTokens || 128),
@@ -2003,8 +2292,11 @@
           apiKey: "",
           model: defaultModelChoice(),
           search: DEFAULT_RETRIEVER,
+          imageTopK: 5,
           language: "en",
           devMode: false,
+          responseMode: "text",
+          imageRewrite: false,
           theme: "light",
           fontScale: 100,
           maxTokens: 128,
@@ -2020,10 +2312,14 @@
       document.documentElement.lang = settings.language;
       settings.devMode = Boolean(settings.devMode);
       devModeInput.checked = settings.devMode;
+      settings.responseMode = normalizeResponseMode(settings.responseMode);
+      settings.imageRewrite = Boolean(settings.imageRewrite);
       settings.model = normalizeModelChoice(settings.model);
       modelChoiceInput.value = settings.model;
       settings.search = normalizeSearchChoice(settings.search);
       searchChoiceInput.value = settings.search;
+      settings.imageTopK = clampNumber(settings.imageTopK, 1, 20, 5);
+      imageTopKInput.value = settings.imageTopK;
       settings.theme = ["light", "colorful", "system"].includes(settings.theme) ? settings.theme : "light";
       themeModeInput.value = settings.theme;
       applyTheme(settings.theme);
@@ -2035,6 +2331,7 @@
       temperatureInput.value = Number.isFinite(settings.temperature) ? settings.temperature : 0;
       applyLocalization();
       updateModelLabels();
+      updateComposerTools();
     }
 
     function saveSettingsFromInputs() {
@@ -2044,10 +2341,14 @@
       settings.language = normalizeLanguage(languageModeInput.value);
       document.documentElement.lang = settings.language;
       settings.devMode = Boolean(devModeInput.checked);
+      settings.responseMode = normalizeResponseMode(settings.responseMode);
+      settings.imageRewrite = Boolean(settings.imageRewrite);
       settings.model = normalizeModelChoice(modelChoiceInput.value);
       modelChoiceInput.value = settings.model;
       settings.search = normalizeSearchChoice(searchChoiceInput.value);
       searchChoiceInput.value = settings.search;
+      settings.imageTopK = clampNumber(imageTopKInput.value, 1, 20, 5);
+      imageTopKInput.value = settings.imageTopK;
       settings.theme = ["light", "colorful", "system"].includes(themeModeInput.value) ? themeModeInput.value : "light";
       applyTheme(settings.theme);
       settings.fontScale = clampNumber(fontScaleInput.value, 100, 200, 100);
@@ -2058,6 +2359,7 @@
       temperatureInput.value = settings.temperature;
       applyLocalization();
       updateModelLabels();
+      updateComposerTools();
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
       if (settings.language !== previousLanguage || settings.devMode !== previousDevMode) render();
     }
@@ -2127,6 +2429,7 @@
 
     function toggleModelMenu(event) {
       event.stopPropagation();
+      closeComposerToolMenu();
       renderModelMenu();
       const shouldOpen = modelMenu.hidden;
       modelMenu.hidden = !shouldOpen;
@@ -2138,6 +2441,86 @@
       modelSelector.setAttribute("aria-expanded", "false");
     }
 
+    function toggleComposerToolMenu(kind, event) {
+      event.stopPropagation();
+      closeModelMenu();
+      if (activeComposerMenu === kind && !composerToolMenu.hidden) {
+        closeComposerToolMenu();
+        return;
+      }
+      activeComposerMenu = kind;
+      renderComposerToolMenu(kind);
+      composerToolMenu.style.visibility = "hidden";
+      composerToolMenu.hidden = false;
+      positionComposerToolMenu(event.currentTarget);
+      composerToolMenu.style.visibility = "";
+      responseModeButton.setAttribute("aria-expanded", kind === "mode" ? "true" : "false");
+      searchToolButton.setAttribute("aria-expanded", kind === "search" ? "true" : "false");
+      modelToolButton.setAttribute("aria-expanded", kind === "model" ? "true" : "false");
+    }
+
+    function closeComposerToolMenu() {
+      activeComposerMenu = null;
+      composerToolMenu.hidden = true;
+      responseModeButton.setAttribute("aria-expanded", "false");
+      searchToolButton.setAttribute("aria-expanded", "false");
+      modelToolButton.setAttribute("aria-expanded", "false");
+    }
+
+    function positionComposerToolMenu(trigger) {
+      const composerRect = composer.getBoundingClientRect();
+      const triggerRect = trigger.getBoundingClientRect();
+      const bottom = Math.max(44, composerRect.bottom - triggerRect.top + 7);
+      let left = triggerRect.left - composerRect.left;
+      composerToolMenu.style.setProperty("--composer-menu-bottom", Math.round(bottom) + "px");
+      composerToolMenu.style.setProperty("--composer-menu-left", Math.round(Math.max(8, left)) + "px");
+      const menuRect = composerToolMenu.getBoundingClientRect();
+      const overflowRight = menuRect.right - (composerRect.right - 8);
+      if (overflowRight > 0) {
+        left = Math.max(8, left - overflowRight);
+        composerToolMenu.style.setProperty("--composer-menu-left", Math.round(left) + "px");
+      }
+    }
+
+    function renderComposerToolMenu(kind) {
+      composerToolMenu.textContent = "";
+      const choices = kind === "model"
+        ? MODEL_CHOICES.map((value) => ({ value, label: modelLabel(value), title: value }))
+        : kind === "mode"
+          ? responseModeChoices().map((choice) => ({ ...choice, title: choice.label }))
+          : RETRIEVER_CHOICES.map((value) => ({ value, label: retrieverLabel(value), title: value }));
+      const selected = kind === "model" ? selectedModel() : kind === "mode" ? selectedResponseMode() : selectedRetriever();
+      for (const value of choices) {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "model-option" + (value.value === selected ? " active" : "");
+        option.setAttribute("role", "menuitemradio");
+        option.setAttribute("aria-checked", value.value === selected ? "true" : "false");
+        option.title = value.title;
+        const label = document.createElement("span");
+        label.textContent = value.label;
+        const check = document.createElement("span");
+        check.className = "model-check";
+        check.textContent = value.value === selected ? "✓" : "";
+        option.append(label, check);
+        option.addEventListener("click", () => {
+          if (kind === "model") {
+            settings.model = normalizeModelChoice(value.value);
+            modelChoiceInput.value = settings.model;
+          } else if (kind === "mode") {
+            settings.responseMode = normalizeResponseMode(value.value);
+          } else {
+            settings.search = normalizeSearchChoice(value.value);
+            searchChoiceInput.value = settings.search;
+          }
+          saveSettingsFromInputs();
+          closeComposerToolMenu();
+          promptInput.focus();
+        });
+        composerToolMenu.appendChild(option);
+      }
+    }
+
     function populateSearchChoices() {
       searchChoiceInput.textContent = "";
       for (const retriever of RETRIEVER_CHOICES) {
@@ -2147,6 +2530,7 @@
         option.title = retriever;
         searchChoiceInput.appendChild(option);
       }
+      if (activeComposerMenu === "search") renderComposerToolMenu("search");
     }
 
     function defaultModelChoice() {
@@ -2170,6 +2554,30 @@
       return normalizeSearchChoice(settings.search);
     }
 
+    function responseModeChoices() {
+      return [
+        { value: "text", label: currentLanguage() === "vi" ? "Chỉ text" : "Text only" },
+        { value: "text_image", label: currentLanguage() === "vi" ? "Text + ảnh" : "Text + images" },
+        { value: "image", label: currentLanguage() === "vi" ? "Chỉ ảnh" : "Images only" }
+      ];
+    }
+
+    function normalizeResponseMode(value) {
+      const normalized = String(value || "text").trim().toLowerCase().replace("+", "_").replace("-", "_");
+      if (["image", "images", "img"].includes(normalized)) return "image";
+      if (["text_image", "text_images", "text_and_image", "text_and_images", "mixed"].includes(normalized)) return "text_image";
+      return "text";
+    }
+
+    function selectedResponseMode() {
+      return normalizeResponseMode(settings.responseMode);
+    }
+
+    function responseModeLabel(mode) {
+      const value = normalizeResponseMode(mode);
+      return responseModeChoices().find((choice) => choice.value === value)?.label || "Text only";
+    }
+
     function updateModelLabels() {
       const model = selectedModel();
       const label = modelLabel(model);
@@ -2182,6 +2590,55 @@
       app.dataset.retriever = selectedRetriever();
       if (toolModel) toolModel.textContent = shortModelLabel(model);
       if (toolSearch) toolSearch.textContent = retrieverLabel(selectedRetriever());
+      if (toolMode) toolMode.textContent = responseModeLabel(selectedResponseMode());
+      updateComposerTools();
+    }
+
+    function updateComposerTools() {
+      const mode = selectedResponseMode();
+      const usesImages = mode !== "text";
+      const usesTextRetrieval = mode !== "image";
+      const showsModel = mode !== "image" || settings.imageRewrite;
+      responseModeButton.classList.toggle("active", usesImages);
+      responseModeButton.setAttribute("aria-expanded", activeComposerMenu === "mode" && !composerToolMenu.hidden ? "true" : "false");
+      responseModeButton.title = responseModeLabel(mode);
+      imageRewriteButton.hidden = !usesImages;
+      imageRewriteButton.classList.toggle("active", usesImages && settings.imageRewrite);
+      imageRewriteButton.setAttribute("aria-pressed", usesImages && settings.imageRewrite ? "true" : "false");
+      searchToolButton.hidden = !usesTextRetrieval;
+      modelToolButton.hidden = !showsModel;
+      if (toolMode) toolMode.textContent = responseModeLabel(mode);
+      if (toolSearch) toolSearch.textContent = retrieverLabel(selectedRetriever());
+      if (toolModel) toolModel.textContent = shortModelLabel(selectedModel());
+    }
+
+    function toggleImageRewrite() {
+      settings.imageRewrite = !settings.imageRewrite;
+      updateComposerTools();
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      promptInput.focus();
+    }
+
+    function isImageCommand(text) {
+      return /^\s*\/(img|image)(\s|$)/i.test(text);
+    }
+
+    function requestTopK(apiMessages) {
+      const lastUser = [...apiMessages].reverse().find((message) => message.role === "user");
+      return isImageCommand(String(lastUser?.content || "")) ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined;
+    }
+
+    function requestImageTopK(apiMessages) {
+      const lastUser = [...apiMessages].reverse().find((message) => message.role === "user");
+      const explicitImageCommand = isImageCommand(String(lastUser?.content || ""));
+      return selectedResponseMode() !== "text" || explicitImageCommand ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined;
+    }
+
+    function shouldRewriteImageQuery() {
+      const mode = selectedResponseMode();
+      if (mode === "text_image") return true;
+      if (mode === "image") return Boolean(settings.imageRewrite);
+      return false;
     }
 
     function modelLabel(model) {
@@ -2204,6 +2661,7 @@
       if (retriever === "multi-query") return "Multi-query";
       if (retriever === "llm-query-rewrite") return "LLM rewrite";
       if (retriever === "llm-multi-query") return "LLM multi-query";
+      if (retriever === "image-digits") return "Image digits";
       if (retriever === "hybrid-rrf") return "Hybrid RRF";
       if (retriever === "vector-rerank") return "Vector rerank";
       return retriever;
@@ -2522,12 +2980,18 @@
       const content = document.createElement("div");
       content.className = "content" + (message.pending ? " pending" : "");
       const display = displayMessageContent(message);
+      const sources = message.sources || [];
+      const documentSources = textSources(sources);
+      const images = imageSources(sources);
       bubble.appendChild(head);
       if (message.role === "assistant" && display.thinking.length) {
         bubble.appendChild(renderThinkDetails(display.thinking));
       }
-      renderTextWithCitations(content, display.answer || (message.pending ? "" : display.fallback), message.sources || []);
+      renderTextWithCitations(content, display.answer || (message.pending ? "" : display.fallback), documentSources);
       bubble.appendChild(content);
+      if (message.role === "assistant" && images.length) {
+        bubble.appendChild(renderImageGrid(images));
+      }
       body.appendChild(bubble);
 
       const footer = document.createElement("div");
@@ -2553,8 +3017,8 @@
       footer.appendChild(actions);
       body.appendChild(footer);
 
-      if (message.sources && message.sources.length) {
-        body.appendChild(renderRagDetails(message.sources));
+      if (documentSources.length) {
+        body.appendChild(renderRagDetails(documentSources));
       }
 
       turn.append(avatar, body);
@@ -2660,6 +3124,30 @@
       return button;
     }
 
+    function renderImageGrid(sources) {
+      const grid = document.createElement("div");
+      grid.className = "image-grid";
+      for (const source of sources) {
+        const image = imageSource(source);
+        if (!image) continue;
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "image-card";
+        card.title = source.title || source.doc_id || t("source");
+        const img = document.createElement("img");
+        img.src = image;
+        img.alt = source.title || source.doc_id || t("source");
+        const caption = document.createElement("div");
+        caption.className = "image-caption";
+        const label = source.label !== undefined && source.label !== null ? " · label " + source.label : "";
+        caption.textContent = "#" + (source.rank || "-") + label;
+        card.append(img, caption);
+        card.addEventListener("click", () => openImageLightbox(source));
+        grid.appendChild(card);
+      }
+      return grid;
+    }
+
     function renderSources(sources) {
       const list = document.createElement("div");
       list.className = "source-list";
@@ -2685,16 +3173,26 @@
       for (const source of sources) {
         const row = document.createElement("button");
         row.type = "button";
-        row.className = "rag-row" + (isSelectedSource(source) ? " active" : "");
+        const image = imageSource(source);
+        row.className = "rag-row" + (image ? " has-thumb" : "") + (isSelectedSource(source) ? " active" : "");
         row.title = t("openDocument");
         row.addEventListener("click", () => openDocument(source));
         const rank = document.createElement("div");
         rank.textContent = "#" + (source.rank || "-");
+        if (image) {
+          const thumb = document.createElement("img");
+          thumb.className = "rag-thumb";
+          thumb.src = image;
+          thumb.alt = source.title || source.doc_id || t("source");
+          row.append(rank, thumb);
+        } else {
+          row.appendChild(rank);
+        }
         const title = document.createElement("div");
         title.className = "rag-title";
         const score = typeof source.score === "number" ? " | score " + source.score.toFixed(3) : "";
         title.textContent = (source.title || source.doc_id || t("source")) + score;
-        row.append(rank, title);
+        row.appendChild(title);
         table.appendChild(row);
       }
       details.append(summary, table);
@@ -2715,6 +3213,9 @@
       docSubtitle.textContent = t("retrievedContext");
       docMeta.textContent = "";
       docText.textContent = "";
+      docImageWrap.classList.remove("show");
+      docImage.removeAttribute("src");
+      docImage.alt = "";
       renderChat();
     }
 
@@ -2733,7 +3234,43 @@
         pill.textContent = item;
         docMeta.appendChild(pill);
       }
+      const image = imageSource(source);
+      if (image) {
+        docImage.src = image;
+        docImage.alt = source.title || docId;
+        docImageWrap.classList.add("show");
+      } else {
+        docImageWrap.classList.remove("show");
+        docImage.removeAttribute("src");
+        docImage.alt = "";
+      }
       docText.textContent = source.text || t("noDocumentText");
+    }
+
+    function imageSource(source) {
+      return source?.image_data_url || source?.image_url || source?.metadata?.image_data_url || source?.metadata?.image_url || "";
+    }
+
+    function imageSources(sources) {
+      return (sources || []).filter((source) => imageSource(source));
+    }
+
+    function textSources(sources) {
+      return (sources || []).filter((source) => !imageSource(source));
+    }
+
+    function openImageLightbox(source) {
+      const image = imageSource(source);
+      if (!image) return;
+      lightboxImage.src = image;
+      lightboxImage.alt = source.title || source.doc_id || t("source");
+      imageLightbox.classList.add("show");
+    }
+
+    function closeImageLightbox() {
+      imageLightbox.classList.remove("show");
+      lightboxImage.removeAttribute("src");
+      lightboxImage.alt = "";
     }
 
     function isSelectedSource(source) {
@@ -2880,6 +3417,10 @@
           messages: apiMessages,
           temperature: settings.temperature,
           max_tokens: settings.maxTokens,
+          top_k: requestTopK(apiMessages),
+          image_top_k: requestImageTopK(apiMessages),
+          response_mode: selectedResponseMode(),
+          image_rewrite: shouldRewriteImageQuery(),
           stream: true
         })
       });
@@ -2908,6 +3449,10 @@
           messages: apiMessages,
           temperature: settings.temperature,
           max_tokens: settings.maxTokens,
+          top_k: requestTopK(apiMessages),
+          image_top_k: requestImageTopK(apiMessages),
+          response_mode: selectedResponseMode(),
+          image_rewrite: shouldRewriteImageQuery(),
           stream: false
         })
       });

@@ -6,6 +6,7 @@ from rag_bench.groq_client import GenerationResult
 from rag_bench.retrievers import (
     BM25Retriever,
     HybridRrfRetriever,
+    ImageDigitsRetriever,
     KeywordMatchRetriever,
     LlmMultiQueryRetriever,
     MultiQueryRetriever,
@@ -67,6 +68,18 @@ def test_keyword_match_retriever_returns_exact_keyword_match_first() -> None:
 
     assert result.hits[0].doc_id == "banana-doc"
     assert result.hits[0].rank == 1
+
+
+def test_image_digits_retriever_returns_lightweight_image_metadata() -> None:
+    retriever = ImageDigitsRetriever()
+    retriever.build([])
+
+    result = retriever.search(Query("q1", "digit 7 image"), top_k=3)
+
+    assert result.hits[0].metadata["kind"] == "image"
+    assert result.hits[0].metadata["label"] == 7
+    assert result.hits[0].metadata["image_data_url"].startswith("data:image/svg+xml,")
+    assert result.metadata["dataset"] == "sklearn-digits"
 
 
 def test_multi_query_retriever_returns_relevant_document_first() -> None:

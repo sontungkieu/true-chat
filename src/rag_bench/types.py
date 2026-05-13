@@ -31,6 +31,7 @@ class RetrievalHit:
     rank: int
     title: str = ""
     text: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

@@ -101,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--max-completion-tokens", type=int, default=128)
     serve_parser.add_argument("--temperature", type=float, default=0.0)
     serve_parser.add_argument("--max-context-chars", type=int, default=2500)
+    serve_parser.add_argument("--image-top-k", type=int, default=5, help="Default number of image results for /img.")
     serve_parser.add_argument("--allow-large-bench", action="store_true", help="Allow large benchmarks such as HotpotQA.")
     serve_parser.add_argument("--history-messages", type=int, default=6)
     serve_parser.add_argument(
@@ -210,6 +211,9 @@ def _serve(args: argparse.Namespace) -> int:
     if args.max_context_chars <= 0:
         print("--max-context-chars must be positive.", file=sys.stderr)
         return 2
+    if args.image_top_k <= 0:
+        print("--image-top-k must be positive.", file=sys.stderr)
+        return 2
     if args.history_messages < 0:
         print("--history-messages must be non-negative.", file=sys.stderr)
         return 2
@@ -238,6 +242,7 @@ def _serve(args: argparse.Namespace) -> int:
         max_completion_tokens=args.max_completion_tokens,
         temperature=args.temperature,
         max_context_chars=args.max_context_chars,
+        image_top_k=args.image_top_k,
         allow_large_bench=args.allow_large_bench,
         available_retrievers=available_retrievers or DEFAULT_CHAT_RETRIEVERS,
         key_tokens_per_minute=args.key_tpm,

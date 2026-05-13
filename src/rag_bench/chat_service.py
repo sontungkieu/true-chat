@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -17,7 +18,7 @@ from rag_bench.types import BenchmarkData, Query, RetrievalHit
 
 DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
 DEFAULT_CHAT_MODELS = ("llama-3.1-8b-instant", "qwen/qwen3-32b")
-DEFAULT_CHAT_RETRIEVERS = ("bm25", "tfidf", "keyword-match", "multi-query")
+DEFAULT_CHAT_RETRIEVERS = ("bm25", "tfidf", "keyword-match", "multi-query", "image-digits")
 
 
 class ChatGenerationClient(Protocol):
@@ -55,6 +56,7 @@ class ChatProxyConfig:
     key_requests_per_minute: int = 30
     rate_limit_scope: str = "per-key"
     history_messages: int = 6
+    image_top_k: int = 5
 
 
 @dataclass
@@ -102,12 +104,66 @@ class RagChatService:
         request_retriever: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        top_k: int | None = None,
+        image_top_k: int | None = None,
+        response_mode: str | None = None,
+        image_rewrite: bool | None = None,
     ) -> ChatServiceResult:
         response_model, generation_model = self.resolve_request_model(request_model)
-        retriever = self.resolve_request_retriever(request_retriever)
-
         question = last_user_text(messages)
-        retrieval = retriever.search(Query(query_id="chat", text=question), self.config.top_k)
+        command = parse_chat_command(question)
+        mode = _normalize_response_mode(response_mode)
+        if command and command[0] == "img":
+            mode = "image"
+            question = command[1] or "digit image"
+
+        if mode == "image":
+            image_query, rewrite_metadata = self._image_query(question, generation_model, image_rewrite=image_rewrite)
+            retriever = self.resolve_request_retriever("image-digits")
+            request_image_top_k = _clamp_top_k(image_top_k if image_top_k is not None else top_k, fallback=self.config.image_top_k)
+            retrieval = retriever.search(Query(query_id="chat-img", text=image_query), request_image_top_k)
+            generation = GenerationResult(
+                answer=_format_image_answer(image_query, retrieval.hits),
+                key_alias=None,
+                attempted_aliases=[],
+                latency_s=0.0,
+                retry_count=0,
+                prompt_tokens=0,
+                completion_tokens=0,
+                total_tokens=0,
+                estimated_tokens=0,
+            )
+            retrieval_metadata = {
+                **retrieval.metadata,
+                "command": "/img",
+                "response_mode": "image",
+                "raw_query": last_user_text(messages),
+                "image_query": image_query,
+                "image_top_k": request_image_top_k,
+                **rewrite_metadata,
+            }
+            response = self._build_response(
+                answer=generation.answer,
+                generation=generation,
+                hits=retrieval.hits,
+                retrieval_latency_s=retrieval.latency_s,
+                retrieval_metadata=retrieval_metadata,
+                retriever=retriever,
+                top_k=request_image_top_k,
+                response_model=response_model,
+                generation_model=generation_model,
+            )
+            return ChatServiceResult(
+                response=response,
+                generation=generation,
+                hits=retrieval.hits,
+                retrieval_latency_s=retrieval.latency_s,
+                retrieval_metadata=retrieval_metadata,
+            )
+
+        retriever = self.resolve_request_retriever(request_retriever)
+        request_top_k = _clamp_top_k(top_k, fallback=self.config.top_k)
+        retrieval = retriever.search(Query(query_id="chat", text=question), request_top_k)
         prompt_messages = build_chat_rag_messages(
             messages,
             retrieval.hits,
@@ -123,22 +179,49 @@ class RagChatService:
         if generation.error:
             raise RuntimeError(generation.error)
 
+        combined_hits = list(retrieval.hits)
+        retrieval_metadata = dict(retrieval.metadata)
+        if mode == "text_image":
+            image_query, image_query_metadata = self._image_query(
+                f"Question: {question}\nAnswer: {generation.answer}",
+                generation_model,
+                image_rewrite=True if image_rewrite is None else image_rewrite,
+            )
+            image_retriever = self.resolve_request_retriever("image-digits")
+            request_image_top_k = _clamp_top_k(image_top_k, fallback=self.config.image_top_k)
+            image_retrieval = image_retriever.search(Query(query_id="chat-img", text=image_query), request_image_top_k)
+            combined_hits.extend(image_retrieval.hits)
+            retrieval_metadata.update(
+                {
+                    "response_mode": "text_image",
+                    "image_retriever": image_retriever.name,
+                    "image_retrieval_latency_s": image_retrieval.latency_s,
+                    "image_top_k": request_image_top_k,
+                    "image_query": image_query,
+                    "image_retrieval_metadata": image_retrieval.metadata,
+                    **image_query_metadata,
+                }
+            )
+        else:
+            retrieval_metadata.setdefault("response_mode", "text")
+
         response = self._build_response(
             answer=generation.answer,
             generation=generation,
-            hits=retrieval.hits,
+            hits=combined_hits,
             retrieval_latency_s=retrieval.latency_s,
-            retrieval_metadata=retrieval.metadata,
+            retrieval_metadata=retrieval_metadata,
             retriever=retriever,
+            top_k=request_top_k,
             response_model=response_model,
             generation_model=generation_model,
         )
         return ChatServiceResult(
             response=response,
             generation=generation,
-            hits=retrieval.hits,
+            hits=combined_hits,
             retrieval_latency_s=retrieval.latency_s,
-            retrieval_metadata=retrieval.metadata,
+            retrieval_metadata=retrieval_metadata,
         )
 
     def _build_response(
@@ -150,6 +233,7 @@ class RagChatService:
         retrieval_latency_s: float,
         retrieval_metadata: dict[str, Any] | None = None,
         retriever: Retriever | None = None,
+        top_k: int | None = None,
         response_model: str | None = None,
         generation_model: str | None = None,
     ) -> dict[str, Any]:
@@ -181,7 +265,7 @@ class RagChatService:
                 "dataset_id": self.benchmark.dataset_id,
                 "retriever": retriever.name,
                 "generation_model": generation_model,
-                "top_k": self.config.top_k,
+                "top_k": _clamp_top_k(top_k, fallback=self.config.top_k),
                 "retrieval_latency_s": retrieval_latency_s,
                 "retrieval_metadata": retrieval_metadata or {},
                 "retrieved": [
@@ -191,6 +275,8 @@ class RagChatService:
                         "score": hit.score,
                         "title": hit.title,
                         "text": hit.text,
+                        "metadata": hit.metadata,
+                        **_flatten_hit_metadata(hit.metadata),
                     }
                     for hit in hits
                 ],
@@ -235,6 +321,47 @@ class RagChatService:
         except KeyError as exc:
             allowed = ", ".join(self.available_retriever_ids())
             raise ValueError(f"Unknown retriever '{request_retriever}'. Use one of: {allowed}.") from exc
+
+    def _image_query(self, text: str, generation_model: str, *, image_rewrite: bool | None) -> tuple[str, dict[str, Any]]:
+        query = _strip_command_prefix(text) or "digit image"
+        should_rewrite = bool(image_rewrite)
+        if not should_rewrite:
+            return query, {"image_query_rewrite": False, "image_query_original": query}
+
+        generation = self.llm.generate(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Rewrite the user request as one concise image search query. "
+                        "This demo image index contains handwritten digit images with labels 0-9. "
+                        "Return only the query text, no JSON and no explanation."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ],
+            model=generation_model,
+            temperature=0.0,
+            max_completion_tokens=32,
+        )
+        rewritten = _clean_image_query(generation.answer)
+        if generation.error or not rewritten:
+            return query, {
+                "image_query_rewrite": True,
+                "image_query_original": query,
+                "image_query_error": generation.error,
+                "image_query_fallback": True,
+            }
+        return rewritten, {
+            "image_query_rewrite": True,
+            "image_query_original": query,
+            "image_query_model": generation_model,
+            "image_query_key_alias": generation.key_alias,
+            "image_query_retry_count": generation.retry_count,
+            "image_query_prompt_tokens": generation.prompt_tokens,
+            "image_query_completion_tokens": generation.completion_tokens,
+            "image_query_total_tokens": generation.total_tokens,
+        }
 
 
 def _build_llm(config: ChatProxyConfig, keys: list[ApiKey]) -> RoundRobinGroqClient:
@@ -299,6 +426,12 @@ def _dedupe_normalized_retriever_ids(values: tuple[str, ...]) -> tuple[str, ...]
     return tuple(result)
 
 
+def _clamp_top_k(value: int | None, *, fallback: int) -> int:
+    if value is None:
+        return max(1, fallback)
+    return min(50, max(1, int(value)))
+
+
 def build_chat_rag_messages(
     messages: list[dict[str, Any]],
     hits: list[RetrievalHit],
@@ -331,6 +464,64 @@ def last_user_text(messages: list[dict[str, Any]]) -> str:
     raise ValueError("At least one user message with text content is required.")
 
 
+def parse_chat_command(text: str) -> tuple[str, str] | None:
+    stripped = text.strip()
+    if not stripped.startswith("/"):
+        return None
+    command, _, remainder = stripped.partition(" ")
+    normalized = command.lower()
+    if normalized in {"/img", "/image"}:
+        return "img", remainder.strip()
+    return None
+
+
+def _normalize_response_mode(value: str | None) -> str:
+    if value is None or value == "":
+        return "text"
+    if not isinstance(value, str):
+        raise ValueError("response_mode must be a string")
+    normalized = value.strip().lower().replace("+", "_").replace("-", "_")
+    if normalized in {"text", "rag", "chat"}:
+        return "text"
+    if normalized in {"image", "images", "img"}:
+        return "image"
+    if normalized in {"text_image", "text_images", "text_and_image", "text_and_images", "mixed"}:
+        return "text_image"
+    raise ValueError("response_mode must be one of: text, image, text_image")
+
+
+def _strip_command_prefix(text: str) -> str:
+    command = parse_chat_command(text)
+    if command and command[0] == "img":
+        return command[1].strip()
+    return text.strip()
+
+
+def _clean_image_query(text: str) -> str:
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, str):
+        cleaned = parsed
+    elif isinstance(parsed, list):
+        first = next((item for item in parsed if isinstance(item, str) and item.strip()), "")
+        cleaned = first
+    cleaned = cleaned.strip().strip("\"'")
+    lines = [line.strip("-* \t") for line in cleaned.splitlines() if line.strip()]
+    return (lines[0] if lines else cleaned)[:180].strip()
+
+
 def _format_context(hits: list[RetrievalHit], *, max_context_chars: int) -> str:
     context_blocks: list[str] = []
     used_chars = 0
@@ -347,6 +538,17 @@ def _format_context(hits: list[RetrievalHit], *, max_context_chars: int) -> str:
         context_blocks.append(block)
         used_chars += len(block)
     return "\n\n---\n\n".join(context_blocks) if context_blocks else "No retrieved context."
+
+
+def _format_image_answer(query: str, hits: list[RetrievalHit]) -> str:
+    if not hits:
+        return f"No image results found for '{query}'."
+    return f"Found {len(hits)} image result(s) for '{query}'."
+
+
+def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = {"kind", "image_data_url", "image_url", "label", "dataset", "width", "height"}
+    return {key: value for key, value in metadata.items() if key in allowed_keys}
 
 
 def _format_history(messages: list[dict[str, Any]], *, history_messages: int) -> str:

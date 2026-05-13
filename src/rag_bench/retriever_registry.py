@@ -6,6 +6,7 @@ from typing import Callable, Literal
 from rag_bench.retrievers import (
     BM25Retriever,
     HybridRrfRetriever,
+    ImageDigitsRetriever,
     KeywordMatchRetriever,
     LlmMultiQueryRetriever,
     LlmQueryRewriteRetriever,
@@ -99,6 +100,14 @@ _RETRIEVER_SPECS: tuple[RetrieverSpec, ...] = (
         uses_llm=True,
     ),
     RetrieverSpec(
+        id="image-digits",
+        label="Image Digits",
+        description="Lightweight image search over the bundled scikit-learn handwritten digits sample dataset.",
+        requires_extra=None,
+        factory=lambda _context: ImageDigitsRetriever(),
+        category="image",
+    ),
+    RetrieverSpec(
         id="vector",
         label="Vector",
         description="Dense sentence-transformer embeddings with FAISS cosine/IP search.",
@@ -136,6 +145,9 @@ _ALIASES = {
     "multi-query-bm25": "multi-query",
     "query-rewrite": "llm-query-rewrite",
     "llm-rewrite": "llm-query-rewrite",
+    "img": "image-digits",
+    "image": "image-digits",
+    "digits": "image-digits",
 }
 
 

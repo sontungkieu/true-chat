@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from urllib.parse import quote
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -37,6 +38,18 @@ STOPWORDS = {
     "was",
     "were",
     "with",
+}
+DIGIT_WORDS = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
 }
 
 
@@ -386,6 +399,92 @@ class LlmMultiQueryRetriever:
         )
 
 
+@dataclass
+class ImageDigitsRetriever:
+    name: str = "image-digits"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        from sklearn.datasets import load_digits
+
+        started = time.perf_counter()
+        digits = load_digits()
+        self._items: list[dict[str, Any]] = []
+        for index, (image, label) in enumerate(zip(digits.images, digits.target, strict=False)):
+            label_int = int(label)
+            label_word = _digit_word(label_int)
+            title = f"Handwritten digit {label_int}"
+            text = (
+                f"Handwritten digit image from the scikit-learn digits sample dataset. "
+                f"Label: {label_int} ({label_word}). "
+                f"Keywords: image picture photo digit number handwritten {label_int} {label_word}."
+            )
+            display_text = f"{title}\n{text}"
+            self._items.append(
+                {
+                    "doc_id": f"skdigits-{index:04d}",
+                    "label": label_int,
+                    "title": title,
+                    "text": text,
+                    "tokens": _token_counts(display_text),
+                    "lower_text": display_text.lower(),
+                    "image_data_url": _digit_svg_data_url(image),
+                    "width": int(image.shape[1]),
+                    "height": int(image.shape[0]),
+                    "dataset": "sklearn-digits",
+                }
+            )
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        query_tokens = _content_tokens(query.text)
+        requested_digit = _requested_digit(query_tokens)
+        query_phrase = query.text.strip().lower()
+        scores = np.zeros(len(self._items), dtype=np.float32)
+        for index, item in enumerate(self._items):
+            score = 0.0
+            for token in query_tokens:
+                score += min(int(item["tokens"].get(token, 0)), 4)
+            if requested_digit is not None:
+                score += 100.0 if item["label"] == requested_digit else -1.0
+            if query_phrase and query_phrase in item["lower_text"]:
+                score += 6.0
+            scores[index] = score
+        ranked = _rank_scores(scores, top_k)
+        hits = []
+        for rank, index in enumerate(ranked, 1):
+            item = self._items[index]
+            hits.append(
+                RetrievalHit(
+                    doc_id=item["doc_id"],
+                    score=float(scores[index]),
+                    rank=rank,
+                    title=item["title"],
+                    text=item["text"],
+                    metadata={
+                        "kind": "image",
+                        "image_data_url": item["image_data_url"],
+                        "label": item["label"],
+                        "dataset": item["dataset"],
+                        "width": item["width"],
+                        "height": item["height"],
+                    },
+                )
+            )
+        return RetrievalResult(
+            query=query,
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata={
+                "kind": "image",
+                "dataset": "sklearn-digits",
+                "query": query.text,
+                "requested_label": requested_digit,
+            },
+        )
+
+
 def create_retriever(name: str, *, vector_model: str) -> Retriever:
     from rag_bench.retriever_registry import create_retriever as registry_create_retriever
 
@@ -437,13 +536,14 @@ def _rrf_merge(results: list[RetrievalResult], *, top_k: int, rrf_k: int) -> lis
             hits_by_doc_id.setdefault(hit.doc_id, hit)
     ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank[doc_id], doc_id))
     return [
-        RetrievalHit(
-            doc_id=doc_id,
-            score=scores[doc_id],
-            rank=rank,
-            title=hits_by_doc_id[doc_id].title,
-            text=hits_by_doc_id[doc_id].text,
-        )
+            RetrievalHit(
+                doc_id=doc_id,
+                score=scores[doc_id],
+                rank=rank,
+                title=hits_by_doc_id[doc_id].title,
+                text=hits_by_doc_id[doc_id].text,
+                metadata=hits_by_doc_id[doc_id].metadata,
+            )
         for rank, doc_id in enumerate(ranked[:top_k], 1)
     ]
 
@@ -562,6 +662,43 @@ def _dedupe_nonempty(values: list[str]) -> tuple[str, ...]:
             seen.add(key)
             result.append(normalized)
     return tuple(result)
+
+
+def _requested_digit(tokens: list[str]) -> int | None:
+    for token in tokens:
+        if token.isdigit() and len(token) == 1:
+            value = int(token)
+            if 0 <= value <= 9:
+                return value
+        if token in DIGIT_WORDS:
+            return DIGIT_WORDS[token]
+    return None
+
+
+def _digit_word(value: int) -> str:
+    for word, number in DIGIT_WORDS.items():
+        if number == value:
+            return word
+    return str(value)
+
+
+def _digit_svg_data_url(image: np.ndarray) -> str:
+    max_value = float(np.max(image)) or 1.0
+    rects = ['<rect width="8" height="8" fill="#ffffff"/>']
+    for y, row in enumerate(image):
+        for x, value in enumerate(row):
+            if float(value) <= 0.0:
+                continue
+            shade = 255 - int((float(value) / max_value) * 235)
+            color = f"#{shade:02x}{shade:02x}{shade:02x}"
+            rects.append(f'<rect x="{x}" y="{y}" width="1" height="1" fill="{color}"/>')
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" '
+        'shape-rendering="crispEdges">'
+        + "".join(rects)
+        + "</svg>"
+    )
+    return "data:image/svg+xml," + quote(svg, safe="")
 
 
 def _load_sentence_transformer(model_name: str) -> object:

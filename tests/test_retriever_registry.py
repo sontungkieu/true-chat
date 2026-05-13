@@ -14,7 +14,7 @@ from rag_bench.retriever_registry import (
     list_retrievers,
     normalize_retriever_id,
 )
-from rag_bench.retrievers import BM25Retriever, VectorRetriever
+from rag_bench.retrievers import BM25Retriever, ImageDigitsRetriever, VectorRetriever
 from rag_bench.types import Document
 
 
@@ -33,13 +33,14 @@ def test_registry_lists_working_retrieval_strategies() -> None:
         "multi-query",
         "llm-query-rewrite",
         "llm-multi-query",
+        "image-digits",
         "vector",
         "hybrid-rrf",
         "vector-rerank",
     )
     assert RETRIEVER_CATEGORIES == ("text", "image", "keyword", "dictionary")
     assert [spec.id for spec in specs] == list(list_retriever_ids())
-    assert {spec.category for spec in specs} == {"text", "keyword"}
+    assert {spec.category for spec in specs} == {"text", "keyword", "image"}
     assert get_retriever_spec("vector").requires_extra == "vector"
     assert get_retriever_spec("llm-multi-query").uses_llm is True
 
@@ -48,9 +49,11 @@ def test_registry_normalizes_aliases_and_creates_retrievers() -> None:
     assert normalize_retriever_id(" lexical ") == "bm25"
     assert normalize_retriever_id("Dense") == "vector"
     assert normalize_retriever_id("find") == "keyword-match"
+    assert normalize_retriever_id("img") == "image-digits"
     assert normalize_retriever_id("rerank") == "vector-rerank"
 
     assert isinstance(create_retriever("lexical", vector_model="unused"), BM25Retriever)
+    assert isinstance(create_retriever("img", vector_model="unused"), ImageDigitsRetriever)
     vector = create_retriever("dense", vector_model="fake-model")
 
     assert isinstance(vector, VectorRetriever)

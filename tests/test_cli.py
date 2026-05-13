@@ -76,6 +76,8 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "4",
             "--max-context-chars",
             "2000",
+            "--image-top-k",
+            "7",
             "--max-completion-tokens",
             "96",
             "--key-tpm",
@@ -96,6 +98,7 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.available_retrievers == ("bm25", "keyword-match", "multi-query")
     assert seen["config"].chat.top_k == 4
     assert seen["config"].chat.max_context_chars == 2000
+    assert seen["config"].chat.image_top_k == 7
     assert seen["config"].chat.max_completion_tokens == 96
     assert seen["config"].chat.key_tokens_per_minute == 5000
     assert seen["config"].chat.key_requests_per_minute == 20

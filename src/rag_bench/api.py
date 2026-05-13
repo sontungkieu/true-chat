@@ -80,6 +80,13 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                     payload.get("max_tokens", payload.get("max_completion_tokens")),
                     "max_tokens",
                 ),
+                top_k=_optional_int(payload.get("top_k"), "top_k"),
+                image_top_k=_optional_int(payload.get("image_top_k", payload.get("k_img")), "image_top_k"),
+                response_mode=payload.get("response_mode", payload.get("mode")),
+                image_rewrite=_optional_bool(
+                    payload.get("image_rewrite", payload.get("rewrite_image_query")),
+                    "image_rewrite",
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -131,6 +138,20 @@ def _optional_float(value: Any, name: str) -> float | None:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be a number") from exc
+
+
+def _optional_bool(value: Any, name: str) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    raise ValueError(f"{name} must be a boolean")
 
 
 def _require_bearer(

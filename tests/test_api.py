@@ -26,13 +26,33 @@ class FakeService:
         self.seen_retriever = None
         self.seen_temperature = None
         self.seen_max_tokens = None
+        self.seen_top_k = None
+        self.seen_image_top_k = None
+        self.seen_response_mode = None
+        self.seen_image_rewrite = None
 
-    def answer(self, messages, *, request_model=None, request_retriever=None, temperature=None, max_tokens=None):
+    def answer(
+        self,
+        messages,
+        *,
+        request_model=None,
+        request_retriever=None,
+        temperature=None,
+        max_tokens=None,
+        top_k=None,
+        image_top_k=None,
+        response_mode=None,
+        image_rewrite=None,
+    ):
         self.seen_messages = messages
         self.seen_model = request_model
         self.seen_retriever = request_retriever
         self.seen_temperature = temperature
         self.seen_max_tokens = max_tokens
+        self.seen_top_k = top_k
+        self.seen_image_top_k = image_top_k
+        self.seen_response_mode = response_mode
+        self.seen_image_rewrite = image_rewrite
         response = {
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -135,6 +155,22 @@ def test_chat_page() -> None:
     assert "qwen/qwen3-32b" in response.text
     assert "modelMenu" in response.text
     assert "toggleModelMenu" in response.text
+    assert "responseModeTool" in response.text
+    assert "imageRewriteTool" in response.text
+    assert "menu-chip" in response.text
+    assert "chip-divider" in response.text
+    assert "chip-caret" in response.text
+    assert "positionComposerToolMenu" in response.text
+    assert "--composer-menu-left" in response.text
+    assert '--composer-menu-bottom' in response.text
+    assert 'closest("#composerToolMenu")' in response.text
+    assert "imageTopK" in response.text
+    assert "image_top_k: requestImageTopK" in response.text
+    assert "composerToolMenu" in response.text
+    assert "imageSource" in response.text
+    assert "imageLightbox" in response.text
+    assert "renderImageGrid" in response.text
+    assert "response_mode: selectedResponseMode" in response.text
     assert "startChatSwipe" in response.text
     assert "touchstart" in response.text
     assert "__AVAILABLE_RETRIEVERS_JSON__" not in response.text
@@ -150,6 +186,10 @@ def test_chat_page() -> None:
     assert "splitThinkContent" in response.text
     assert "renderTextWithCitations" in response.text
     assert "citation-ref" in response.text
+    assert "min-width: 1.7em" in response.text
+    assert "font-size: 0.74em" in response.text
+    assert "Citations and related documents" in response.text
+    assert "Trích dẫn và tài liệu liên quan" in response.text
     assert "No final answer returned" in response.text
     assert "fontScale" in response.text
     assert "--font-scale" in response.text
@@ -183,6 +223,10 @@ def test_chat_completion_non_stream() -> None:
             "messages": [{"role": "user", "content": "hi"}],
             "temperature": 0.1,
             "max_tokens": 32,
+            "top_k": 5,
+            "image_top_k": 4,
+            "response_mode": "text_image",
+            "image_rewrite": True,
         },
     )
 
@@ -196,6 +240,10 @@ def test_chat_completion_non_stream() -> None:
     assert service.seen_retriever == "tfidf"
     assert service.seen_temperature == 0.1
     assert service.seen_max_tokens == 32
+    assert service.seen_top_k == 5
+    assert service.seen_image_top_k == 4
+    assert service.seen_response_mode == "text_image"
+    assert service.seen_image_rewrite is True
 
 
 def test_chat_completion_accepts_qwen_model_choice() -> None:
