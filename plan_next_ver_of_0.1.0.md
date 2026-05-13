@@ -1,0 +1,252 @@
+# Plan Next Version Of 0.1.0
+
+## Goal
+
+Make the built-in FastAPI chat UI the primary temporary frontend for the RAG proxy. The UI should be ultra fast, lightweight, responsive, and modern, with an Open WebUI-like chat workflow while keeping all RAG, Groq key scheduling, and benchmark logic inside the existing backend.
+
+Status: implemented in the current working tree; pending final commit.
+
+## Constraints
+
+- No frontend framework, bundler, CDN dependency, or Docker requirement.
+- Keep the UI served from `GET /` by the existing FastAPI app.
+- Keep OpenAI-compatible endpoints unchanged for future Open WebUI compatibility.
+- Do not add heavyweight runtime dependencies.
+- Avoid Open WebUI internal RAG/model downloads; the repo proxy remains the only RAG layer.
+- Keep secrets out of logs and UI state except optional local bearer token stored in browser localStorage.
+
+## Implementation Plan
+
+1. Refactor UI HTML out of `api.py`
+   - Status: done.
+   - Store the UI template in `ui/chat.html` so frontend code stays outside `src/rag_bench/`.
+   - Keep a small `rag_bench.ui_loader` module for template loading and model-id substitution.
+   - Keep `api.py` focused on routes, validation, auth, and streaming.
+   - Keep all assets inline for a single-request page load.
+
+2. Build the modern chat shell
+   - Status: done.
+   - Full-height responsive layout.
+   - Desktop: compact Open WebUI-like left rail for conversations/actions and main chat surface.
+   - Mobile: single-column layout with collapsible rail behavior.
+   - Open WebUI-like visual rhythm: top model selector, centered welcome state, user bubbles, assistant plain-text turns, bottom rounded composer, quiet borders, no decorative weight.
+
+3. Add core chat interactions
+   - Status: done.
+   - New chat.
+   - Local conversation persistence in `localStorage`.
+   - Auto-resizing composer.
+   - Enter to send, Shift+Enter for newline.
+   - Stop in-flight request using `AbortController`.
+   - Retry last user turn.
+   - Copy assistant answer.
+
+4. Use streaming response path
+   - Status: done.
+   - Send `stream: true` to `/v1/chat/completions`.
+   - Parse SSE chunks from `fetch` response body.
+   - Render assistant response incrementally when chunks arrive.
+   - Fall back to non-stream JSON if stream parsing fails.
+
+5. Improve RAG metadata display
+   - Status: done.
+   - Show compact source chips with retrieved doc ids.
+   - Add a lightweight expandable details panel per answer for rank/title/score.
+   - Surface key alias, retry count, and scheduled wait only in a compact metadata line.
+   - Never expose key values.
+
+6. Add settings without clutter
+   - Status: done.
+   - Optional bearer token.
+   - Max tokens.
+   - Temperature.
+   - Keep defaults aligned with `rag-bench serve`.
+   - Store settings locally in browser only.
+
+7. Update tests
+   - Status: done.
+   - API test for `GET /` returning the UI shell.
+   - Test that expected stable hooks are present: root app marker, model id, chat endpoint path.
+   - Keep automated tests free of live Groq calls.
+
+8. Update docs
+   - Status: done.
+   - README: document the built-in UI as the recommended path for this lightweight setup.
+   - README: keep Open WebUI as optional/future, with warning about Python install disk usage and internal embedding downloads.
+
+9. Align visual style with Open WebUI
+   - Status: done.
+   - Use Open WebUI-like shell styling without copying upstream CSS/assets.
+   - Keep the single-file inline UI and existing `/v1/chat/completions` behavior.
+   - Verify Windows browser access still reaches the rebuilt UI from WSL.
+
+10. Polish the UI after visual review
+   - Status: done.
+   - Replace plain text action controls with inline SVG icon buttons.
+   - Use a rounded composer with tool chips and an icon-only send/stop button.
+   - Collapse debug-like local settings into a product-style details panel.
+   - Hide mobile-only close controls on desktop and refine hover/shadow/spacing states.
+
+11. Handle Groq restricted organization failures
+   - Status: done.
+   - Treat `organization_restricted` and invalid/unauthorized key responses as alias-level unavailable errors.
+   - Disable rejected aliases for the current process and continue with remaining keys when possible.
+   - Report rejected aliases in benchmark rows, API RAG metadata, and the chat UI dev-mode meta line without exposing key values.
+
+12. Add generation throughput reporting
+   - Status: done.
+   - Compute `output_tokens_per_s` from completion tokens divided by successful Groq request latency.
+   - Add the value to benchmark rows, aggregate generation metrics, API RAG metadata, and the chat UI meta line as `n tok/s`.
+   - Keep scheduler wait separate so token throughput reflects the model request rather than key pacing.
+
+13. Add source document side panel and collapsible chat sidebar
+   - Status: done.
+   - Include retrieved document text in chat API RAG metadata.
+   - Let source chips and retrieved-context rows open the selected document beside the chat.
+   - Add a right-side document panel on desktop and overlay behavior on mobile.
+   - Let the left chat sidebar collapse/expand from the topbar or sidebar close control.
+
+14. Move built-in UI out of the RAG package
+   - Status: done.
+   - Move the single-file frontend to `ui/chat.html`.
+   - Replace `src/rag_bench/web_ui.py` with a small `src/rag_bench/ui_loader.py` template loader.
+   - Keep FastAPI API and RAG code free of large inline frontend source.
+
+15. Add local chat deletion
+   - Status: done.
+   - Add a delete action per conversation in the left sidebar.
+   - Remove the selected conversation from browser `localStorage` and switch to a neighboring chat.
+   - Create a fresh empty chat if the last conversation is deleted.
+
+16. Harden empty-answer handling
+   - Status: done.
+   - Include the full answer on the final SSE metadata chunk for UI recovery.
+   - Let the UI fall back to a non-stream request if a stream returns empty content.
+   - Clamp the local chat `Max tokens` setting to at least `16` to avoid accidental empty or unusably short answers.
+
+17. Add question editing and theme selection
+   - Status: done.
+   - Add an edit action on user messages that restores the question to the composer.
+   - Resubmitting an edited question replaces that user turn and removes later turns before regenerating.
+   - Add local `Light`, `Colorful`, and `System` theme settings.
+   - Implement the colorful theme as a light theme using `#228B22` green with red and yellow accents.
+
+18. Polish source document side panel
+   - Status: done.
+   - Keep the close button fixed in the panel header even for long document titles.
+   - Hard-wrap document text and hide horizontal overflow so long biomedical text cannot spill outside the panel.
+   - Slightly widen the desktop document panel for better reading.
+
+19. Add responsive font scaling
+   - Status: done.
+   - Add a local `Font size` setting from `100%` to `200%`.
+   - Apply the font scale to chat messages, composer text, sidebar labels, settings, and the document panel.
+   - Keep desktop, tablet, and mobile breakpoints explicit for the chat shell and source document panel.
+
+20. Add selectable chat generation models
+   - Status: done.
+   - Add `qwen/qwen3-32b` as a Groq generation model option next to the default Llama model.
+   - Let the built-in UI choose the generation model from local settings without rebuilding the retriever or restarting the proxy.
+   - Expose selectable generation model ids through `/v1/models` while keeping all requests inside the RAG proxy.
+
+21. Add language and dev-mode controls
+   - Status: done.
+   - Add English and Vietnamese UI language options for core chat labels, prompts, notices, and settings.
+   - Add a local dev-mode toggle that hides key alias, rejected alias, retry, and wait metadata by default.
+   - Keep normal mode focused on completion throughput and retrieved context.
+   - Fix the browser SSE parser to split on real newline separators so streamed Qwen responses do not fail JSON parsing.
+
+22. Polish message controls and reasoning display
+   - Status: done.
+   - Move assistant copy/retry controls into the footer beside throughput metadata.
+   - Move user copy/edit controls below and outside the user text bubble.
+   - Render `<think>...</think>` content as a smaller, muted, collapsed reasoning disclosure by default.
+
+23. Add local conversation renaming
+   - Status: done.
+   - Add a rename action for each sidebar conversation.
+   - Persist custom titles in browser `localStorage`.
+   - Localize rename/delete labels for English and Vietnamese UI modes.
+
+24. Separate generation model and search algorithm controls
+   - Status: done.
+   - Keep `Model` for Groq generation model selection only.
+   - Add a separate `Search` selector for retrieval algorithm selection.
+   - Build BM25 and TF-IDF chat retrievers at proxy startup and route each request by selected retriever.
+   - Render answer citations as ordered inline references based on the retrieved-context table, and remove duplicate source chips.
+
+25. Refactor retrieval strategy registration
+   - Status: done.
+   - Add a central retriever registry for search strategy specs, aliases, metadata, and factory construction.
+   - Keep the existing `Retriever` contract as `build(documents)` plus `search(query, top_k)`.
+   - Route benchmark runner and chat service retriever construction through the registry.
+   - Reserve category metadata for future text, keyword, dictionary, and image retrieval strategies.
+   - Defer user-facing `/find`, `/dict`, and `/image` commands to a later milestone.
+
+26. Add advanced retrieval strategies for benchmarking
+   - Status: done.
+   - Add `keyword-match` for deterministic keyword/phrase scoring without new dependencies.
+   - Add `multi-query` for deterministic BM25 query variants merged by reciprocal-rank fusion.
+   - Add `hybrid-rrf` for BM25 plus vector reciprocal-rank fusion.
+   - Add `vector-rerank` for vector candidates reranked by normalized BM25 lexical scores.
+   - Add Groq-backed `llm-query-rewrite` and `llm-multi-query` strategies that spend one retrieval LLM call per benchmark query.
+   - Add `rag-bench serve --available-retrievers ...` so the built-in UI can expose selected cheap, vector, or LLM-backed search strategies explicitly.
+   - Record retrieval LLM latency, token usage, retry count, error count, and query variants in per-query metadata and aggregate retrieval metrics.
+
+27. Add reproducible retrieval benchmark reporting
+   - Status: done.
+   - Add `scripts/run_retrieval_strategy_benchmarks.sh` to rerun the selected SciFact and NFCorpus benchmark matrix.
+   - Add `scripts/summarize_benchmarks.py` to convert one or more `metrics.json` files into a Markdown report.
+   - Generate `benchmark_results/retrieval_strategy_bench_2026-05-12.md` with SciFact model-sensitivity and NFCorpus cross-dataset results.
+
+28. Add RAGAS judge benchmark path
+   - Status: done.
+   - Add `scripts/run_ragas_benchmarks.sh` for optional answer-generation plus RAGAS judge runs.
+   - Run RAGAS by retriever instead of applying `--ragas-limit` only to the first aggregate rows.
+   - Preflight Groq aliases before RAGAS to skip restricted organizations and use local sentence-transformer embeddings instead of requiring OpenAI embeddings.
+   - Record RAGAS smoke results for BM25, Hybrid RRF, and Vector Rerank in the benchmark report.
+
+## Verification
+
+- `uv lock --check`
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen pytest`
+- Start proxy on `0.0.0.0:8000`.
+- From WSL: `curl http://127.0.0.1:8000/health`
+- From Windows browser: open `http://localhost:8000/`
+- Send a test prompt and confirm:
+  - response appears,
+  - source doc ids render,
+  - no page reload,
+  - mobile width layout remains usable.
+- Confirm `rag-bench run --retrievers bm25,tfidf,vector` and `rag-bench serve --retriever bm25` still use registry-backed strategy ids.
+- Benchmark SciFact retrieval-only across baseline, deterministic, vector, and LLM-query strategies and record the run paths/results.
+- Regenerate benchmark report with `python3 scripts/summarize_benchmarks.py ... --output benchmark_results/retrieval_strategy_bench_2026-05-12.md`.
+- Reproduce RAGAS judge run with `bash scripts/run_ragas_benchmarks.sh`; increase `LIMIT` and `RAGAS_LIMIT` only when time/quota allow.
+
+## Benchmark Snapshot
+
+SciFact retrieval-only runs on 2026-05-12, `top_k=3`:
+
+- `runs/20260512T160417Z_scifact_bm25-tfidf-keyword-match-multi-query`: BM25 remained the strongest non-vector baseline on 50 queries with `hit@k=0.82`, `mrr@k=0.75`, `ndcg@k=0.7619`; deterministic `multi-query` matched hit rate but lowered MRR/NDCG.
+- `runs/20260512T160441Z_scifact_vector-hybrid-rrf-vector-rerank`: `hybrid-rrf` improved to `hit@k=0.86`, `mrr@k=0.7967`, `ndcg@k=0.7988`; `vector-rerank` reached `hit@k=0.84`, `mrr@k=0.8`, `ndcg@k=0.8011`.
+- `runs/20260512T160705Z_scifact_bm25-llm-query-rewrite-llm-multi-query`: on the first 20 queries, Groq-backed `llm-query-rewrite` and `llm-multi-query` did not beat BM25 and added retrieval LLM latency/tokens.
+- `runs/20260512T162433Z_scifact_bm25-llm-query-rewrite-llm-multi-query`: Llama model-sensitivity run on 50 SciFact queries showed LLM rewrite/multi-query still below BM25 and below hybrid/vector-rerank.
+- `runs/20260512T162801Z_scifact_bm25-llm-query-rewrite-llm-multi-query`: Qwen model-sensitivity run on 50 SciFact queries underperformed Llama for query rewrite and used more retrieval LLM tokens.
+- `runs/20260512T163131Z_nfcorpus_bm25-tfidf-vector-hybrid-rrf-vector-rerank`: NFCorpus cross-dataset run showed `vector` best by hit@k and `hybrid-rrf` best by ndcg@k on the first 50 queries.
+- `runs/20260512T180828Z_scifact_bm25-hybrid-rrf-vector-rerank`: RAGAS smoke run on 5 SciFact samples per retriever produced usable judge metrics with no evaluator errors; `vector-rerank` led answer relevancy and faithfulness on this small sample.
+
+## Open Questions
+
+- Whether to keep multiple local conversations in v1, or only one persisted conversation plus New Chat.
+- Whether to add Markdown rendering. Default plan: no external parser; render plain text safely first.
+- Whether to add a small `/assets` route later. Default plan: no, keep single HTML response for speed.
+- Which future registry-backed command to implement first: `/dict` or `/image`. Default plan: start with local glossary-backed `/dict` when a glossary dataset exists.
+
+## Repo Checklist
+
+- README: update after UI implementation.
+- PDF: N/A, no `pdf/` directory exists.
+- Mindmap: N/A, none found.
+- `milestones.md`: N/A, none found.
+- `plan.md`: N/A, none found.
+- Active plan: this file.

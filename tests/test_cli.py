@@ -47,3 +47,56 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
     assert seen["config"].key_tokens_per_minute == 6000
     assert seen["config"].key_requests_per_minute == 30
     assert seen["config"].rate_limit_scope == "per-key"
+
+
+def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
+    seen = {}
+
+    def fake_serve_proxy(config):
+        seen["config"] = config
+
+    monkeypatch.setattr(cli, "serve_proxy", fake_serve_proxy)
+
+    exit_code = cli.main(
+        [
+            "serve",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9000",
+            "--api-key",
+            "dev-secret",
+            "--bench",
+            "scifact",
+            "--retriever",
+            "bm25",
+            "--available-retrievers",
+            "bm25,keyword-match,multi-query",
+            "--top-k",
+            "4",
+            "--max-context-chars",
+            "2000",
+            "--max-completion-tokens",
+            "96",
+            "--key-tpm",
+            "5000",
+            "--key-rpm",
+            "20",
+            "--rate-limit-scope",
+            "shared",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen["config"].host == "0.0.0.0"
+    assert seen["config"].port == 9000
+    assert seen["config"].api_key == "dev-secret"
+    assert seen["config"].chat.bench == "scifact"
+    assert seen["config"].chat.retriever == "bm25"
+    assert seen["config"].chat.available_retrievers == ("bm25", "keyword-match", "multi-query")
+    assert seen["config"].chat.top_k == 4
+    assert seen["config"].chat.max_context_chars == 2000
+    assert seen["config"].chat.max_completion_tokens == 96
+    assert seen["config"].chat.key_tokens_per_minute == 5000
+    assert seen["config"].chat.key_requests_per_minute == 20
+    assert seen["config"].chat.rate_limit_scope == "shared"

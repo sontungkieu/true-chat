@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import Path
 
 from rag_bench.groq_client import GenerationResult
-from rag_bench.runner import RunConfig, run_benchmark
+from rag_bench.runner import RunConfig, _evaluate_ragas_by_retriever, run_benchmark
 from rag_bench.types import BenchmarkData, Document, Query
 
 
@@ -24,6 +24,7 @@ class FakeLLM:
             completion_tokens=4,
             total_tokens=14,
             estimated_tokens=20,
+            output_tokens_per_s=400.0,
         )
 
     def rate_limit_snapshot(self) -> dict[str, dict[str, int]]:
@@ -72,7 +73,7 @@ def test_run_benchmark_writes_outputs_with_mocked_llm(tmp_path: Path) -> None:
 
     config = RunConfig(
         bench="scifact",
-        retrievers=("bm25",),
+        retrievers=("lexical",),
         top_k=1,
         limit=1,
         output_dir=tmp_path / "runs",
@@ -104,7 +105,9 @@ def test_run_benchmark_writes_outputs_with_mocked_llm(tmp_path: Path) -> None:
     assert (run_dir / "query_results.jsonl").exists()
     assert (run_dir / "metrics.json").exists()
     assert (run_dir / "metrics.csv").exists()
+    assert summary["aggregates"][0]["retriever"] == "bm25"
     assert summary["aggregates"][0]["retrieval"]["hit@k"] == 1.0
+    assert summary["aggregates"][0]["generation"]["avg_output_tokens_per_s"] == 400.0
     assert summary["key_usage_counts"] == {"a": 1}
     assert summary["key_rate_limits"]["a"]["requests_used"] == 1
 
@@ -208,5 +211,86 @@ def test_run_benchmark_can_skip_generation_without_groq_keys(tmp_path: Path) -> 
 
     assert summary["key_usage_counts"] == {}
     assert summary["key_rate_limits"] == {}
+    assert summary["aggregates"][0]["retriever"] == "bm25"
     assert summary["aggregates"][0]["query_count"] == 1
     assert summary["aggregates"][0]["generation"] == {"skipped": True, "generation_count": 0}
+
+
+def test_run_benchmark_uses_groq_for_llm_retriever_when_generation_is_skipped(tmp_path: Path) -> None:
+    key_path = tmp_path / "groq.env"
+    key_path.write_text("a=gsk_secret\n", encoding="utf-8")
+
+    def fake_loader(_bench: str, *, limit: int | None, allow_large: bool) -> BenchmarkData:
+        return BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[Query("q1", "what animal purrs?")],
+            documents=[
+                Document("cat-doc", "Cats purr and chase toys.", "Cats"),
+                Document("banana-doc", "Bananas are yellow fruit.", "Bananas"),
+            ],
+            qrels={"q1": {"cat-doc": 1}},
+        )
+
+    config = RunConfig(
+        bench="scifact",
+        retrievers=("llm-multi-query",),
+        top_k=1,
+        limit=1,
+        output_dir=tmp_path / "runs",
+        groq_keys_path=key_path,
+        model="test-model",
+        vector_model="fake-vector-model",
+        max_retries=0,
+        max_completion_tokens=32,
+        temperature=0.0,
+        max_context_chars=1000,
+        allow_large_bench=False,
+        ragas=False,
+        ragas_limit=None,
+        max_consecutive_errors=1,
+        skip_generation=True,
+        sleep_between_queries_s=0.0,
+        key_tokens_per_minute=6000,
+        key_requests_per_minute=30,
+        rate_limit_scope="per-key",
+    )
+
+    summary = run_benchmark(
+        config,
+        benchmark_loader=fake_loader,
+        groq_client_factory=lambda _keys: FakeLLM(),
+    )
+
+    assert summary["key_usage_counts"] == {"a": 1}
+    assert summary["aggregates"][0]["retriever"] == "llm-multi-query"
+    assert summary["aggregates"][0]["retrieval"]["retrieval_llm_calls"] == 1.0
+    assert summary["aggregates"][0]["generation"] == {"skipped": True, "generation_count": 0}
+
+
+def test_ragas_evaluation_is_grouped_by_retriever() -> None:
+    seen: list[tuple[list[str], int | None]] = []
+
+    def fake_evaluator(rows, *, keys, model, limit):
+        del keys, model
+        seen.append(([row["query_id"] for row in rows], limit))
+        return {"sample_count": min(len(rows), limit or len(rows)), "error_count": 0, "metrics": {"faithfulness": 1.0}}
+
+    summary = _evaluate_ragas_by_retriever(
+        [
+            {"retriever": "bm25", "query_id": "b1", "generation_skipped": False},
+            {"retriever": "bm25", "query_id": "b2", "generation_skipped": False},
+            {"retriever": "vector", "query_id": "v1", "generation_skipped": False},
+            {"retriever": "vector", "query_id": "v2", "generation_skipped": True},
+        ],
+        retrievers=["bm25", "vector"],
+        keys=[],
+        model="test-model",
+        limit=1,
+        evaluator=fake_evaluator,
+    )
+
+    assert seen == [(["b1", "b2"], 1), (["v1"], 1)]
+    assert summary["mode"] == "by_retriever"
+    assert summary["sample_count"] == 2
+    assert set(summary["by_retriever"]) == {"bm25", "vector"}

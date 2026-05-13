@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -11,6 +12,32 @@ from rag_bench.types import Document, RetrievalHit, RetrievalResult, Query
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "has",
+    "have",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "was",
+    "were",
+    "with",
+}
 
 
 class Retriever(Protocol):
@@ -20,6 +47,17 @@ class Retriever(Protocol):
     def build(self, documents: list[Document]) -> None: ...
 
     def search(self, query: Query, top_k: int) -> RetrievalResult: ...
+
+
+class QueryExpansionClient(Protocol):
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_completion_tokens: int = 512,
+    ) -> Any: ...
 
 
 @dataclass
@@ -62,6 +100,40 @@ class TfidfRetriever:
         started = time.perf_counter()
         query_vector = self._vectorizer.transform([query.text])
         scores = (self._matrix @ query_vector.T).toarray().ravel()
+        ranked = _rank_scores(scores, top_k)
+        hits = [_hit_from_doc(self._documents[index], float(scores[index]), rank) for rank, index in enumerate(ranked, 1)]
+        return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
+
+
+@dataclass
+class KeywordMatchRetriever:
+    name: str = "keyword-match"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        started = time.perf_counter()
+        self._documents = list(documents)
+        self._token_counts = [_token_counts(doc.display_text) for doc in self._documents]
+        self._lower_texts = [doc.display_text.lower() for doc in self._documents]
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        query_tokens = _content_tokens(query.text)
+        query_phrase = query.text.strip().lower()
+        scores = np.zeros(len(self._documents), dtype=np.float32)
+        for index, doc_tokens in enumerate(self._token_counts):
+            matched_terms = 0
+            matched_frequency = 0
+            for token in query_tokens:
+                frequency = doc_tokens.get(token, 0)
+                if frequency:
+                    matched_terms += 1
+                    matched_frequency += frequency
+            score = float(matched_terms * 2 + min(matched_frequency, 8))
+            if query_phrase and query_phrase in self._lower_texts[index]:
+                score += 5.0
+            scores[index] = score
         ranked = _rank_scores(scores, top_k)
         hits = [_hit_from_doc(self._documents[index], float(scores[index]), rank) for rank, index in enumerate(ranked, 1)]
         return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
@@ -112,19 +184,228 @@ class VectorRetriever:
         return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
 
 
+@dataclass
+class HybridRrfRetriever:
+    vector_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    vector_encoder: object | None = None
+    use_faiss: bool = True
+    rrf_k: int = 60
+    candidate_multiplier: int = 20
+    min_candidates: int = 50
+    name: str = "hybrid-rrf"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        started = time.perf_counter()
+        self._bm25 = BM25Retriever()
+        self._vector = VectorRetriever(
+            model_name=self.vector_model,
+            encoder=self.vector_encoder,
+            use_faiss=self.use_faiss,
+        )
+        self._bm25.build(documents)
+        self._vector.build(documents)
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        candidate_k = _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)
+        results = [
+            self._bm25.search(query, candidate_k),
+            self._vector.search(query, candidate_k),
+        ]
+        hits = _rrf_merge(results, top_k=top_k, rrf_k=self.rrf_k)
+        return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
+
+
+@dataclass
+class VectorRerankRetriever:
+    vector_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    vector_encoder: object | None = None
+    use_faiss: bool = True
+    candidate_multiplier: int = 20
+    min_candidates: int = 50
+    lexical_weight: float = 0.7
+    vector_weight: float = 0.3
+    name: str = "vector-rerank"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        from rank_bm25 import BM25Okapi
+
+        started = time.perf_counter()
+        self._documents = list(documents)
+        self._doc_index_by_id = {doc.doc_id: index for index, doc in enumerate(self._documents)}
+        self._vector = VectorRetriever(
+            model_name=self.vector_model,
+            encoder=self.vector_encoder,
+            use_faiss=self.use_faiss,
+        )
+        self._vector.build(self._documents)
+        self._bm25 = BM25Okapi([_tokenize(doc.display_text) for doc in self._documents])
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        candidate_k = _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)
+        vector_result = self._vector.search(query, candidate_k)
+        bm25_scores = self._bm25.get_scores(_tokenize(query.text))
+        candidate_indexes = [self._doc_index_by_id[hit.doc_id] for hit in vector_result.hits]
+        lexical_scores = np.asarray([bm25_scores[index] for index in candidate_indexes], dtype=np.float32)
+        vector_scores = np.asarray([hit.score for hit in vector_result.hits], dtype=np.float32)
+        combined_scores = (
+            self.lexical_weight * _normalize_vector(lexical_scores)
+            + self.vector_weight * _normalize_vector(vector_scores)
+        )
+        pairs = sorted(
+            zip(vector_result.hits, combined_scores, strict=False),
+            key=lambda pair: (-float(pair[1]), pair[0].rank, pair[0].doc_id),
+        )
+        hits = [
+            RetrievalHit(
+                doc_id=hit.doc_id,
+                score=float(score),
+                rank=rank,
+                title=hit.title,
+                text=hit.text,
+            )
+            for rank, (hit, score) in enumerate(pairs[:top_k], 1)
+        ]
+        return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
+
+
+@dataclass
+class MultiQueryRetriever:
+    rrf_k: int = 60
+    candidate_multiplier: int = 20
+    min_candidates: int = 50
+    name: str = "multi-query"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        started = time.perf_counter()
+        self._bm25 = BM25Retriever()
+        self._bm25.build(documents)
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        candidate_k = _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)
+        results = [
+            self._bm25.search(Query(query_id=query.query_id, text=variant), candidate_k)
+            for variant in _query_variants(query.text)
+        ]
+        hits = _rrf_merge(results, top_k=top_k, rrf_k=self.rrf_k)
+        return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
+
+
+@dataclass
+class LlmQueryRewriteRetriever:
+    query_expander: QueryExpansionClient
+    query_model: str | None = None
+    max_query_tokens: int = 96
+    rrf_k: int = 60
+    candidate_multiplier: int = 20
+    min_candidates: int = 50
+    name: str = "llm-query-rewrite"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        started = time.perf_counter()
+        self._bm25 = BM25Retriever()
+        self._bm25.build(documents)
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        candidate_k = _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)
+        variants, metadata = _llm_query_variants(
+            self.query_expander,
+            query.text,
+            mode="rewrite",
+            max_queries=1,
+            model=self.query_model,
+            max_completion_tokens=self.max_query_tokens,
+        )
+        search_texts = _dedupe_nonempty([query.text, *variants])
+        results = [
+            self._bm25.search(Query(query_id=query.query_id, text=variant), candidate_k)
+            for variant in search_texts
+        ]
+        hits = _rrf_merge(results, top_k=top_k, rrf_k=self.rrf_k)
+        metadata["query_variants"] = list(search_texts)
+        return RetrievalResult(
+            query=query,
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata=metadata,
+        )
+
+
+@dataclass
+class LlmMultiQueryRetriever:
+    query_expander: QueryExpansionClient
+    query_model: str | None = None
+    max_query_tokens: int = 160
+    max_queries: int = 4
+    rrf_k: int = 60
+    candidate_multiplier: int = 20
+    min_candidates: int = 50
+    name: str = "llm-multi-query"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        started = time.perf_counter()
+        self._bm25 = BM25Retriever()
+        self._bm25.build(documents)
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        candidate_k = _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)
+        variants, metadata = _llm_query_variants(
+            self.query_expander,
+            query.text,
+            mode="multi",
+            max_queries=self.max_queries,
+            model=self.query_model,
+            max_completion_tokens=self.max_query_tokens,
+        )
+        search_texts = _dedupe_nonempty([query.text, *variants])
+        results = [
+            self._bm25.search(Query(query_id=query.query_id, text=variant), candidate_k)
+            for variant in search_texts
+        ]
+        hits = _rrf_merge(results, top_k=top_k, rrf_k=self.rrf_k)
+        metadata["query_variants"] = list(search_texts)
+        return RetrievalResult(
+            query=query,
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata=metadata,
+        )
+
+
 def create_retriever(name: str, *, vector_model: str) -> Retriever:
-    normalized = name.strip().lower()
-    if normalized in {"bm25", "lexical"}:
-        return BM25Retriever()
-    if normalized == "tfidf":
-        return TfidfRetriever()
-    if normalized in {"vector", "dense"}:
-        return VectorRetriever(model_name=vector_model)
-    raise ValueError(f"Unknown retriever: {name}")
+    from rag_bench.retriever_registry import create_retriever as registry_create_retriever
+
+    return registry_create_retriever(name, vector_model=vector_model)
 
 
 def _tokenize(text: str) -> list[str]:
     return [match.group(0).lower() for match in TOKEN_RE.finditer(text)]
+
+
+def _content_tokens(text: str) -> list[str]:
+    tokens = [token for token in _tokenize(text) if token not in STOPWORDS]
+    return tokens or _tokenize(text)
+
+
+def _token_counts(text: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for token in _tokenize(text):
+        counts[token] = counts.get(token, 0) + 1
+    return counts
 
 
 def _rank_scores(scores: np.ndarray, top_k: int) -> list[int]:
@@ -137,6 +418,150 @@ def _rank_scores(scores: np.ndarray, top_k: int) -> list[int]:
 
 def _hit_from_doc(doc: Document, score: float, rank: int) -> RetrievalHit:
     return RetrievalHit(doc_id=doc.doc_id, score=score, rank=rank, title=doc.title, text=doc.text)
+
+
+def _candidate_k(top_k: int, min_candidates: int, candidate_multiplier: int) -> int:
+    if top_k <= 0:
+        return 0
+    return max(top_k, min_candidates, top_k * candidate_multiplier)
+
+
+def _rrf_merge(results: list[RetrievalResult], *, top_k: int, rrf_k: int) -> list[RetrievalHit]:
+    scores: dict[str, float] = {}
+    best_rank: dict[str, int] = {}
+    hits_by_doc_id: dict[str, RetrievalHit] = {}
+    for result in results:
+        for hit in result.hits:
+            scores[hit.doc_id] = scores.get(hit.doc_id, 0.0) + 1.0 / (rrf_k + hit.rank)
+            best_rank[hit.doc_id] = min(best_rank.get(hit.doc_id, hit.rank), hit.rank)
+            hits_by_doc_id.setdefault(hit.doc_id, hit)
+    ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank[doc_id], doc_id))
+    return [
+        RetrievalHit(
+            doc_id=doc_id,
+            score=scores[doc_id],
+            rank=rank,
+            title=hits_by_doc_id[doc_id].title,
+            text=hits_by_doc_id[doc_id].text,
+        )
+        for rank, doc_id in enumerate(ranked[:top_k], 1)
+    ]
+
+
+def _normalize_vector(values: np.ndarray) -> np.ndarray:
+    if values.size == 0:
+        return values
+    minimum = float(values.min())
+    maximum = float(values.max())
+    if maximum == minimum:
+        return np.ones_like(values, dtype=np.float32) if maximum > 0 else np.zeros_like(values, dtype=np.float32)
+    return (values - minimum) / (maximum - minimum)
+
+
+def _query_variants(text: str) -> tuple[str, ...]:
+    original = text.strip()
+    tokens = _content_tokens(text)
+    variants = [original]
+    keyword_query = " ".join(tokens)
+    if keyword_query and keyword_query.lower() != original.lower():
+        variants.append(keyword_query)
+    if len(tokens) >= 4:
+        midpoint = max(2, len(tokens) // 2)
+        variants.append(" ".join(tokens[:midpoint]))
+        variants.append(" ".join(tokens[midpoint:]))
+    return _dedupe_nonempty(variants)
+
+
+def _llm_query_variants(
+    query_expander: QueryExpansionClient,
+    text: str,
+    *,
+    mode: str,
+    max_queries: int,
+    model: str | None,
+    max_completion_tokens: int,
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    started = time.perf_counter()
+    if mode == "rewrite":
+        instruction = (
+            "Rewrite the user question as one concise search query for a scientific retrieval system. "
+            "Return only a JSON array with exactly one string."
+        )
+    else:
+        instruction = (
+            f"Generate up to {max_queries} diverse concise search queries for a scientific retrieval system. "
+            "Return only a JSON array of strings. Do not answer the question."
+        )
+    generation = query_expander.generate(
+        [
+            {"role": "system", "content": instruction},
+            {"role": "user", "content": text},
+        ],
+        model=model,
+        temperature=0.0,
+        max_completion_tokens=max_completion_tokens,
+    )
+    variants = _parse_query_array(str(getattr(generation, "answer", "")), limit=max_queries)
+    if getattr(generation, "error", None):
+        variants = ()
+    metadata = {
+        "retrieval_llm_calls": 1,
+        "retrieval_llm_latency_s": float(getattr(generation, "latency_s", time.perf_counter() - started) or 0.0),
+        "retrieval_llm_key_alias": getattr(generation, "key_alias", None),
+        "retrieval_llm_attempted_aliases": list(getattr(generation, "attempted_aliases", []) or []),
+        "retrieval_llm_rejected_aliases": list(getattr(generation, "rejected_aliases", []) or []),
+        "retrieval_llm_retry_count": int(getattr(generation, "retry_count", 0) or 0),
+        "retrieval_llm_scheduled_wait_s": float(getattr(generation, "scheduled_wait_s", 0.0) or 0.0),
+        "retrieval_llm_prompt_tokens": getattr(generation, "prompt_tokens", None),
+        "retrieval_llm_completion_tokens": getattr(generation, "completion_tokens", None),
+        "retrieval_llm_total_tokens": getattr(generation, "total_tokens", None),
+        "retrieval_llm_estimated_tokens": getattr(generation, "estimated_tokens", None),
+        "retrieval_llm_error": getattr(generation, "error", None),
+        "retrieval_llm_error_count": 1 if getattr(generation, "error", None) else 0,
+    }
+    return variants, metadata
+
+
+def _parse_query_array(text: str, *, limit: int) -> tuple[str, ...]:
+    stripped = _strip_code_fence(text.strip())
+    candidates = [stripped]
+    start = stripped.find("[")
+    end = stripped.rfind("]")
+    if start >= 0 and end > start:
+        candidates.append(stripped[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return _dedupe_nonempty([str(item) for item in parsed if isinstance(item, str)])[:limit]
+    lines = [
+        re.sub(r"^[-*\d.)\s]+", "", line).strip(" \"'")
+        for line in stripped.splitlines()
+        if line.strip()
+    ]
+    return _dedupe_nonempty(lines)[:limit]
+
+
+def _strip_code_fence(text: str) -> str:
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 2 and lines[-1].strip() == "```":
+            return "\n".join(lines[1:-1]).strip()
+    return text
+
+
+def _dedupe_nonempty(values: list[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = " ".join(value.split())
+        key = normalized.lower()
+        if normalized and key not in seen:
+            seen.add(key)
+            result.append(normalized)
+    return tuple(result)
 
 
 def _load_sentence_transformer(model_name: str) -> object:

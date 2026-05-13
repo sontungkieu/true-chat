@@ -74,6 +74,7 @@ def aggregate_generation(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "prompt_tokens",
         "completion_tokens",
         "total_tokens",
+        "output_tokens_per_s",
         "exact_match",
         "token_f1",
     ]

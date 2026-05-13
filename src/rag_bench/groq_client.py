@@ -24,6 +24,8 @@ class GenerationResult:
     rate_limited: bool = False
     estimated_tokens: int | None = None
     scheduled_wait_s: float = 0.0
+    rejected_aliases: list[str] = field(default_factory=list)
+    output_tokens_per_s: float | None = None
 
 
 @dataclass
@@ -53,6 +55,7 @@ class RateLimitScheduler:
     time_fn: Callable[[], float] = time.monotonic
     _next_index: int = 0
     _events_by_bucket: dict[str, list[_UsageEvent]] = field(default_factory=dict)
+    _disabled_aliases: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         if self.scope not in {"per-key", "shared"}:
@@ -64,6 +67,9 @@ class RateLimitScheduler:
         waited_s = 0.0
         estimated_tokens = max(1, estimated_tokens)
         while True:
+            if not self.has_available_keys():
+                disabled = ", ".join(sorted(self._disabled_aliases)) or "none"
+                raise RuntimeError(f"no Groq API keys remain available in this session; disabled aliases: {disabled}")
             now_s = self.time_fn()
             self._prune(now_s)
             candidate = self._find_available_key(now_s, estimated_tokens)
@@ -107,10 +113,21 @@ class RateLimitScheduler:
             }
         return snapshot
 
+    def disable_key(self, alias: str) -> None:
+        self._disabled_aliases.add(alias)
+
+    def has_available_keys(self) -> bool:
+        return any(key.alias not in self._disabled_aliases for key in self.keys)
+
+    def disabled_aliases(self) -> list[str]:
+        return sorted(self._disabled_aliases)
+
     def _find_available_key(self, now_s: float, estimated_tokens: int) -> tuple[int, ApiKey] | None:
         for offset in range(len(self.keys)):
             index = (self._next_index + offset) % len(self.keys)
             key = self.keys[index]
+            if key.alias in self._disabled_aliases:
+                continue
             if self._can_admit(self._bucket_id(key), estimated_tokens):
                 return index, key
         return None
@@ -129,6 +146,8 @@ class RateLimitScheduler:
     def _next_available_delay(self, now_s: float, estimated_tokens: int) -> float:
         delays: list[float] = []
         for key in self.keys:
+            if key.alias in self._disabled_aliases:
+                continue
             bucket_id = self._bucket_id(key)
             events = self._events_by_bucket.setdefault(bucket_id, [])
             if not events:
@@ -181,32 +200,54 @@ class RoundRobinGroqClient:
         self,
         messages: Iterable[dict[str, str]],
         *,
+        model: str | None = None,
         temperature: float = 0.0,
         max_completion_tokens: int = 512,
     ) -> GenerationResult:
         started = time.perf_counter()
         attempted_aliases: list[str] = []
+        rejected_aliases: list[str] = []
         last_error: str | None = None
-        attempts_allowed = max(1, self.max_retries + 1)
+        transient_retries_used = 0
         scheduled_wait_s = 0.0
 
         messages_list = list(messages)
+        request_model = model or self.model
         estimated_tokens = estimate_requested_tokens(messages_list, max_completion_tokens=max_completion_tokens)
 
-        for attempt in range(attempts_allowed):
-            reservation = self.scheduler.acquire(estimated_tokens)
+        while True:
+            try:
+                reservation = self.scheduler.acquire(estimated_tokens)
+            except RuntimeError as exc:
+                unavailable_message = _safe_error(exc)
+                last_error = (
+                    f"{last_error}; {unavailable_message}" if last_error is not None else unavailable_message
+                )
+                return GenerationResult(
+                    answer="",
+                    key_alias=None,
+                    attempted_aliases=attempted_aliases,
+                    latency_s=time.perf_counter() - started,
+                    retry_count=max(0, len(attempted_aliases) - 1),
+                    error=last_error,
+                    estimated_tokens=estimated_tokens,
+                    scheduled_wait_s=scheduled_wait_s,
+                    rejected_aliases=rejected_aliases,
+                )
             scheduled_wait_s += reservation.waited_s
             key = self._key_by_alias(reservation.key_alias)
             attempted_aliases.append(key.alias)
             self.key_usage_counts[key.alias] += 1
             client = self._build_client(key)
             try:
+                request_started = time.perf_counter()
                 response = client.chat.completions.create(
                     messages=messages_list,
-                    model=self.model,
+                    model=request_model,
                     temperature=temperature,
                     max_completion_tokens=max_completion_tokens,
                 )
+                request_latency_s = time.perf_counter() - request_started
                 answer = response.choices[0].message.content or ""
                 prompt_tokens, completion_tokens, total_tokens = _extract_usage(response)
                 self.scheduler.commit(reservation, total_tokens)
@@ -221,10 +262,32 @@ class RoundRobinGroqClient:
                     total_tokens=total_tokens,
                     estimated_tokens=estimated_tokens,
                     scheduled_wait_s=scheduled_wait_s,
+                    rejected_aliases=rejected_aliases,
+                    output_tokens_per_s=_tokens_per_second(completion_tokens, request_latency_s),
                 )
             except Exception as exc:  # noqa: BLE001 - SDK exception classes vary by version.
                 last_error = _safe_error(exc)
-                if not _is_retryable(exc) or attempt == attempts_allowed - 1:
+                if _is_key_or_account_unavailable(exc):
+                    self.scheduler.disable_key(key.alias)
+                    rejected_aliases.append(key.alias)
+                    if self.scheduler.has_available_keys():
+                        continue
+                    disabled = ", ".join(self.scheduler.disabled_aliases())
+                    last_error = f"{last_error}; no available Groq API keys remain after disabling aliases: {disabled}"
+                    return GenerationResult(
+                        answer="",
+                        key_alias=None,
+                        attempted_aliases=attempted_aliases,
+                        latency_s=time.perf_counter() - started,
+                        retry_count=max(0, len(attempted_aliases) - 1),
+                        error=last_error,
+                        error_status_code=_status_code(exc),
+                        rate_limited=_is_rate_limit(exc),
+                        estimated_tokens=estimated_tokens,
+                        scheduled_wait_s=scheduled_wait_s,
+                        rejected_aliases=rejected_aliases,
+                    )
+                if not _is_retryable(exc) or transient_retries_used >= self.max_retries:
                     return GenerationResult(
                         answer="",
                         key_alias=None,
@@ -236,21 +299,12 @@ class RoundRobinGroqClient:
                         rate_limited=_is_rate_limit(exc),
                         estimated_tokens=estimated_tokens,
                         scheduled_wait_s=scheduled_wait_s,
+                        rejected_aliases=rejected_aliases,
                     )
-                delay = _retry_delay(exc, attempt)
+                delay = _retry_delay(exc, transient_retries_used)
+                transient_retries_used += 1
                 if delay > 0:
                     self.sleep_fn(delay)
-
-        return GenerationResult(
-            answer="",
-            key_alias=None,
-            attempted_aliases=attempted_aliases,
-            latency_s=time.perf_counter() - started,
-            retry_count=max(0, len(attempted_aliases) - 1),
-            error=last_error or "unknown Groq error",
-            estimated_tokens=estimated_tokens,
-            scheduled_wait_s=scheduled_wait_s,
-        )
 
     def _key_by_alias(self, alias: str) -> ApiKey:
         for key in self.keys:
@@ -307,6 +361,24 @@ def _is_rate_limit(exc: Exception) -> bool:
     return _status_code(exc) == 429
 
 
+def _is_key_or_account_unavailable(exc: Exception) -> bool:
+    status_code = _status_code(exc)
+    text = _error_text(exc)
+    if status_code in {401, 403}:
+        return True
+    if status_code == 400:
+        markers = (
+            "organization_restricted",
+            "organization has been restricted",
+            "account has been restricted",
+            "api key is invalid",
+            "invalid api key",
+            "invalid_api_key",
+        )
+        return any(marker in text for marker in markers)
+    return False
+
+
 def _status_code(exc: Exception) -> int | None:
     status_code = getattr(exc, "status_code", None)
     if isinstance(status_code, int):
@@ -326,6 +398,16 @@ def _retry_delay(exc: Exception, attempt: int) -> float:
         except (TypeError, ValueError):
             pass
     return min(2.0**attempt, 10.0)
+
+
+def _tokens_per_second(tokens: int | None, latency_s: float) -> float | None:
+    if tokens is None or tokens <= 0 or latency_s <= 0:
+        return None
+    return tokens / latency_s
+
+
+def _error_text(exc: Exception) -> str:
+    return str(exc).lower()
 
 
 def _safe_error(exc: Exception) -> str:

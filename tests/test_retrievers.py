@@ -2,7 +2,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from rag_bench.retrievers import BM25Retriever, VectorRetriever
+from rag_bench.groq_client import GenerationResult
+from rag_bench.retrievers import (
+    BM25Retriever,
+    HybridRrfRetriever,
+    KeywordMatchRetriever,
+    LlmMultiQueryRetriever,
+    MultiQueryRetriever,
+    VectorRerankRetriever,
+    VectorRetriever,
+)
 from rag_bench.types import Document, Query
 
 
@@ -15,6 +24,21 @@ class FakeEncoder:
             lower = text.lower()
             vectors.append([float(lower.count(token)) for token in self.vocab])
         return np.asarray(vectors, dtype=np.float32)
+
+
+class FakeQueryExpander:
+    def generate(self, *_args, **_kwargs) -> GenerationResult:
+        return GenerationResult(
+            answer='["cat purr", "feline purr"]',
+            key_alias="alias-a",
+            attempted_aliases=["alias-a"],
+            latency_s=0.01,
+            retry_count=0,
+            prompt_tokens=10,
+            completion_tokens=6,
+            total_tokens=16,
+            estimated_tokens=20,
+        )
 
 
 def test_bm25_retriever_returns_relevant_document_first() -> None:
@@ -31,6 +55,50 @@ def test_bm25_retriever_returns_relevant_document_first() -> None:
     assert result.hits[0].rank == 1
 
 
+def test_keyword_match_retriever_returns_exact_keyword_match_first() -> None:
+    docs = [
+        Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),
+        Document(doc_id="banana-doc", title="Bananas", text="Bananas are yellow fruit."),
+    ]
+    retriever = KeywordMatchRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "yellow banana"), top_k=2)
+
+    assert result.hits[0].doc_id == "banana-doc"
+    assert result.hits[0].rank == 1
+
+
+def test_multi_query_retriever_returns_relevant_document_first() -> None:
+    docs = [
+        Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),
+        Document(doc_id="banana-doc", title="Bananas", text="Bananas are yellow fruit."),
+    ]
+    retriever = MultiQueryRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "Which animal is known to purr and chase toys?"), top_k=2)
+
+    assert result.hits[0].doc_id == "cat-doc"
+    assert result.hits[0].rank == 1
+
+
+def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:
+    docs = [
+        Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),
+        Document(doc_id="banana-doc", title="Bananas", text="Bananas are yellow fruit."),
+    ]
+    retriever = LlmMultiQueryRetriever(query_expander=FakeQueryExpander())
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "Which animal purrs?"), top_k=2)
+
+    assert result.hits[0].doc_id == "cat-doc"
+    assert result.metadata["retrieval_llm_calls"] == 1
+    assert result.metadata["retrieval_llm_key_alias"] == "alias-a"
+    assert result.metadata["query_variants"] == ["Which animal purrs?", "cat purr", "feline purr"]
+
+
 def test_vector_retriever_returns_relevant_document_first_with_fake_encoder() -> None:
     docs = [
         Document(doc_id="dog-doc", title="Dogs", text="Dogs fetch sticks."),
@@ -43,3 +111,20 @@ def test_vector_retriever_returns_relevant_document_first_with_fake_encoder() ->
 
     assert result.hits[0].doc_id == "banana-doc"
     assert result.hits[0].rank == 1
+
+
+def test_hybrid_and_rerank_retrievers_work_with_fake_encoder() -> None:
+    docs = [
+        Document(doc_id="dog-doc", title="Dogs", text="Dogs fetch sticks."),
+        Document(doc_id="banana-doc", title="Bananas", text="Bananas are yellow fruit."),
+    ]
+    hybrid = HybridRrfRetriever(vector_encoder=FakeEncoder(), use_faiss=False)
+    rerank = VectorRerankRetriever(vector_encoder=FakeEncoder(), use_faiss=False)
+    hybrid.build(docs)
+    rerank.build(docs)
+
+    hybrid_result = hybrid.search(Query("q1", "yellow banana"), top_k=2)
+    rerank_result = rerank.search(Query("q1", "yellow banana"), top_k=2)
+
+    assert hybrid_result.hits[0].doc_id == "banana-doc"
+    assert rerank_result.hits[0].doc_id == "banana-doc"

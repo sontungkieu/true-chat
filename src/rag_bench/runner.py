@@ -18,7 +18,7 @@ from rag_bench.metrics import (
     token_f1,
 )
 from rag_bench.prompts import build_rag_messages
-from rag_bench.retrievers import create_retriever
+from rag_bench.retriever_registry import create_retriever, retriever_uses_llm
 from rag_bench.secrets import ApiKey, load_groq_keys
 from rag_bench.types import BenchmarkData
 
@@ -60,9 +60,10 @@ def run_benchmark(
     started = time.perf_counter()
     run_id = _run_id(config)
     run_dir = config.output_dir / run_id
-    keys = [] if config.skip_generation and not config.ragas else load_groq_keys(config.groq_keys_path)
+    uses_retrieval_llm = any(retriever_uses_llm(name) for name in config.retrievers)
+    keys = [] if config.skip_generation and not config.ragas and not uses_retrieval_llm else load_groq_keys(config.groq_keys_path)
     llm = None
-    if not config.skip_generation:
+    if not config.skip_generation or uses_retrieval_llm:
         llm = groq_client_factory(keys) if groq_client_factory is not None else _build_groq_client(config, keys)
     data = benchmark_loader(config.bench, limit=config.limit, allow_large=config.allow_large_bench)
 
@@ -74,7 +75,12 @@ def run_benchmark(
     for retriever_name in config.retrievers:
         if stop_reason is not None:
             break
-        retriever = create_retriever(retriever_name, vector_model=config.vector_model)
+        retriever = create_retriever(
+            retriever_name,
+            vector_model=config.vector_model,
+            query_expander=llm if retriever_uses_llm(retriever_name) else None,
+            query_model=config.model,
+        )
         retriever.build(data.documents)
 
         retrieval_metric_rows: list[dict[str, float]] = []
@@ -89,10 +95,11 @@ def run_benchmark(
                 data.qrels.get(query.query_id, {}),
                 top_k=config.top_k,
             )
+            per_query_metrics.update(_retrieval_ops_metrics(retrieval.metadata))
             retrieval_metric_rows.append(per_query_metrics)
 
             generation = None
-            if llm is not None:
+            if not config.skip_generation and llm is not None:
                 generation = llm.generate(
                     build_rag_messages(query, retrieval.hits, max_context_chars=config.max_context_chars),
                     temperature=config.temperature,
@@ -120,18 +127,21 @@ def run_benchmark(
                     for hit in retrieval.hits
                 ],
                 "retrieval_metrics": per_query_metrics,
+                "retrieval_metadata": retrieval.metadata,
                 "generation_skipped": generation is None,
                 "answer": answer,
                 "answer_latency_s": generation.latency_s if generation is not None else None,
                 "total_latency_s": time.perf_counter() - query_started,
                 "key_alias": generation.key_alias if generation is not None else None,
                 "attempted_aliases": generation.attempted_aliases if generation is not None else [],
+                "rejected_aliases": generation.rejected_aliases if generation is not None else [],
                 "retry_count": generation.retry_count if generation is not None else 0,
                 "estimated_tokens": generation.estimated_tokens if generation is not None else None,
                 "scheduled_wait_s": generation.scheduled_wait_s if generation is not None else 0.0,
                 "prompt_tokens": generation.prompt_tokens if generation is not None else None,
                 "completion_tokens": generation.completion_tokens if generation is not None else None,
                 "total_tokens": generation.total_tokens if generation is not None else None,
+                "output_tokens_per_s": generation.output_tokens_per_s if generation is not None else None,
                 "error": generation.error if generation is not None else None,
                 "error_status_code": generation.error_status_code if generation is not None else None,
                 "rate_limited": generation.rate_limited if generation is not None else False,
@@ -184,14 +194,19 @@ def run_benchmark(
 
     ragas_summary = None
     if config.ragas:
-        from rag_bench.ragas_eval import evaluate_rows_with_ragas
+        from rag_bench.ragas_eval import evaluate_rows_with_ragas, filter_available_ragas_keys
 
-        ragas_summary = evaluate_rows_with_ragas(
+        ragas_preflight = filter_available_ragas_keys(keys, model=config.model)
+        ragas_summary = _evaluate_ragas_by_retriever(
             all_rows,
-            keys=keys,
+            retrievers=[aggregate["retriever"] for aggregate in aggregate_rows],
+            keys=ragas_preflight.keys,
             model=config.model,
             limit=config.ragas_limit,
+            evaluator=evaluate_rows_with_ragas,
         )
+        ragas_summary["preflight_disabled_aliases"] = ragas_preflight.disabled_aliases
+        ragas_summary["preflight_errors"] = ragas_preflight.errors
 
     summary = {
         "run_id": run_id,
@@ -242,3 +257,54 @@ def _serializable_config(config: RunConfig) -> dict[str, Any]:
     output["groq_keys_path"] = str(config.groq_keys_path)
     output["retrievers"] = list(config.retrievers)
     return output
+
+
+def _retrieval_ops_metrics(metadata: dict[str, Any]) -> dict[str, float]:
+    numeric_keys = [
+        "retrieval_llm_calls",
+        "retrieval_llm_latency_s",
+        "retrieval_llm_retry_count",
+        "retrieval_llm_scheduled_wait_s",
+        "retrieval_llm_prompt_tokens",
+        "retrieval_llm_completion_tokens",
+        "retrieval_llm_total_tokens",
+        "retrieval_llm_estimated_tokens",
+        "retrieval_llm_error_count",
+    ]
+    metrics: dict[str, float] = {}
+    for key in numeric_keys:
+        value = metadata.get(key)
+        if value is not None:
+            metrics[key] = float(value)
+    return metrics
+
+
+def _evaluate_ragas_by_retriever(
+    rows: list[dict[str, Any]],
+    *,
+    retrievers: list[str],
+    keys: list[ApiKey],
+    model: str,
+    limit: int | None,
+    evaluator: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    by_retriever: dict[str, Any] = {}
+    for retriever in retrievers:
+        retriever_rows = [
+            row
+            for row in rows
+            if row.get("retriever") == retriever and not row.get("generation_skipped")
+        ]
+        by_retriever[retriever] = evaluator(
+            retriever_rows,
+            keys=keys,
+            model=model,
+            limit=limit,
+        )
+    return {
+        "mode": "by_retriever",
+        "ragas_limit_per_retriever": limit,
+        "sample_count": sum(summary.get("sample_count", 0) for summary in by_retriever.values()),
+        "error_count": sum(summary.get("error_count", 0) for summary in by_retriever.values()),
+        "by_retriever": by_retriever,
+    }

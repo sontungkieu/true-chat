@@ -5,6 +5,7 @@ description = "Small RAG benchmark CLI with Groq round-robin API key support."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "fastapi==0.136.1",
     "groq==0.37.1",
     "ir-datasets==0.5.11",
     "numpy==2.2.6; python_version < '3.11'",
@@ -12,6 +13,7 @@ dependencies = [
     "rank-bm25==0.2.2",
     "scikit-learn==1.7.2; python_version < '3.11'",
     "scikit-learn==1.8.0; python_version >= '3.11'",
+    "uvicorn==0.46.0",
 ]
 
 [project.optional-dependencies]

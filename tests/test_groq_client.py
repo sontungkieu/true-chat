@@ -10,6 +10,16 @@ class FakeRateLimitError(Exception):
     status_code = 429
 
 
+class FakeOrganizationRestrictedError(Exception):
+    status_code = 400
+
+    def __str__(self) -> str:
+        return (
+            "Error code: 400 - {'error': {'message': 'Organization has been restricted.', "
+            "'code': 'organization_restricted'}}"
+        )
+
+
 @dataclass
 class FakeUsage:
     prompt_tokens: int = 10
@@ -34,24 +44,27 @@ class FakeResponse:
 
 
 class FakeCompletions:
-    def __init__(self, alias: str, failures: dict[str, int]) -> None:
+    def __init__(self, alias: str, failures: dict[str, int | list[Exception]]) -> None:
         self.alias = alias
         self.failures = failures
 
     def create(self, **_: object) -> FakeResponse:
-        if self.failures.get(self.alias, 0) > 0:
-            self.failures[self.alias] -= 1
+        failure = self.failures.get(self.alias, 0)
+        if isinstance(failure, list) and failure:
+            raise failure.pop(0)
+        if isinstance(failure, int) and failure > 0:
+            self.failures[self.alias] = failure - 1
             raise FakeRateLimitError("rate limited")
         return FakeResponse(choices=[FakeChoice(FakeMessage(f"answer from {self.alias}"))], usage=FakeUsage())
 
 
 class FakeChat:
-    def __init__(self, alias: str, failures: dict[str, int]) -> None:
+    def __init__(self, alias: str, failures: dict[str, int | list[Exception]]) -> None:
         self.completions = FakeCompletions(alias, failures)
 
 
 class FakeClient:
-    def __init__(self, alias: str, failures: dict[str, int]) -> None:
+    def __init__(self, alias: str, failures: dict[str, int | list[Exception]]) -> None:
         self.chat = FakeChat(alias, failures)
 
 
@@ -83,6 +96,8 @@ def test_round_robin_rotates_keys_between_calls() -> None:
 
     assert first.key_alias == "a"
     assert second.key_alias == "b"
+    assert first.output_tokens_per_s is not None
+    assert first.output_tokens_per_s > 0
     assert dict(client.key_usage_counts) == {"a": 1, "b": 1}
 
 
@@ -103,6 +118,7 @@ def test_round_robin_rotates_on_retry() -> None:
     assert result.answer == "answer from b"
     assert result.key_alias == "b"
     assert result.attempted_aliases == ["a", "b"]
+    assert result.rejected_aliases == []
     assert result.retry_count == 1
     assert result.rate_limited is False
     assert sleeps == []
@@ -127,6 +143,53 @@ def test_round_robin_reports_rate_limit_after_retry_budget() -> None:
     assert result.attempted_aliases == ["a", "b"]
     assert result.error_status_code == 429
     assert result.rate_limited is True
+
+
+def test_round_robin_disables_restricted_key_and_tries_next_key() -> None:
+    keys = [ApiKey("a", "secret-a"), ApiKey("b", "secret-b")]
+    failures: dict[str, int | list[Exception]] = {"a": [FakeOrganizationRestrictedError()]}
+    client = RoundRobinGroqClient(
+        keys=keys,
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, failures),
+        sleep_fn=lambda _seconds: None,
+    )
+
+    result = client.generate([{"role": "user", "content": "q"}])
+
+    assert result.answer == "answer from b"
+    assert result.key_alias == "b"
+    assert result.attempted_aliases == ["a", "b"]
+    assert result.rejected_aliases == ["a"]
+    assert result.retry_count == 1
+    assert client.scheduler.disabled_aliases() == ["a"]
+
+
+def test_round_robin_reports_when_all_keys_are_restricted() -> None:
+    keys = [ApiKey("a", "secret-a"), ApiKey("b", "secret-b")]
+    failures: dict[str, int | list[Exception]] = {
+        "a": [FakeOrganizationRestrictedError()],
+        "b": [FakeOrganizationRestrictedError()],
+    }
+    client = RoundRobinGroqClient(
+        keys=keys,
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, failures),
+        sleep_fn=lambda _seconds: None,
+    )
+
+    result = client.generate([{"role": "user", "content": "q"}])
+
+    assert result.answer == ""
+    assert result.key_alias is None
+    assert result.attempted_aliases == ["a", "b"]
+    assert result.rejected_aliases == ["a", "b"]
+    assert result.error_status_code == 400
+    assert result.rate_limited is False
+    assert "organization_restricted" in result.error
+    assert "disabling aliases: a, b" in result.error
 
 
 def test_scheduler_waits_when_all_per_key_token_buckets_are_full() -> None:

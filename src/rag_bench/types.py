@@ -38,6 +38,7 @@ class RetrievalResult:
     query: Query
     hits: list[RetrievalHit]
     latency_s: float
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
