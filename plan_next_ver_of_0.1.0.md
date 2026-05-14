@@ -186,7 +186,9 @@ Status: implemented in the current working tree; pending final commit.
 26. Add advanced retrieval strategies for benchmarking
    - Status: done.
    - Add `keyword-match` for deterministic keyword/phrase scoring without new dependencies.
+   - In chat mode, let `keyword-match` use the selected Groq model to extract up to 5 short-to-long keyword/keyphrase queries before searching.
    - Add `multi-query` for deterministic BM25 query variants merged by reciprocal-rank fusion.
+   - Harden lexical tokenization for multilingual prompts so Vietnamese instruction text does not overwhelm short scientific identifiers such as `BH1`.
    - Add `hybrid-rrf` for BM25 plus vector reciprocal-rank fusion.
    - Add `vector-rerank` for vector candidates reranked by normalized BM25 lexical scores.
    - Add Groq-backed `llm-query-rewrite` and `llm-multi-query` strategies that spend one retrieval LLM call per benchmark query.
@@ -215,8 +217,7 @@ Status: implemented in the current working tree; pending final commit.
 
 30. Keep the topbar model display minimal
    - Status: done.
-   - Show the selected generation model as a static topbar label.
-   - Remove the redundant topbar dropdown and caret to keep the header compact.
+   - Remove the selected generation model label from the topbar to keep the header compact.
    - Keep model switching in the composer `Model` chip and sidebar settings.
 
 31. Add mobile swipe gesture for opening the chat sidebar
@@ -232,14 +233,18 @@ Status: implemented in the current working tree; pending final commit.
    - Return 5 image results by default and expose a local `Images` setting that sends `image_top_k`/`k_img` for image modes.
    - Return image metadata and inline SVG data URLs through the existing `rag.retrieved` metadata path.
    - Support three chat response modes: text only, text plus related images, and images only.
-   - Let text plus related images use a model-written image query after the text answer; let image-only mode optionally rewrite the image query.
+   - Let text plus related images and image-only mode optionally use a model-written image query when the `Rewrite` chip is enabled.
    - Render image thumbnails as a dedicated answer grid with a dark click-to-enlarge lightbox instead of citation chips or retrieved-context rows.
    - Turn composer chips into controls: response mode, image-query rewrite, direct Search menu, and direct Model menu beside the input.
    - Add divider plus down-caret affordances to menu-style composer chips so adjustable controls are clear.
    - Hide the image-query rewrite toggle outside image-capable modes and remove the static SciFact label from the composer.
+   - Keep `image-digits` out of text Search controls; use it automatically only for `/img`, images-only, or related-image retrieval.
    - Align composer dropdown menus with the chip that opened them, clamp them inside the composer, and close them when clicking elsewhere.
    - Keep composer chips and inline citation pills visually stable when the UI font scale is increased.
    - Rename retrieved-context labels to `Citations and related documents` / `Trích dẫn và tài liệu liên quan`.
+   - In dev mode, show each user question's captured response mode, search strategy, and model choice under the user bubble.
+   - Show the `Rewrite` request tag only when image-query rewrite was explicitly enabled for an image-capable mode.
+   - Hide zero/negative-score related documents from the UI source list unless the answer cites that source directly.
 
 33. Add Kaggle notebook upload script
    - Status: done.

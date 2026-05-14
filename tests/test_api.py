@@ -154,23 +154,31 @@ def test_chat_page() -> None:
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
     assert "modelSelector" not in response.text
+    assert "activeTitle" not in response.text
+    assert "model-selector" not in response.text
     assert "toggleModelMenu" not in response.text
     assert "responseModeTool" in response.text
     assert "imageRewriteTool" in response.text
     assert "menu-chip" in response.text
     assert "chip-divider" in response.text
     assert "chip-caret" in response.text
+    assert "normalizedTextRetrieverChoices" in response.text
+    assert 'retriever !== "image-digits"' in response.text
     assert "positionComposerToolMenu" in response.text
     assert "--composer-menu-left" in response.text
     assert '--composer-menu-bottom' in response.text
     assert 'closest("#composerToolMenu")' in response.text
     assert "imageTopK" in response.text
-    assert "image_top_k: requestImageTopK" in response.text
+    assert "user-request-meta" in response.text
+    assert "captureRequestOptions" in response.text
+    assert "formatUserRequestMeta" in response.text
+    assert 'mode !== "text" && request.image_rewrite' in response.text
+    assert "image_top_k: requestOptions.image_top_k" in response.text
     assert "composerToolMenu" in response.text
     assert "imageSource" in response.text
     assert "imageLightbox" in response.text
     assert "renderImageGrid" in response.text
-    assert "response_mode: selectedResponseMode" in response.text
+    assert "response_mode: requestOptions.response_mode" in response.text
     assert "startChatSwipe" in response.text
     assert "touchstart" in response.text
     assert "__AVAILABLE_RETRIEVERS_JSON__" not in response.text

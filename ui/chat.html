@@ -583,26 +583,6 @@
       display: grid;
     }
 
-    .model-selector {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      max-width: min(52vw, 360px);
-      min-height: 36px;
-      border-radius: 10px;
-      padding: 0 10px;
-      color: var(--text);
-      font-size: 16px;
-      font-weight: 620;
-      cursor: default;
-    }
-
-    .model-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
     .model-menu {
       position: absolute;
       top: calc(100% + 7px);
@@ -1087,6 +1067,20 @@
     .meta-line {
       color: var(--muted);
       font-size: 12px;
+    }
+
+    .user-request-meta {
+      display: flex;
+      justify-content: flex-end;
+      max-width: 100%;
+      margin-top: 5px;
+      padding-right: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+      text-align: right;
+      overflow-wrap: anywhere;
+      opacity: 0.82;
     }
 
     .source-list {
@@ -1584,11 +1578,6 @@
         display: none;
       }
 
-      .model-selector {
-        max-width: calc(100vw - 82px);
-        font-size: 15px;
-      }
-
       .model-menu {
         min-width: min(260px, calc(100vw - 68px));
         max-width: calc(100vw - 68px);
@@ -1671,8 +1660,7 @@
     }
 
     .brand-title strong,
-    .new-chat,
-    .model-selector {
+    .new-chat {
       font-size: var(--font-14);
     }
 
@@ -1885,9 +1873,6 @@
           <button class="icon-btn mobile-menu" id="openSidebar" type="button" title="Open sidebar" aria-label="Open sidebar">
             <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg>
           </button>
-          <div class="model-selector" title="__MODEL_LABEL__">
-            <span class="model-name" id="activeTitle">__MODEL_LABEL__</span>
-          </div>
         </div>
         <div class="topbar-right">
           <div class="status-pill"><span class="status-dot"></span><span data-i18n="proxyReady">Proxy ready</span></div>
@@ -1976,7 +1961,6 @@
     const chat = document.getElementById("chat");
     const conversationList = document.getElementById("conversationList");
     const brandModel = document.getElementById("brandModel");
-    const activeTitle = document.getElementById("activeTitle");
     const composer = document.getElementById("composer");
     const promptInput = document.getElementById("prompt");
     const sendButton = document.getElementById("send");
@@ -2131,6 +2115,7 @@
 
     const MODEL_CHOICES = normalizedModelChoices();
     const RETRIEVER_CHOICES = normalizedRetrieverChoices();
+    const TEXT_RETRIEVER_CHOICES = normalizedTextRetrieverChoices();
     syncViewportHeight();
     const state = loadState();
     const settings = loadSettings();
@@ -2362,6 +2347,11 @@
       return Array.from(new Set(ids.length ? ids : ["bm25"]));
     }
 
+    function normalizedTextRetrieverChoices() {
+      const choices = RETRIEVER_CHOICES.filter((retriever) => retriever !== "image-digits");
+      return choices.length ? choices : ["bm25"];
+    }
+
     function populateModelChoices() {
       modelChoiceInput.textContent = "";
       for (const model of MODEL_CHOICES) {
@@ -2419,7 +2409,7 @@
         ? MODEL_CHOICES.map((value) => ({ value, label: modelLabel(value), title: value }))
         : kind === "mode"
           ? responseModeChoices().map((choice) => ({ ...choice, title: choice.label }))
-          : RETRIEVER_CHOICES.map((value) => ({ value, label: retrieverLabel(value), title: value }));
+          : TEXT_RETRIEVER_CHOICES.map((value) => ({ value, label: retrieverLabel(value), title: value }));
       const selected = kind === "model" ? selectedModel() : kind === "mode" ? selectedResponseMode() : selectedRetriever();
       for (const value of choices) {
         const option = document.createElement("button");
@@ -2454,7 +2444,7 @@
 
     function populateSearchChoices() {
       searchChoiceInput.textContent = "";
-      for (const retriever of RETRIEVER_CHOICES) {
+      for (const retriever of TEXT_RETRIEVER_CHOICES) {
         const option = document.createElement("option");
         option.value = retriever;
         option.textContent = retrieverLabel(retriever);
@@ -2478,7 +2468,7 @@
 
     function normalizeSearchChoice(retriever) {
       const normalized = String(retriever || "").trim().toLowerCase();
-      return RETRIEVER_CHOICES.includes(normalized) ? normalized : RETRIEVER_CHOICES[0];
+      return TEXT_RETRIEVER_CHOICES.includes(normalized) ? normalized : TEXT_RETRIEVER_CHOICES[0];
     }
 
     function selectedRetriever() {
@@ -2512,8 +2502,6 @@
     function updateModelLabels() {
       const model = selectedModel();
       const label = modelLabel(model);
-      activeTitle.textContent = label;
-      activeTitle.title = model;
       brandModel.textContent = label;
       brandModel.title = model;
       app.dataset.model = model;
@@ -2553,22 +2541,19 @@
       return /^\s*\/(img|image)(\s|$)/i.test(text);
     }
 
-    function requestTopK(apiMessages) {
-      const lastUser = [...apiMessages].reverse().find((message) => message.role === "user");
-      return isImageCommand(String(lastUser?.content || "")) ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined;
-    }
-
-    function requestImageTopK(apiMessages) {
-      const lastUser = [...apiMessages].reverse().find((message) => message.role === "user");
-      const explicitImageCommand = isImageCommand(String(lastUser?.content || ""));
-      return selectedResponseMode() !== "text" || explicitImageCommand ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined;
-    }
-
-    function shouldRewriteImageQuery() {
-      const mode = selectedResponseMode();
-      if (mode === "text_image") return true;
-      if (mode === "image") return Boolean(settings.imageRewrite);
-      return false;
+    function captureRequestOptions(text) {
+      const explicitImageCommand = isImageCommand(text);
+      const responseMode = explicitImageCommand ? "image" : selectedResponseMode();
+      const usesImageResults = responseMode !== "text" || explicitImageCommand;
+      return {
+        response_mode: responseMode,
+        retriever: responseMode === "image" ? "image-digits" : selectedRetriever(),
+        model: selectedModel(),
+        image_rewrite: responseMode !== "text" ? Boolean(settings.imageRewrite) : false,
+        image_top_k: usesImageResults ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined,
+        max_tokens: settings.maxTokens,
+        temperature: settings.temperature
+      };
     }
 
     function modelLabel(model) {
@@ -2923,6 +2908,9 @@
         bubble.appendChild(renderImageGrid(images));
       }
       body.appendChild(bubble);
+      if (message.role === "user" && settings.devMode && message.request) {
+        body.appendChild(renderUserRequestMeta(message.request));
+      }
 
       const footer = document.createElement("div");
       footer.className = "message-footer";
@@ -2953,6 +2941,29 @@
 
       turn.append(avatar, body);
       return turn;
+    }
+
+    function renderUserRequestMeta(request) {
+      const meta = document.createElement("div");
+      meta.className = "user-request-meta";
+      meta.textContent = formatUserRequestMeta(request);
+      return meta;
+    }
+
+    function formatUserRequestMeta(request) {
+      const mode = normalizeResponseMode(request.response_mode);
+      const parts = [responseModeLabel(mode)];
+      const retriever = normalizeSearchChoice(request.retriever || selectedRetriever());
+      if (mode === "image") {
+        parts.push(retrieverLabel("image-digits"));
+      } else {
+        parts.push(retrieverLabel(retriever));
+      }
+      if (mode !== "image" || request.image_rewrite) {
+        parts.push(shortModelLabel(normalizeModelChoice(request.model || selectedModel())));
+      }
+      if (mode !== "text" && request.image_rewrite) parts.push(t("rewrite"));
+      return parts.filter(Boolean).join(" | ");
     }
 
     function displayMessageContent(message) {
@@ -3227,7 +3238,8 @@
 
     async function sendNewUserMessage(text) {
       const conversation = activeConversation();
-      const userMessage = { role: "user", content: text };
+      saveSettingsFromInputs();
+      const userMessage = { role: "user", content: text, request: captureRequestOptions(text) };
       conversation.messages.push(userMessage);
       if (!conversation.title || conversation.title === "New chat" || conversation.title === "Chat mới") {
         conversation.title = titleFrom(text);
@@ -3245,7 +3257,8 @@
         return;
       }
       conversation.messages = conversation.messages.slice(0, index + 1);
-      conversation.messages[index] = { role: "user", content: text };
+      saveSettingsFromInputs();
+      conversation.messages[index] = { role: "user", content: text, request: captureRequestOptions(text) };
       if (index === firstUserMessageIndex(conversation)) {
         conversation.title = titleFrom(text);
       }
@@ -3297,6 +3310,9 @@
 
     async function requestAssistant(conversation, userIndex) {
       hideNotice();
+      const userMessage = conversation.messages[userIndex];
+      const requestOptions = userMessage?.request || captureRequestOptions(userMessage?.content || "");
+      if (userMessage && userMessage.role === "user") userMessage.request = requestOptions;
       const assistant = { role: "assistant", content: "", pending: true, sources: [], meta: null };
       conversation.messages.push(assistant);
       conversation.updatedAt = Date.now();
@@ -3311,7 +3327,7 @@
         .map((message) => ({ role: message.role, content: message.content }));
 
       try {
-        const result = await fetchAssistant(apiMessages, activeController.signal);
+        const result = await fetchAssistant(apiMessages, activeController.signal, requestOptions);
         assistant.content = result.content || t("emptyAnswer");
         assistant.sources = result.sources || [];
         assistant.meta = result.meta || null;
@@ -3333,8 +3349,7 @@
       }
     }
 
-    async function fetchAssistant(apiMessages, signal) {
-      saveSettingsFromInputs();
+    async function fetchAssistant(apiMessages, signal, requestOptions) {
       const headers = { "Content-Type": "application/json" };
       if (settings.apiKey) headers.Authorization = "Bearer " + settings.apiKey;
       const response = await fetch("/v1/chat/completions", {
@@ -3342,15 +3357,14 @@
         headers,
         signal,
         body: JSON.stringify({
-          model: selectedModel(),
-          retriever: selectedRetriever(),
+          model: requestOptions.model,
+          retriever: requestOptions.retriever,
           messages: apiMessages,
-          temperature: settings.temperature,
-          max_tokens: settings.maxTokens,
-          top_k: requestTopK(apiMessages),
-          image_top_k: requestImageTopK(apiMessages),
-          response_mode: selectedResponseMode(),
-          image_rewrite: shouldRewriteImageQuery(),
+          temperature: requestOptions.temperature,
+          max_tokens: requestOptions.max_tokens,
+          image_top_k: requestOptions.image_top_k,
+          response_mode: requestOptions.response_mode,
+          image_rewrite: requestOptions.image_rewrite,
           stream: true
         })
       });
@@ -3363,10 +3377,10 @@
       }
       const streamed = await readSseResponse(response, signal);
       if (streamed.content && streamed.content.trim()) return streamed;
-      return fetchAssistantJson(apiMessages, signal);
+      return fetchAssistantJson(apiMessages, signal, requestOptions);
     }
 
-    async function fetchAssistantJson(apiMessages, signal) {
+    async function fetchAssistantJson(apiMessages, signal, requestOptions) {
       const headers = { "Content-Type": "application/json" };
       if (settings.apiKey) headers.Authorization = "Bearer " + settings.apiKey;
       const response = await fetch("/v1/chat/completions", {
@@ -3374,15 +3388,14 @@
         headers,
         signal,
         body: JSON.stringify({
-          model: selectedModel(),
-          retriever: selectedRetriever(),
+          model: requestOptions.model,
+          retriever: requestOptions.retriever,
           messages: apiMessages,
-          temperature: settings.temperature,
-          max_tokens: settings.maxTokens,
-          top_k: requestTopK(apiMessages),
-          image_top_k: requestImageTopK(apiMessages),
-          response_mode: selectedResponseMode(),
-          image_rewrite: shouldRewriteImageQuery(),
+          temperature: requestOptions.temperature,
+          max_tokens: requestOptions.max_tokens,
+          image_top_k: requestOptions.image_top_k,
+          response_mode: requestOptions.response_mode,
+          image_rewrite: requestOptions.image_rewrite,
           stream: false
         })
       });

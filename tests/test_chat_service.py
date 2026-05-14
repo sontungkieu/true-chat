@@ -61,6 +61,39 @@ class FakeImageRetriever:
         )
 
 
+@dataclass
+class FakeKeywordRetriever:
+    name: str = "keyword-match"
+    build_time_s: float = 0.0
+    seen_queries: list[str] | None = None
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        if self.seen_queries is None:
+            self.seen_queries = []
+        self.seen_queries.append(query.text)
+        score = 4.0 if "BH1" in query.text else 0.0
+        return RetrievalResult(
+            query=query,
+            hits=[
+                RetrievalHit(
+                    doc_id="bcl2-doc",
+                    score=score,
+                    rank=1,
+                    title="BH1 and BH2 domains of Bcl-2",
+                    text="BH1 and BH2 domains of Bcl-2 are required for apoptosis inhibition.",
+                ),
+                RetrievalHit(
+                    doc_id="noise-doc",
+                    score=0.0,
+                    rank=2,
+                    title="Unrelated",
+                    text="Unrelated document.",
+                ),
+            ],
+            latency_s=0.01,
+        )
+
+
 class FakeLLM:
     def __init__(self) -> None:
         self.key_usage_counts = {"alias-a": 1}
@@ -121,6 +154,43 @@ class FakeImageRewriteLLM(FakeLLM):
             completion_tokens=2,
             total_tokens=12,
             estimated_tokens=12,
+        )
+
+
+class FakeKeywordLLM(FakeLLM):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_completion_tokens: int = 512,
+    ) -> GenerationResult:
+        self.calls += 1
+        self.messages = messages
+        self.model = model
+        self.temperature = temperature
+        self.max_completion_tokens = max_completion_tokens
+        if self.calls == 1:
+            answer = '["BH1", "BH1 Bcl-2", "BH1 domain apoptosis"]'
+            completion_tokens = 12
+        else:
+            answer = "BH1 is a Bcl-2 domain [bcl2-doc]."
+            completion_tokens = 8
+        return GenerationResult(
+            answer=answer,
+            key_alias="alias-keyword",
+            attempted_aliases=["alias-keyword"],
+            latency_s=0.01,
+            retry_count=0,
+            prompt_tokens=15,
+            completion_tokens=completion_tokens,
+            total_tokens=15 + completion_tokens,
+            estimated_tokens=30,
         )
 
 
@@ -205,6 +275,35 @@ def test_rag_chat_service_resolves_retriever_alias() -> None:
     )
 
     assert service.resolve_request_retriever("lexical").name == "bm25"
+
+
+def test_text_mode_ignores_image_retriever_request() -> None:
+    llm = FakeLLM()
+    text_retriever = FakeRetriever()
+    image_retriever = FakeImageRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[Document("cat-doc", "Cats purr and chase toys.", "Cats")],
+            qrels={},
+        ),
+        retriever=text_retriever,
+        llm=llm,
+        retrievers={"bm25": text_retriever, "image-digits": image_retriever},
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "What do cats do?"}],
+        request_retriever="image-digits",
+        response_mode="text",
+    )
+
+    assert result.response["rag"]["retriever"] == "bm25"
+    assert result.response["rag"]["retrieved"][0]["doc_id"] == "cat-doc"
+    assert image_retriever.seen_top_k is None
 
 
 def test_img_command_routes_to_image_retriever_without_llm_generation() -> None:
@@ -321,6 +420,80 @@ def test_text_image_mode_appends_image_results_after_text_retrieval() -> None:
     assert result.response["rag"]["retrieval_metadata"]["response_mode"] == "text_image"
     assert result.response["rag"]["retrieval_metadata"]["image_top_k"] == 3
     assert image_retriever.seen_top_k == 3
+
+
+def test_keyword_match_uses_llm_keywords_before_search() -> None:
+    keyword_retriever = FakeKeywordRetriever()
+    llm = FakeKeywordLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=keyword_retriever,
+        llm=llm,
+        retrievers={"keyword-match": keyword_retriever},
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "giải thích BH1 bằng tiếng Việt"}],
+        request_retriever="keyword-match",
+        request_model="qwen/qwen3-32b",
+    )
+
+    assert keyword_retriever.seen_queries == ["BH1", "BH1 Bcl-2", "BH1 domain apoptosis"]
+    assert result.response["choices"][0]["message"]["content"] == "BH1 is a Bcl-2 domain [bcl2-doc]."
+    assert result.response["rag"]["retriever"] == "keyword-match"
+    assert result.response["rag"]["retrieval_metadata"]["keyword_llm_calls"] == 1
+    assert result.response["rag"]["retrieval_metadata"]["keyword_query_variants"] == [
+        "BH1",
+        "BH1 Bcl-2",
+        "BH1 domain apoptosis",
+    ]
+    assert [source["doc_id"] for source in result.response["rag"]["retrieved"]] == ["bcl2-doc"]
+    assert llm.calls == 2
+    assert llm.model == "qwen/qwen3-32b"
+
+
+def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_remain() -> None:
+    class LowScoreRetriever(FakeRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(doc_id="cited-low", score=0.0, rank=1, title="Cited", text="Cited low score."),
+                    RetrievalHit(doc_id="uncited-low", score=0.0, rank=2, title="Uncited", text="Uncited low score."),
+                ],
+                latency_s=0.01,
+            )
+
+    class CitingLLM(FakeLLM):
+        def generate(self, *args, **kwargs) -> GenerationResult:
+            result = super().generate(*args, **kwargs)
+            result.answer = "The answer cites one low-score source [cited-low]."
+            return result
+
+    retriever = LowScoreRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=retriever,
+        llm=CitingLLM(),
+    )
+
+    result = service.answer([{"role": "user", "content": "What do cats do?"}])
+
+    assert [source["doc_id"] for source in result.response["rag"]["retrieved"]] == ["cited-low"]
 
 
 def test_last_user_text_supports_openai_text_parts() -> None:

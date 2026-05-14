@@ -12,7 +12,7 @@ import numpy as np
 from rag_bench.types import Document, RetrievalHit, RetrievalResult, Query
 
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 STOPWORDS = {
     "a",
     "an",
@@ -38,6 +38,17 @@ STOPWORDS = {
     "was",
     "were",
     "with",
+    "bang",
+    "bằng",
+    "explain",
+    "giai",
+    "giải",
+    "thich",
+    "thích",
+    "tieng",
+    "tiếng",
+    "viet",
+    "việt",
 }
 DIGIT_WORDS = {
     "zero": 0,

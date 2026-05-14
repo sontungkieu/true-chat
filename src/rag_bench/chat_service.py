@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from rag_bench.prompts import SYSTEM_PROMPT
 from rag_bench.retriever_registry import create_retriever, normalize_retriever_id
 from rag_bench.retrievers import Retriever
 from rag_bench.secrets import ApiKey, load_groq_keys
-from rag_bench.types import BenchmarkData, Query, RetrievalHit
+from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 
 DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
@@ -161,9 +162,17 @@ class RagChatService:
                 retrieval_metadata=retrieval_metadata,
             )
 
-        retriever = self.resolve_request_retriever(request_retriever)
+        retriever = self.resolve_text_request_retriever(request_retriever)
         request_top_k = _clamp_top_k(top_k, fallback=self.config.top_k)
-        retrieval = retriever.search(Query(query_id="chat", text=question), request_top_k)
+        if retriever.name == "keyword-match":
+            retrieval = self._keyword_search(
+                retriever,
+                question,
+                request_top_k,
+                generation_model=generation_model,
+            )
+        else:
+            retrieval = retriever.search(Query(query_id="chat", text=question), request_top_k)
         prompt_messages = build_chat_rag_messages(
             messages,
             retrieval.hits,
@@ -278,7 +287,7 @@ class RagChatService:
                         "metadata": hit.metadata,
                         **_flatten_hit_metadata(hit.metadata),
                     }
-                    for hit in hits
+                    for hit in _filter_retrieved_for_display(hits, answer)
                 ],
                 "key_alias": generation.key_alias,
                 "attempted_aliases": generation.attempted_aliases,
@@ -322,6 +331,17 @@ class RagChatService:
             allowed = ", ".join(self.available_retriever_ids())
             raise ValueError(f"Unknown retriever '{request_retriever}'. Use one of: {allowed}.") from exc
 
+    def resolve_text_request_retriever(self, request_retriever: str | None) -> Retriever:
+        retriever = self.resolve_request_retriever(request_retriever)
+        if retriever.name != "image-digits":
+            return retriever
+        if self.retriever.name != "image-digits":
+            return self.retriever
+        for candidate in self.retrievers.values():
+            if candidate.name != "image-digits":
+                return candidate
+        raise ValueError("Text mode requires a non-image retriever.")
+
     def _image_query(self, text: str, generation_model: str, *, image_rewrite: bool | None) -> tuple[str, dict[str, Any]]:
         query = _strip_command_prefix(text) or "digit image"
         should_rewrite = bool(image_rewrite)
@@ -362,6 +382,161 @@ class RagChatService:
             "image_query_completion_tokens": generation.completion_tokens,
             "image_query_total_tokens": generation.total_tokens,
         }
+
+    def _keyword_search(
+        self,
+        retriever: Retriever,
+        question: str,
+        top_k: int,
+        *,
+        generation_model: str,
+    ) -> RetrievalResult:
+        started = time.perf_counter()
+        variants, metadata = _keyword_query_variants(self.llm, question, model=generation_model)
+        search_texts = list(variants) if variants else [question]
+        candidate_k = max(top_k * 5, top_k, 20)
+        results = [
+            retriever.search(Query(query_id="chat-keyword", text=variant), candidate_k)
+            for variant in search_texts
+        ]
+        hits = _merge_positive_keyword_hits(results, top_k=top_k)
+        if not hits and variants:
+            fallback = retriever.search(Query(query_id="chat-keyword", text=question), top_k)
+            hits = [hit for hit in fallback.hits if hit.score > 0]
+            metadata["keyword_fallback_to_original"] = True
+        metadata["keyword_query_variants"] = search_texts
+        return RetrievalResult(
+            query=Query(query_id="chat", text=question),
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata=metadata,
+        )
+
+
+def _keyword_query_variants(
+    llm: ChatGenerationClient,
+    question: str,
+    *,
+    model: str,
+    max_keywords: int = 5,
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    generation = llm.generate(
+        [
+            {
+                "role": "system",
+                "content": (
+                    f"Extract up to {max_keywords} keyword or keyphrase search queries for a scientific keyword index. "
+                    "Return only a JSON array of strings. Include a mix of short identifiers and longer phrases. "
+                    "Preserve scientific identifiers exactly, such as BH1, BH2, Bcl-2, Bax, or gene names. "
+                    "Do not translate identifiers and do not answer the question."
+                ),
+            },
+            {"role": "user", "content": question},
+        ],
+        model=model,
+        temperature=0.0,
+        max_completion_tokens=96,
+    )
+    variants = _parse_string_array(str(generation.answer or ""), limit=max_keywords)
+    if generation.error:
+        variants = ()
+    metadata = {
+        "keyword_llm_calls": 1,
+        "keyword_llm_model": model,
+        "keyword_llm_key_alias": generation.key_alias,
+        "keyword_llm_attempted_aliases": list(generation.attempted_aliases or []),
+        "keyword_llm_rejected_aliases": list(generation.rejected_aliases or []),
+        "keyword_llm_retry_count": generation.retry_count,
+        "keyword_llm_prompt_tokens": generation.prompt_tokens,
+        "keyword_llm_completion_tokens": generation.completion_tokens,
+        "keyword_llm_total_tokens": generation.total_tokens,
+        "keyword_llm_error": generation.error,
+    }
+    return variants, metadata
+
+
+def _merge_positive_keyword_hits(results: list[RetrievalResult], *, top_k: int) -> list[RetrievalHit]:
+    scores: dict[str, float] = {}
+    best_rank: dict[str, int] = {}
+    hits_by_doc_id: dict[str, RetrievalHit] = {}
+    for result in results:
+        for hit in result.hits:
+            if hit.score <= 0:
+                continue
+            scores[hit.doc_id] = scores.get(hit.doc_id, 0.0) + float(hit.score) + 1.0 / (60 + hit.rank)
+            best_rank[hit.doc_id] = min(best_rank.get(hit.doc_id, hit.rank), hit.rank)
+            hits_by_doc_id.setdefault(hit.doc_id, hit)
+    ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank[doc_id], doc_id))
+    return [
+        RetrievalHit(
+            doc_id=doc_id,
+            score=scores[doc_id],
+            rank=rank,
+            title=hits_by_doc_id[doc_id].title,
+            text=hits_by_doc_id[doc_id].text,
+            metadata=hits_by_doc_id[doc_id].metadata,
+        )
+        for rank, doc_id in enumerate(ranked[:top_k], 1)
+    ]
+
+
+def _filter_retrieved_for_display(hits: list[RetrievalHit], answer: str) -> list[RetrievalHit]:
+    cited_doc_ids = _cited_doc_ids(answer)
+    return [
+        hit
+        for hit in hits
+        if hit.score > 0 or hit.doc_id in cited_doc_ids or _hit_is_image(hit)
+    ]
+
+
+def _cited_doc_ids(answer: str) -> set[str]:
+    return {match.group(1).strip() for match in re.finditer(r"\[([^\[\]]+)\]", answer or "")}
+
+
+def _hit_is_image(hit: RetrievalHit) -> bool:
+    return bool(hit.metadata.get("image_data_url") or hit.metadata.get("image_url") or hit.metadata.get("kind") == "image")
+
+
+def _parse_string_array(text: str, *, limit: int) -> tuple[str, ...]:
+    stripped = _strip_code_fence(text.strip())
+    candidates = [stripped]
+    start = stripped.find("[")
+    end = stripped.rfind("]")
+    if start >= 0 and end > start:
+        candidates.append(stripped[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return _dedupe_strings([str(item) for item in parsed if isinstance(item, str)])[:limit]
+    lines = [
+        re.sub(r"^[-*\d.)\s]+", "", line).strip(" \"'")
+        for line in stripped.splitlines()
+        if line.strip()
+    ]
+    return _dedupe_strings(lines)[:limit]
+
+
+def _strip_code_fence(text: str) -> str:
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 2 and lines[-1].strip() == "```":
+            return "\n".join(lines[1:-1]).strip()
+    return text
+
+
+def _dedupe_strings(values: list[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = " ".join(value.split())
+        key = normalized.lower()
+        if normalized and key not in seen:
+            seen.add(key)
+            result.append(normalized)
+    return tuple(result)
 
 
 def _build_llm(config: ChatProxyConfig, keys: list[ApiKey]) -> RoundRobinGroqClient:

@@ -96,6 +96,28 @@ def test_multi_query_retriever_returns_relevant_document_first() -> None:
     assert result.hits[0].rank == 1
 
 
+def test_multi_query_keeps_scientific_token_from_vietnamese_instruction() -> None:
+    docs = [
+        Document(
+            doc_id="bcl2-doc",
+            title="BH1 and BH2 domains of Bcl-2",
+            text="BH1 and BH2 are conserved Bcl-2 domains required for apoptosis inhibition.",
+        ),
+        Document(
+            doc_id="noise-doc",
+            title="Instruction fragments",
+            text="vi t ng th ch b vi t ng th ch b vi t ng th ch b unrelated clinical trial",
+        ),
+    ]
+    retriever = MultiQueryRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "giải thích BH1 bằng tiếng Việt"), top_k=2)
+
+    assert result.hits[0].doc_id == "bcl2-doc"
+    assert result.hits[0].rank == 1
+
+
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:
     docs = [
         Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),
