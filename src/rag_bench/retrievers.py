@@ -164,6 +164,230 @@ class KeywordMatchRetriever:
 
 
 @dataclass
+class GraphBm25Retriever:
+    seed_multiplier: int = 10
+    min_seed_candidates: int = 20
+    candidate_multiplier: int = 30
+    min_candidates: int = 80
+    max_doc_terms: int = 40
+    max_expansion_terms: int = 48
+    max_doc_freq_ratio: float = 0.15
+    lexical_weight: float = 0.65
+    graph_weight: float = 0.35
+    rrf_k: int = 60
+    name: str = "graph-bm25"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        from rank_bm25 import BM25Okapi
+
+        started = time.perf_counter()
+        self._documents = list(documents)
+        self._bm25 = BM25Okapi([_tokenize(doc.display_text) for doc in self._documents])
+        self._doc_graph_terms: list[tuple[str, ...]] = []
+        self._term_to_doc_indexes: dict[str, tuple[int, ...]] = {}
+        self._term_idf: dict[str, float] = {}
+
+        doc_freq: dict[str, int] = {}
+        for doc in self._documents:
+            counts = _graph_token_counts(doc.display_text)
+            for term in counts:
+                doc_freq[term] = doc_freq.get(term, 0) + 1
+
+        document_count = len(self._documents)
+        if document_count == 0:
+            self.build_time_s = time.perf_counter() - started
+            return
+
+        max_doc_freq = max(2, int(document_count * self.max_doc_freq_ratio))
+        graph_terms = {
+            term
+            for term, frequency in doc_freq.items()
+            if 2 <= frequency <= max_doc_freq
+        }
+        self._term_idf = {
+            term: float(np.log((1.0 + document_count) / (1.0 + doc_freq[term])) + 1.0)
+            for term in graph_terms
+        }
+
+        postings: dict[str, list[int]] = {term: [] for term in graph_terms}
+        for doc_index, doc in enumerate(self._documents):
+            counts = _graph_token_counts(doc.display_text)
+            ranked_terms = sorted(
+                (term for term in counts if term in graph_terms),
+                key=lambda term: (-counts[term] * self._term_idf[term], term),
+            )
+            selected_terms = tuple(ranked_terms[: self.max_doc_terms])
+            self._doc_graph_terms.append(selected_terms)
+            for term in selected_terms:
+                postings[term].append(doc_index)
+
+        self._term_to_doc_indexes = {
+            term: tuple(indexes)
+            for term, indexes in postings.items()
+            if len(indexes) >= 2
+        }
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        if top_k <= 0:
+            return RetrievalResult(query=query, hits=[], latency_s=time.perf_counter() - started)
+
+        bm25_scores = np.asarray(self._bm25.get_scores(_tokenize(query.text)), dtype=np.float32)
+        seed_k = min(
+            len(self._documents),
+            _candidate_k(top_k, self.min_seed_candidates, self.seed_multiplier),
+        )
+        seed_indexes = _rank_scores(bm25_scores, seed_k)
+        query_terms = {
+            term for term in _content_tokens(query.text)
+            if term in self._term_to_doc_indexes
+        }
+        expansion_terms = self._expansion_terms(seed_indexes, query_terms)
+        graph_scores = self._graph_scores(seed_indexes, query_terms, expansion_terms)
+
+        candidate_indexes = set(seed_indexes[: _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)])
+        for term in expansion_terms:
+            candidate_indexes.update(self._term_to_doc_indexes.get(term, ()))
+        if not candidate_indexes:
+            candidate_indexes.update(seed_indexes[:top_k])
+
+        ranked = self._rank_combined(candidate_indexes, bm25_scores, graph_scores, top_k)
+        hits = [
+            RetrievalHit(
+                doc_id=self._documents[index].doc_id,
+                score=float(score),
+                rank=rank,
+                title=self._documents[index].title,
+                text=self._documents[index].text,
+                metadata={
+                    "bm25_score": float(bm25_scores[index]),
+                    "graph_score": float(graph_scores[index]),
+                },
+            )
+            for rank, (index, score) in enumerate(ranked, 1)
+        ]
+        return RetrievalResult(
+            query=query,
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata={
+                "seed_count": len(seed_indexes),
+                "graph_candidate_count": len(candidate_indexes),
+                "graph_expansion_terms": list(expansion_terms),
+                "graph_query_terms": sorted(query_terms),
+                "lexical_weight": self.lexical_weight,
+                "graph_weight": self.graph_weight,
+            },
+        )
+
+    def _expansion_terms(self, seed_indexes: list[int], query_terms: set[str]) -> tuple[str, ...]:
+        terms: list[str] = []
+        seen: set[str] = set()
+
+        def add(term: str) -> None:
+            if term not in seen and term in self._term_to_doc_indexes:
+                seen.add(term)
+                terms.append(term)
+
+        for term in sorted(query_terms, key=lambda value: (-self._term_idf.get(value, 0.0), value)):
+            add(term)
+        for index in seed_indexes[: max(1, min(10, len(seed_indexes)))]:
+            for term in self._doc_graph_terms[index]:
+                add(term)
+                if len(terms) >= self.max_expansion_terms:
+                    return tuple(terms)
+        return tuple(terms[: self.max_expansion_terms])
+
+    def _graph_scores(
+        self,
+        seed_indexes: list[int],
+        query_terms: set[str],
+        expansion_terms: tuple[str, ...],
+    ) -> np.ndarray:
+        scores = np.zeros(len(self._documents), dtype=np.float32)
+        expansion_set = set(expansion_terms)
+        for seed_rank, seed_index in enumerate(seed_indexes, 1):
+            seed_terms = set(self._doc_graph_terms[seed_index])
+            relevant_terms = seed_terms & expansion_set
+            if not relevant_terms:
+                continue
+            seed_weight = 1.0 / (self.rrf_k + seed_rank)
+            for term in relevant_terms:
+                term_weight = self._term_idf.get(term, 1.0) * (2.0 if term in query_terms else 1.0)
+                for doc_index in self._term_to_doc_indexes.get(term, ()):
+                    scores[doc_index] += seed_weight * term_weight
+        return scores
+
+    def _rank_combined(
+        self,
+        candidate_indexes: set[int],
+        bm25_scores: np.ndarray,
+        graph_scores: np.ndarray,
+        top_k: int,
+    ) -> list[tuple[int, float]]:
+        indexes = sorted(candidate_indexes)
+        if not indexes:
+            return []
+        lexical = _normalize_vector(np.asarray([bm25_scores[index] for index in indexes], dtype=np.float32))
+        graph = _normalize_vector(np.asarray([graph_scores[index] for index in indexes], dtype=np.float32))
+        combined = self.lexical_weight * lexical + self.graph_weight * graph
+        rows = [
+            (index, float(score), float(lexical_score), float(graph_score))
+            for index, score, lexical_score, graph_score in zip(indexes, combined, lexical, graph, strict=False)
+        ]
+        rows.sort(key=lambda row: (-row[1], -row[2], -row[3], self._documents[row[0]].doc_id))
+        return [(index, score) for index, score, _lexical, _graph in rows[:top_k]]
+
+
+@dataclass
+class DictionaryGraphRetriever:
+    rrf_k: int = 60
+    candidate_multiplier: int = 20
+    min_candidates: int = 50
+    name: str = "dictionary-graph"
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        started = time.perf_counter()
+        self._documents = list(documents)
+        self._bm25 = BM25Retriever()
+        self._graph = GraphBm25Retriever()
+        if self._documents:
+            self._bm25.build(self._documents)
+            self._graph.build(self._documents)
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        if top_k <= 0 or not self._documents:
+            return RetrievalResult(
+                query=query,
+                hits=[],
+                latency_s=time.perf_counter() - started,
+                metadata={"kind": "dictionary", "entry_count": len(getattr(self, "_documents", []))},
+            )
+
+        candidate_k = _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)
+        lexical = self._bm25.search(query, candidate_k)
+        graph = self._graph.search(query, candidate_k)
+        hits = _dictionary_merge(lexical, graph, query=query, top_k=top_k, rrf_k=self.rrf_k)
+        return RetrievalResult(
+            query=query,
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata={
+                "kind": "dictionary",
+                "entry_count": len(self._documents),
+                "lexical_latency_s": lexical.latency_s,
+                "graph_latency_s": graph.latency_s,
+                "graph_metadata": graph.metadata,
+            },
+        )
+
+
+@dataclass
 class VectorRetriever:
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     encoder: object | None = None
@@ -518,6 +742,18 @@ def _token_counts(text: str) -> dict[str, int]:
     return counts
 
 
+def _graph_token_counts(text: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for token in _content_tokens(text):
+        if _is_graph_token(token):
+            counts[token] = counts.get(token, 0) + 1
+    return counts
+
+
+def _is_graph_token(token: str) -> bool:
+    return len(token) >= 3 or any(character.isdigit() for character in token)
+
+
 def _rank_scores(scores: np.ndarray, top_k: int) -> list[int]:
     if top_k <= 0:
         return []
@@ -527,7 +763,7 @@ def _rank_scores(scores: np.ndarray, top_k: int) -> list[int]:
 
 
 def _hit_from_doc(doc: Document, score: float, rank: int) -> RetrievalHit:
-    return RetrievalHit(doc_id=doc.doc_id, score=score, rank=rank, title=doc.title, text=doc.text)
+    return RetrievalHit(doc_id=doc.doc_id, score=score, rank=rank, title=doc.title, text=doc.text, metadata=dict(doc.metadata))
 
 
 def _candidate_k(top_k: int, min_candidates: int, candidate_multiplier: int) -> int:
@@ -557,6 +793,52 @@ def _rrf_merge(results: list[RetrievalResult], *, top_k: int, rrf_k: int) -> lis
             )
         for rank, doc_id in enumerate(ranked[:top_k], 1)
     ]
+
+
+def _dictionary_merge(
+    lexical: RetrievalResult,
+    graph: RetrievalResult,
+    *,
+    query: Query,
+    top_k: int,
+    rrf_k: int,
+) -> list[RetrievalHit]:
+    query_key = _dictionary_query_key(query.text)
+    scores: dict[str, float] = {}
+    best_rank: dict[str, int] = {}
+    hits_by_doc_id: dict[str, RetrievalHit] = {}
+    for weight, result in ((1.0, lexical), (0.75, graph)):
+        for hit in result.hits:
+            scores[hit.doc_id] = scores.get(hit.doc_id, 0.0) + weight / (rrf_k + hit.rank)
+            best_rank[hit.doc_id] = min(best_rank.get(hit.doc_id, hit.rank), hit.rank)
+            hits_by_doc_id.setdefault(hit.doc_id, hit)
+    if query_key:
+        for doc_id, hit in hits_by_doc_id.items():
+            headword = str(hit.metadata.get("headword") or hit.title or "")
+            headword_key = _dictionary_query_key(headword)
+            if headword_key == query_key:
+                scores[doc_id] = scores.get(doc_id, 0.0) + 1.0
+            elif query_key and (query_key in headword_key or headword_key in query_key):
+                scores[doc_id] = scores.get(doc_id, 0.0) + 0.35
+    ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank.get(doc_id, 9999), doc_id))
+    return [
+        RetrievalHit(
+            doc_id=doc_id,
+            score=scores[doc_id],
+            rank=rank,
+            title=hits_by_doc_id[doc_id].title,
+            text=hits_by_doc_id[doc_id].text,
+            metadata=hits_by_doc_id[doc_id].metadata,
+        )
+        for rank, doc_id in enumerate(ranked[:top_k], 1)
+    ]
+
+
+def _dictionary_query_key(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized)
+    normalized = normalized.split(",", 1)[0]
+    return normalized.strip()
 
 
 def _normalize_vector(values: np.ndarray) -> np.ndarray:

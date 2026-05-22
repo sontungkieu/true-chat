@@ -803,7 +803,7 @@
       object-fit: contain;
     }
 
-    .doc-content pre {
+    .doc-text {
       display: block;
       width: 100%;
       max-width: 100%;
@@ -815,7 +815,53 @@
       overflow-x: hidden;
       overflow-wrap: anywhere;
       word-break: break-word;
+      white-space: normal;
+    }
+
+    .doc-text.plain {
       white-space: pre-wrap;
+    }
+
+    .rich-block {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .rich-paragraph {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    .rich-table-row {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .rich-table-cell {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-soft);
+      padding: 10px 12px;
+    }
+
+    .rich-run {
+      overflow-wrap: anywhere;
+    }
+
+    .rich-run[data-highlight] {
+      background: rgba(250, 204, 21, 0.28);
+      border-radius: 3px;
+    }
+
+    sup.rich-run,
+    sub.rich-run {
+      font-size: 0.72em;
+      line-height: 0;
     }
 
     .welcome {
@@ -1702,7 +1748,7 @@
     }
 
     .doc-heading strong,
-    .doc-content pre,
+    .doc-text,
     .quick span {
       font-size: var(--font-14);
     }
@@ -1936,7 +1982,7 @@
           <div class="doc-meta" id="docMeta"></div>
           <div class="doc-content">
             <div class="doc-image-wrap" id="docImageWrap"><img class="doc-image" id="docImage" alt=""></div>
-            <pre id="docText"></pre>
+            <div class="doc-text plain" id="docText"></div>
           </div>
         </aside>
       </div>
@@ -2057,7 +2103,8 @@
         send: "Send",
         newChatTitle: "New chat",
         source: "source",
-        ragDefault: "RAG default"
+        ragDefault: "RAG default",
+        dictionary: "Dictionary"
       },
       vi: {
         appTitle: "RAG Chat",
@@ -2109,7 +2156,8 @@
         send: "Gửi",
         newChatTitle: "Chat mới",
         source: "nguồn",
-        ragDefault: "RAG mặc định"
+        ragDefault: "RAG mặc định",
+        dictionary: "Từ điển"
       }
     };
 
@@ -2348,7 +2396,7 @@
     }
 
     function normalizedTextRetrieverChoices() {
-      const choices = RETRIEVER_CHOICES.filter((retriever) => retriever !== "image-digits");
+      const choices = RETRIEVER_CHOICES.filter((retriever) => retriever !== "image-digits" && retriever !== "dictionary-graph");
       return choices.length ? choices : ["bm25"];
     }
 
@@ -2479,7 +2527,8 @@
       return [
         { value: "text", label: currentLanguage() === "vi" ? "Chỉ text" : "Text only" },
         { value: "text_image", label: currentLanguage() === "vi" ? "Text + ảnh" : "Text + images" },
-        { value: "image", label: currentLanguage() === "vi" ? "Chỉ ảnh" : "Images only" }
+        { value: "image", label: currentLanguage() === "vi" ? "Chỉ ảnh" : "Images only" },
+        { value: "dictionary", label: t("dictionary") }
       ];
     }
 
@@ -2487,6 +2536,7 @@
       const normalized = String(value || "text").trim().toLowerCase().replace("+", "_").replace("-", "_");
       if (["image", "images", "img"].includes(normalized)) return "image";
       if (["text_image", "text_images", "text_and_image", "text_and_images", "mixed"].includes(normalized)) return "text_image";
+      if (["dictionary", "dict", "tu_dien", "từ_điển"].includes(normalized)) return "dictionary";
       return "text";
     }
 
@@ -2514,10 +2564,10 @@
 
     function updateComposerTools() {
       const mode = selectedResponseMode();
-      const usesImages = mode !== "text";
-      const usesTextRetrieval = mode !== "image";
+      const usesImages = mode === "image" || mode === "text_image";
+      const usesTextRetrieval = mode !== "image" && mode !== "dictionary";
       const showsModel = mode !== "image" || settings.imageRewrite;
-      responseModeButton.classList.toggle("active", usesImages);
+      responseModeButton.classList.toggle("active", usesImages || mode === "dictionary");
       responseModeButton.setAttribute("aria-expanded", activeComposerMenu === "mode" && !composerToolMenu.hidden ? "true" : "false");
       responseModeButton.title = responseModeLabel(mode);
       imageRewriteButton.hidden = !usesImages;
@@ -2541,15 +2591,20 @@
       return /^\s*\/(img|image)(\s|$)/i.test(text);
     }
 
+    function isDictionaryCommand(text) {
+      return /^\s*\/(dict|dictionary|tu-dien|từ-điển)(\s|$)/i.test(text);
+    }
+
     function captureRequestOptions(text) {
       const explicitImageCommand = isImageCommand(text);
-      const responseMode = explicitImageCommand ? "image" : selectedResponseMode();
-      const usesImageResults = responseMode !== "text" || explicitImageCommand;
+      const explicitDictionaryCommand = isDictionaryCommand(text);
+      const responseMode = explicitImageCommand ? "image" : explicitDictionaryCommand ? "dictionary" : selectedResponseMode();
+      const usesImageResults = responseMode === "image" || responseMode === "text_image" || explicitImageCommand;
       return {
         response_mode: responseMode,
-        retriever: responseMode === "image" ? "image-digits" : selectedRetriever(),
+        retriever: responseMode === "image" ? "image-digits" : responseMode === "dictionary" ? "dictionary-graph" : selectedRetriever(),
         model: selectedModel(),
-        image_rewrite: responseMode !== "text" ? Boolean(settings.imageRewrite) : false,
+        image_rewrite: responseMode === "image" || responseMode === "text_image" ? Boolean(settings.imageRewrite) : false,
         image_top_k: usesImageResults ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined,
         max_tokens: settings.maxTokens,
         temperature: settings.temperature
@@ -2574,6 +2629,8 @@
       if (retriever === "vector") return "Vector";
       if (retriever === "keyword-match") return "Keyword";
       if (retriever === "multi-query") return "Multi-query";
+      if (retriever === "graph-bm25") return "Graph BM25";
+      if (retriever === "dictionary-graph") return currentLanguage() === "vi" ? "Từ điển" : "Dictionary";
       if (retriever === "llm-query-rewrite") return "LLM rewrite";
       if (retriever === "llm-multi-query") return "LLM multi-query";
       if (retriever === "image-digits") return "Image digits";
@@ -2953,16 +3010,18 @@
     function formatUserRequestMeta(request) {
       const mode = normalizeResponseMode(request.response_mode);
       const parts = [responseModeLabel(mode)];
-      const retriever = normalizeSearchChoice(request.retriever || selectedRetriever());
       if (mode === "image") {
         parts.push(retrieverLabel("image-digits"));
+      } else if (mode === "dictionary") {
+        parts.push(retrieverLabel("dictionary-graph"));
       } else {
+        const retriever = normalizeSearchChoice(request.retriever || selectedRetriever());
         parts.push(retrieverLabel(retriever));
       }
       if (mode !== "image" || request.image_rewrite) {
         parts.push(shortModelLabel(normalizeModelChoice(request.model || selectedModel())));
       }
-      if (mode !== "text" && request.image_rewrite) parts.push(t("rewrite"));
+      if ((mode === "image" || mode === "text_image") && request.image_rewrite) parts.push(t("rewrite"));
       return parts.filter(Boolean).join(" | ");
     }
 
@@ -3154,6 +3213,7 @@
       docSubtitle.textContent = t("retrievedContext");
       docMeta.textContent = "";
       docText.textContent = "";
+      docText.classList.add("plain");
       docImageWrap.classList.remove("show");
       docImage.removeAttribute("src");
       docImage.alt = "";
@@ -3185,7 +3245,86 @@
         docImage.removeAttribute("src");
         docImage.alt = "";
       }
-      docText.textContent = source.text || t("noDocumentText");
+      renderDocumentText(source);
+    }
+
+    function renderDocumentText(source) {
+      docText.textContent = "";
+      const blocks = richBlocks(source);
+      if (blocks.length) {
+        docText.classList.remove("plain");
+        renderRichBlocks(docText, blocks);
+        return;
+      }
+      docText.classList.add("plain");
+      docText.textContent = source.text || source.raw_docx_text || source.metadata?.raw_docx_text || t("noDocumentText");
+    }
+
+    function richBlocks(source) {
+      const blocks = source?.rich_blocks || source?.metadata?.rich_blocks || [];
+      return Array.isArray(blocks) ? blocks.filter((block) => block && typeof block === "object") : [];
+    }
+
+    function renderRichBlocks(container, blocks) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "rich-block";
+      for (const block of blocks) {
+        if (block.type === "table_row") {
+          wrapper.appendChild(renderRichTableRow(block));
+        } else if (block.type === "paragraph") {
+          wrapper.appendChild(renderRichParagraph(block));
+        }
+      }
+      container.appendChild(wrapper);
+    }
+
+    function renderRichTableRow(block) {
+      const row = document.createElement("div");
+      row.className = "rich-table-row";
+      const cells = Array.isArray(block.cells) ? block.cells : [];
+      for (const cell of cells) {
+        const cellElement = document.createElement("div");
+        cellElement.className = "rich-table-cell";
+        const paragraphs = Array.isArray(cell.paragraphs) ? cell.paragraphs : [];
+        for (const paragraph of paragraphs) {
+          cellElement.appendChild(renderRichParagraph(paragraph));
+        }
+        row.appendChild(cellElement);
+      }
+      if (!cells.length && block.text) row.textContent = block.text;
+      return row;
+    }
+
+    function renderRichParagraph(paragraph) {
+      const element = document.createElement("div");
+      element.className = "rich-paragraph";
+      const runs = Array.isArray(paragraph.runs) ? paragraph.runs : [];
+      if (!runs.length) {
+        element.textContent = paragraph.text || paragraph.plain_text || "";
+        return element;
+      }
+      for (const run of runs) {
+        element.appendChild(renderRichRun(run));
+      }
+      return element;
+    }
+
+    function renderRichRun(run) {
+      const tag = run.superscript ? "sup" : run.subscript ? "sub" : "span";
+      const element = document.createElement(tag);
+      element.className = "rich-run";
+      element.textContent = run.text || "";
+      if (run.bold) element.style.fontWeight = "700";
+      if (run.italic) element.style.fontStyle = "italic";
+      const decorations = [];
+      if (run.underline) decorations.push("underline");
+      if (run.strike) decorations.push("line-through");
+      if (decorations.length) element.style.textDecoration = decorations.join(" ");
+      if (typeof run.color === "string" && /^[0-9a-fA-F]{6}$/.test(run.color)) {
+        element.style.color = "#" + run.color;
+      }
+      if (run.highlight && run.highlight !== "none") element.dataset.highlight = String(run.highlight);
+      return element;
     }
 
     function imageSource(source) {

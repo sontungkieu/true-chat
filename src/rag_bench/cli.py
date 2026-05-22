@@ -102,6 +102,21 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--temperature", type=float, default=0.0)
     serve_parser.add_argument("--max-context-chars", type=int, default=2500)
     serve_parser.add_argument("--image-top-k", type=int, default=5, help="Default number of image results for /img.")
+    serve_parser.add_argument(
+        "--dictionary-artifact",
+        type=Path,
+        default=Path("runs/pb_dictionary_abcd_mimo_graph"),
+        help="Dictionary artifact directory with entries.jsonl/rich_entries.jsonl.",
+    )
+    serve_parser.add_argument(
+        "--dictionary-source-dir",
+        type=Path,
+        default=Path("data/semi_private/File Từ điển PB_2021"),
+        help="Fallback DOCX dictionary source directory.",
+    )
+    serve_parser.add_argument("--dictionary-letters", default="A,B,C,D", help="Comma-separated fallback DOCX letters.")
+    serve_parser.add_argument("--dictionary-top-k", type=int, default=5, help="Default number of dictionary entries.")
+    serve_parser.add_argument("--dictionary-required", action="store_true", help="Fail startup if dictionary data is unavailable.")
     serve_parser.add_argument("--allow-large-bench", action="store_true", help="Allow large benchmarks such as HotpotQA.")
     serve_parser.add_argument("--history-messages", type=int, default=6)
     serve_parser.add_argument(
@@ -214,6 +229,13 @@ def _serve(args: argparse.Namespace) -> int:
     if args.image_top_k <= 0:
         print("--image-top-k must be positive.", file=sys.stderr)
         return 2
+    if args.dictionary_top_k <= 0:
+        print("--dictionary-top-k must be positive.", file=sys.stderr)
+        return 2
+    dictionary_letters = tuple(item.strip() for item in args.dictionary_letters.split(",") if item.strip())
+    if not dictionary_letters:
+        print("--dictionary-letters must include at least one value.", file=sys.stderr)
+        return 2
     if args.history_messages < 0:
         print("--history-messages must be non-negative.", file=sys.stderr)
         return 2
@@ -243,6 +265,11 @@ def _serve(args: argparse.Namespace) -> int:
         temperature=args.temperature,
         max_context_chars=args.max_context_chars,
         image_top_k=args.image_top_k,
+        dictionary_artifact=args.dictionary_artifact,
+        dictionary_source_dir=args.dictionary_source_dir,
+        dictionary_letters=dictionary_letters,
+        dictionary_top_k=args.dictionary_top_k,
+        dictionary_required=args.dictionary_required,
         allow_large_bench=args.allow_large_bench,
         available_retrievers=available_retrievers or DEFAULT_CHAT_RETRIEVERS,
         key_tokens_per_minute=args.key_tpm,

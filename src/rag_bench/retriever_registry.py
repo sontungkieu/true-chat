@@ -5,6 +5,8 @@ from typing import Callable, Literal
 
 from rag_bench.retrievers import (
     BM25Retriever,
+    DictionaryGraphRetriever,
+    GraphBm25Retriever,
     HybridRrfRetriever,
     ImageDigitsRetriever,
     KeywordMatchRetriever,
@@ -76,6 +78,14 @@ _RETRIEVER_SPECS: tuple[RetrieverSpec, ...] = (
         category="text",
     ),
     RetrieverSpec(
+        id="graph-bm25",
+        label="Graph BM25",
+        description="BM25 seed retrieval expanded through a lightweight document-term graph.",
+        requires_extra=None,
+        factory=lambda _context: GraphBm25Retriever(),
+        category="text",
+    ),
+    RetrieverSpec(
         id="llm-query-rewrite",
         label="LLM Query Rewrite",
         description="Groq rewrites the user question into one search query, then BM25 retrieves with RRF.",
@@ -106,6 +116,14 @@ _RETRIEVER_SPECS: tuple[RetrieverSpec, ...] = (
         requires_extra=None,
         factory=lambda _context: ImageDigitsRetriever(),
         category="image",
+    ),
+    RetrieverSpec(
+        id="dictionary-graph",
+        label="Dictionary Graph",
+        description="High-fidelity local dictionary lookup with lexical search plus graph-style expansion.",
+        requires_extra=None,
+        factory=lambda _context: DictionaryGraphRetriever(),
+        category="dictionary",
     ),
     RetrieverSpec(
         id="vector",
@@ -141,6 +159,8 @@ _ALIASES = {
     "dense": "vector",
     "hybrid": "hybrid-rrf",
     "rrf": "hybrid-rrf",
+    "graph": "graph-bm25",
+    "graph-rag": "graph-bm25",
     "rerank": "vector-rerank",
     "multi-query-bm25": "multi-query",
     "query-rewrite": "llm-query-rewrite",
@@ -148,6 +168,10 @@ _ALIASES = {
     "img": "image-digits",
     "image": "image-digits",
     "digits": "image-digits",
+    "dict": "dictionary-graph",
+    "dictionary": "dictionary-graph",
+    "tu-dien": "dictionary-graph",
+    "từ-điển": "dictionary-graph",
 }
 
 

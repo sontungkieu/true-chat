@@ -9,6 +9,7 @@ class Document:
     doc_id: str
     text: str
     title: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def display_text(self) -> str:

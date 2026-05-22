@@ -48,6 +48,7 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
             "benchmark": service.benchmark.name,
             "retriever": service.retriever.name,
             "available_retrievers": service.available_retriever_ids(),
+            "dictionary": getattr(service, "dictionary_status", {}),
         }
 
     @app.get("/v1/models", dependencies=[Depends(_require_bearer)])

@@ -26,21 +26,53 @@ Direct runtime, optional, and test dependencies are pinned exactly in `pyproject
 
 ## Retrieval Strategies
 
-Search behavior is registered centrally as retrieval strategies. The active strategies are `bm25`, `tfidf`, `keyword-match`, `multi-query`, `llm-query-rewrite`, `llm-multi-query`, `image-digits`, `vector`, `hybrid-rrf`, and `vector-rerank`. Aliases include `lexical -> bm25`, `find -> keyword-match`, `img -> image-digits`, `dense -> vector`, `hybrid -> hybrid-rrf`, and `rerank -> vector-rerank`. The benchmark CLI, chat proxy, and built-in UI all use the same registry so new search behavior can be added without wiring it separately through each surface.
+Search behavior is registered centrally as retrieval strategies. The active strategies are `bm25`, `tfidf`, `keyword-match`, `multi-query`, `graph-bm25`, `llm-query-rewrite`, `llm-multi-query`, `image-digits`, `dictionary-graph`, `vector`, `hybrid-rrf`, and `vector-rerank`. Aliases include `lexical -> bm25`, `find -> keyword-match`, `graph -> graph-bm25`, `graph-rag -> graph-bm25`, `img -> image-digits`, `dict -> dictionary-graph`, `dense -> vector`, `hybrid -> hybrid-rrf`, and `rerank -> vector-rerank`. The benchmark CLI, chat proxy, and built-in UI all use the same registry so new search behavior can be added without wiring it separately through each surface.
 
-The current image strategy is a lightweight demo over `sklearn.datasets.load_digits`, not a production image index. Future `/dict` and richer `/image` commands should still be implemented as registry-backed retrieval strategies: `/dict` as local glossary lookup, and `/image` as text-to-image search over a local image folder with optional metadata. The chat service should only route the command prefix to the selected strategy; the strategy should still return normal retrieved items for prompting, UI display, and metrics.
+The current image strategy is a lightweight demo over `sklearn.datasets.load_digits`, not a production image index. `/dict` is implemented as a registry-backed local dictionary strategy over prebuilt PB dictionary artifacts or fallback DOCX parsing. Richer `/image` commands should still be implemented as registry-backed retrieval strategies over a local image folder with optional metadata. The chat service only routes command prefixes to strategy ids; strategies still return normal retrieved items for prompting, UI display, and metrics.
 
 Strategy notes:
 
 - `keyword-match`: exact keyword/phrase scoring with no model dependency in benchmarks; chat mode first asks the selected Groq model for up to 5 short-to-long keyword/keyphrase queries, then runs keyword search over those variants.
 - `multi-query`: deterministic BM25 query variants merged with reciprocal-rank fusion. Tokenization is Unicode-aware and drops common answer-language instructions such as `explain` / `giải thích` / `tiếng Việt`, so short scientific identifiers like `BH1` stay dominant in Vietnamese prompts.
+- `graph-bm25`: BM25 seed retrieval expanded through a lightweight in-memory document-term graph, then reranked by combined lexical and graph-neighbor scores.
 - `llm-query-rewrite`: one Groq call rewrites the query, then BM25 retrieves original plus rewritten query.
 - `llm-multi-query`: one Groq call generates multiple search queries, then BM25 retrieves and merges them with reciprocal-rank fusion.
 - `image-digits`: local text-to-image demo over the bundled scikit-learn handwritten digits sample dataset; `/img` requests do not need a Groq generation call.
+- `dictionary-graph`: local dictionary lookup over `plain_text` with lexical plus graph-style expansion, while preserving DOCX rich blocks for UI rendering.
 - `hybrid-rrf`: BM25 plus vector retrieval merged by reciprocal-rank fusion; requires `--extra vector`.
 - `vector-rerank`: vector candidates reranked by normalized BM25 lexical score; requires `--extra vector`.
 
 For LLM-based retrieval strategies, `--skip-generation` only skips answer generation. The retrieval strategy can still spend one Groq call per benchmark query. Per-query outputs include `retrieval_metadata`, and aggregate retrieval metrics include `retrieval_llm_*` fields such as call count, latency, token usage, retry count, and errors.
+
+## Dictionary Graph Pipeline
+
+Private dictionary graph builds use a reproducible script instead of one-off terminal snippets:
+
+```bash
+uv run --frozen python scripts/build_dictionary_graph.py \
+  --provider mimo \
+  --model mimo-v2.5-pro \
+  --letters A,B,C,D \
+  --run-name pb_dictionary_abcd_mimo_graph \
+  --batch-size 8 \
+  --max-completion-tokens 8192 \
+  --repair-max-completion-tokens 4096 \
+  --micro-max-completion-tokens 1600
+```
+
+The source DOCX files default to `data/semi_private/File Từ điển PB_2021/<letter>.docx`. The script reads `MIMO_API_KEY` and optional `MIMO_BASE_URL` from `.secrets/.env`; for Groq runs, use `--provider groq` and `.secrets/groq_key.env`. It keeps raw LLM batch outputs under `raw_batches/`, skips valid batches on resume, retries malformed JSON with a shorter repair prompt, micro-repairs missing entries one-by-one, and can insert explicit local fallback entries when the model still omits a source item. Outputs are written under ignored `runs/`:
+
+- `entries.jsonl`: extracted DOCX entries with stable ids, `plain_text`, `raw_docx_text`, and rich DOCX blocks when available.
+- `rich_entries.jsonl`: high-fidelity entry export for chat rendering; each run preserves casing, Vietnamese diacritics, bold, italic, underline, strike, subscript/superscript, color, and highlight metadata.
+- `raw_batches/batch_*.json`: provider responses and token metadata for resume/debug.
+- `nodes.jsonl` and `edges.jsonl`: graph artifacts for downstream retrieval experiments.
+- `graph.graphml`: Gephi/Cytoscape-friendly graph export.
+- `graph_visualization.html`: standalone local graph browser.
+- `manifest.json`: schema version, source hashes, model/provider config, token totals, repair/fallback counts, rich entry count, and partial/failure status.
+
+Long graph builds print plain progress lines to stderr, for example `batch 17/53`, `entries 136/418`, percent complete, elapsed time, and ETA. JSON event lines remain on stdout for debugging or automation. Use `--no-progress` to suppress the human-readable progress output.
+
+MiMo V2.5 is usable for this extraction path, but it spends many completion tokens on hidden reasoning. In smoke tests, `mimo-v2.5-pro` with `--batch-size 8` and `--max-completion-tokens 8192` produced valid JSON without local fallback on the first 8 A-entries. Smaller token caps often return empty `message.content`, so the pipeline treats those as repairable failures rather than parsing `reasoning_content`.
 
 ## Groq Keys
 
@@ -108,14 +140,28 @@ uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --bench scifact --ret
 Expose additional search strategies in the built-in UI:
 
 ```bash
-uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --retriever bm25 --available-retrievers bm25,tfidf,keyword-match,multi-query
+uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --retriever bm25 --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25
 ```
 
 Include the lightweight `/img` demo search in the composer controls:
 
 ```bash
-uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --retriever bm25 --available-retrievers bm25,tfidf,keyword-match,multi-query,image-digits --image-top-k 5
+uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --retriever bm25 --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,image-digits --image-top-k 5
 ```
+
+Expose the PB dictionary mode from the built-in UI:
+
+```bash
+uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 \
+  --retriever bm25 \
+  --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits \
+  --dictionary-artifact runs/pb_dictionary_abcd_mimo_graph \
+  --dictionary-source-dir "data/semi_private/File Từ điển PB_2021" \
+  --dictionary-letters A,B,C,D \
+  --dictionary-top-k 5
+```
+
+If `--dictionary-artifact` is missing or marked partial, the proxy warns in `/health` and falls back to parsing the selected DOCX letters from `--dictionary-source-dir`. Add `--dictionary-required` when startup should fail instead. `/dict AMONIT` and the `Dictionary` / `Từ điển` composer mode use `dictionary-graph`, show the original dictionary entry first, then ask the selected generation model for an explanation. The document side panel renders rich dictionary blocks from the artifact, preserving inline formatting such as bold, italic, subscript/superscript, color, and table row boundaries.
 
 Vector UI options require vector extras and a slower startup:
 
@@ -129,7 +175,7 @@ Open the UI from Windows or the host browser:
 http://localhost:8000/
 ```
 
-The built-in page is the recommended temporary frontend for this repo. The UI lives in `ui/chat.html` and is served by a small FastAPI template loader, keeping frontend code outside `src/rag_bench/`. It is a single lightweight HTML/CSS/JS response with no frontend build, Docker, CDN, or extra model downloads. The visual shell follows a polished Open WebUI-like layout with a compact collapsible left chat sidebar, compact topbar, centered welcome state, rounded bottom composer, icon-based controls, collapsed local settings, responsive mobile sidebar, and local theme choices: `Light`, `Colorful`, and `System`. The `Colorful` theme is light-based and combines `#228B22` green with red and yellow accents. It stores conversations and local UI settings in browser `localStorage`, supports creating, renaming, and deleting local conversations, lets users edit a prior question and regenerate from that point, calls `POST /v1/chat/completions` with `stream=true`, supports stop/retry/copy, and displays compact RAG source metadata. The layout has desktop, tablet, and mobile breakpoints: wide screens use split chat/document panes, tablet widths keep the same shell with narrower panes, and small mobile widths turn sidebar and document panel into overlays. Mobile sizing uses the browser visual viewport plus safe-area padding so the top menu remains tappable and the bottom composer stays inside the visible screen on phones. On mobile, users can also swipe right from the chat area to open the sidebar without touching the top menu button. Local settings keep generation and retrieval separate: `Model` selects the Groq generation model (`llama-3.1-8b-instant` or `qwen/qwen3-32b`), while `Search` selects a registry-backed retriever. The composer chips are interactive controls: `Text only`, `Text + images`, and `Images only` choose the response mode, `Rewrite` appears only for image-capable modes and optionally spends a Groq call to rewrite image queries, `Search` opens the retriever menu for text modes, and `Model` opens the generation model menu directly beside the input when text generation or image-query rewrite is active. Non-interactive dataset labels and duplicate topbar model labels stay out of the composer/header to keep the input compact. Menu-style chips use a small divider plus down-caret so adjustable controls are visually distinct from plain toggles; their dropdowns align to the chip that opened them and close when the user clicks elsewhere, including the message input. Composer chips and inline citation pills stay single-line with internal ellipsis/scaled sizing when the UI font scale is increased. Default chat text search options are BM25, TF-IDF, keyword match, and deterministic multi-query; heavier vector and LLM-query strategies can be enabled through the backend config/CLI. The lightweight `image-digits` demo stays out of the text Search selector and is used automatically only for `/img`, Images-only, or related-image retrieval. `/img digit 7` or `Images only` routes to the local image strategy and returns 5 thumbnail results by default; without `Rewrite` this does not spend a Groq generation call. `Text + images` answers with normal RAG text first, then searches related images below the answer; when `Rewrite` is active, it first asks the selected model for a concise image query. The `Images` setting adjusts `image_top_k`/`k_img` for image search. The settings panel also includes an English/Vietnamese language selector, a dev mode toggle, and a `Font size` slider from `100%` to `200%`. When dev mode is enabled, each user question shows the request choices captured at send time, such as `Text only | TF-IDF | Qwen3 32B`, so later setting changes do not obscure how that answer was produced; the `Rewrite` tag is shown only when the user explicitly enabled image-query rewrite for an image-capable mode. The UI clamps local `Max tokens` to at least `16` and falls back to a non-stream request if a stream unexpectedly returns empty content. Assistant copy/retry controls sit in the footer beside throughput metadata, while user copy/edit controls sit below and outside the user text bubble. Reasoning blocks wrapped in `<think>...</think>` are rendered as a smaller, muted, collapsed disclosure by default. Citations such as `[4323425]` are rendered as ordered inline references like `[1]` based on the `Citations and related documents` table, and clicking a citation or related-document row opens the document in the right-side panel; on mobile this becomes a full-screen document overlay that covers the chat behind it. Image results render as a thumbnail grid under the answer and open in a dark lightbox with a close button when clicked; they are not rendered as citation chips or duplicated in the related-documents table. When Groq returns token usage, the normal chat meta line shows completion throughput as `n tok/s`; dev mode adds key alias, rejected aliases, retry count, scheduler wait, and the captured request choices for each user question. Retrieved sources with zero or negative relevance scores are hidden from the related-document list unless the answer cites them directly. All retrieval, Groq key scheduling, retries, and rate limiting stay inside this repo.
+The built-in page is the recommended temporary frontend for this repo. The UI lives in `ui/chat.html` and is served by a small FastAPI template loader, keeping frontend code outside `src/rag_bench/`. It is a single lightweight HTML/CSS/JS response with no frontend build, Docker, CDN, or extra model downloads. The visual shell follows a polished Open WebUI-like layout with a compact collapsible left chat sidebar, compact topbar, centered welcome state, rounded bottom composer, icon-based controls, collapsed local settings, responsive mobile sidebar, and local theme choices: `Light`, `Colorful`, and `System`. The `Colorful` theme is light-based and combines `#228B22` green with red and yellow accents. It stores conversations and local UI settings in browser `localStorage`, supports creating, renaming, and deleting local conversations, lets users edit a prior question and regenerate from that point, calls `POST /v1/chat/completions` with `stream=true`, supports stop/retry/copy, and displays compact RAG source metadata. The layout has desktop, tablet, and mobile breakpoints: wide screens use split chat/document panes, tablet widths keep the same shell with narrower panes, and small mobile widths turn sidebar and document panel into overlays. Mobile sizing uses the browser visual viewport plus safe-area padding so the top menu remains tappable and the bottom composer stays inside the visible screen on phones. On mobile, users can also swipe right from the chat area to open the sidebar without touching the top menu button. Local settings keep generation and retrieval separate: `Model` selects the Groq generation model (`llama-3.1-8b-instant` or `qwen/qwen3-32b`), while `Search` selects a registry-backed retriever. The composer chips are interactive controls: `Text only`, `Text + images`, `Images only`, and `Dictionary` choose the response mode, `Rewrite` appears only for image-capable modes and optionally spends a Groq call to rewrite image queries, `Search` opens the retriever menu for normal text modes, and `Model` opens the generation model menu directly beside the input when text generation or image-query rewrite is active. Non-interactive dataset labels and duplicate topbar model labels stay out of the composer/header to keep the input compact. Menu-style chips use a small divider plus down-caret so adjustable controls are visually distinct from plain toggles; their dropdowns align to the chip that opened them and close when the user clicks elsewhere, including the message input. Composer chips and inline citation pills stay single-line with internal ellipsis/scaled sizing when the UI font scale is increased. Default chat text search options are BM25, TF-IDF, keyword match, deterministic multi-query, and Graph BM25; dictionary mode uses `dictionary-graph` directly, while heavier vector and LLM-query strategies can be enabled through the backend config/CLI. The lightweight `image-digits` demo stays out of the text Search selector and is used automatically only for `/img`, Images-only, or related-image retrieval. `/img digit 7` or `Images only` routes to the local image strategy and returns 5 thumbnail results by default; without `Rewrite` this does not spend a Groq generation call. `/dict AMONIT` or `Dictionary` mode routes to the local PB dictionary artifact, shows the original entry text first, then asks the selected model for an explanation. `Text + images` answers with normal RAG text first, then searches related images below the answer; when `Rewrite` is active, it first asks the selected model for a concise image query. The `Images` setting adjusts `image_top_k`/`k_img` for image search. The settings panel also includes an English/Vietnamese language selector, a dev mode toggle, and a `Font size` slider from `100%` to `200%`. When dev mode is enabled, each user question shows the request choices captured at send time, such as `Text only | TF-IDF | Qwen3 32B`, so later setting changes do not obscure how that answer was produced; the `Rewrite` tag is shown only when the user explicitly enabled image-query rewrite for an image-capable mode. The UI clamps local `Max tokens` to at least `16` and falls back to a non-stream request if a stream unexpectedly returns empty content. Assistant copy/retry controls sit in the footer beside throughput metadata, while user copy/edit controls sit below and outside the user text bubble. Reasoning blocks wrapped in `<think>...</think>` are rendered as a smaller, muted, collapsed disclosure by default. Citations such as `[4323425]` are rendered as ordered inline references like `[1]` based on the `Citations and related documents` table, and clicking a citation or related-document row opens the document in the right-side panel; on mobile this becomes a full-screen document overlay that covers the chat behind it. Dictionary documents in that panel render high-fidelity rich blocks from DOCX, including bold, italic, underline, color, subscript/superscript, and table-row boundaries. Image results render as a thumbnail grid under the answer and open in a dark lightbox with a close button when clicked; they are not rendered as citation chips or duplicated in the related-documents table. When Groq returns token usage, the normal chat meta line shows completion throughput as `n tok/s`; dev mode adds key alias, rejected aliases, retry count, scheduler wait, and the captured request choices for each user question. Retrieved sources with zero or negative relevance scores are hidden from the related-document list unless the answer cites them directly. All retrieval, Groq key scheduling, retries, and rate limiting stay inside this repo.
 
 Use optional local auth:
 
@@ -212,7 +258,7 @@ uv run --extra vector rag-bench run --bench nfcorpus --retrievers bm25,vector --
 HotpotQA is much larger and must be enabled explicitly:
 
 ```bash
-uv run --extra vector rag-bench run --bench hotpotqa --allow-large-bench --retrievers bm25 --top-k 5 --limit 20
+uv run --frozen rag-bench run --bench hotpotqa --allow-large-bench --retrievers bm25,graph-bm25 --top-k 5 --limit 20 --skip-generation
 ```
 
 Optional RAGAS mode:

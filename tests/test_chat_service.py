@@ -94,6 +94,37 @@ class FakeKeywordRetriever:
         )
 
 
+@dataclass
+class FakeDictionaryRetriever:
+    name: str = "dictionary-graph"
+    build_time_s: float = 0.0
+    seen_query: str | None = None
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        self.seen_query = query.text
+        assert top_k == 3
+        return RetrievalResult(
+            query=query,
+            hits=[
+                RetrievalHit(
+                    doc_id="A-0001",
+                    score=1.0,
+                    rank=1,
+                    title="AMONIT",
+                    text="AMONIT, thuốc nổ phá.",
+                    metadata={
+                        "kind": "dictionary",
+                        "headword": "AMONIT",
+                        "raw_docx_text": "AMONIT, thuốc nổ phá.",
+                        "rich_blocks": [{"type": "paragraph", "runs": [{"text": "AMONIT", "bold": True}]}],
+                    },
+                )
+            ],
+            latency_s=0.01,
+            metadata={"kind": "dictionary"},
+        )
+
+
 class FakeLLM:
     def __init__(self) -> None:
         self.key_usage_counts = {"alias-a": 1}
@@ -459,6 +490,34 @@ def test_keyword_match_uses_llm_keywords_before_search() -> None:
     assert llm.model == "qwen/qwen3-32b"
 
 
+def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> None:
+    dictionary_retriever = FakeDictionaryRetriever()
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=dictionary_retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict AMONIT"}])
+
+    assert dictionary_retriever.seen_query == "AMONIT"
+    assert result.response["rag"]["retriever"] == "dictionary-graph"
+    assert result.response["rag"]["retrieval_metadata"]["response_mode"] == "dictionary"
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_status"]["entry_count"] == 1
+    assert result.response["rag"]["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
+    assert result.response["choices"][0]["message"]["content"].startswith("Mục từ gốc [A-0001]:")
+
+
 def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_remain() -> None:
     class LowScoreRetriever(FakeRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:
@@ -511,4 +570,5 @@ def test_last_user_text_supports_openai_text_parts() -> None:
 def test_parse_chat_command_supports_img_alias() -> None:
     assert parse_chat_command("/img digit 3") == ("img", "digit 3")
     assert parse_chat_command("/image cats") == ("img", "cats")
+    assert parse_chat_command("/dict AMONIT") == ("dict", "AMONIT")
     assert parse_chat_command("plain text") is None

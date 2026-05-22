@@ -5,6 +5,8 @@ import numpy as np
 from rag_bench.groq_client import GenerationResult
 from rag_bench.retrievers import (
     BM25Retriever,
+    DictionaryGraphRetriever,
+    GraphBm25Retriever,
     HybridRrfRetriever,
     ImageDigitsRetriever,
     KeywordMatchRetriever,
@@ -116,6 +118,56 @@ def test_multi_query_keeps_scientific_token_from_vietnamese_instruction() -> Non
 
     assert result.hits[0].doc_id == "bcl2-doc"
     assert result.hits[0].rank == 1
+
+
+def test_graph_bm25_expands_from_seed_document_neighbors() -> None:
+    docs = [
+        Document(
+            doc_id="alpha-seed",
+            title="Alpha seed",
+            text="Alpha seed shares bridge kinase pathway terms.",
+        ),
+        Document(
+            doc_id="second-hop",
+            title="Second hop",
+            text="Bridge kinase pathway evidence gives the downstream answer.",
+        ),
+        Document(
+            doc_id="noise",
+            title="Noise",
+            text="Unrelated banana document.",
+        ),
+    ]
+    retriever = GraphBm25Retriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "alpha"), top_k=2)
+
+    assert [hit.doc_id for hit in result.hits] == ["alpha-seed", "second-hop"]
+    assert result.metadata["graph_candidate_count"] >= 2
+    assert {"bridge", "kinase", "pathway"}.intersection(result.metadata["graph_expansion_terms"])
+    assert result.hits[1].metadata["graph_score"] > 0.0
+
+
+def test_dictionary_graph_retriever_preserves_dictionary_metadata() -> None:
+    docs = [
+        Document(
+            doc_id="A-0001",
+            title="AMONIT",
+            text="AMONIT, thuốc nổ phá từ amoni nitrat.",
+            metadata={"kind": "dictionary", "headword": "AMONIT", "rich_blocks": [{"type": "paragraph"}]},
+        ),
+        Document(doc_id="B-0001", title="B-72", text="B-72, tổ hợp tên lửa chống tăng."),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "AMONIT"), top_k=2)
+
+    assert result.hits[0].doc_id == "A-0001"
+    assert result.hits[0].metadata["kind"] == "dictionary"
+    assert result.hits[0].metadata["rich_blocks"] == [{"type": "paragraph"}]
+    assert result.metadata["kind"] == "dictionary"
 
 
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:

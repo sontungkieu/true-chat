@@ -9,9 +9,16 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from rag_bench.benchmarks import load_benchmark
+from rag_bench.dictionary import (
+    DEFAULT_DICTIONARY_ARTIFACT,
+    DEFAULT_DICTIONARY_LETTERS,
+    DEFAULT_DICTIONARY_SOURCE_DIR,
+    DictionaryLoadResult,
+    load_dictionary_documents,
+)
 from rag_bench.groq_client import GenerationResult, RoundRobinGroqClient
 from rag_bench.prompts import SYSTEM_PROMPT
-from rag_bench.retriever_registry import create_retriever, normalize_retriever_id
+from rag_bench.retriever_registry import create_retriever, get_retriever_spec, normalize_retriever_id
 from rag_bench.retrievers import Retriever
 from rag_bench.secrets import ApiKey, load_groq_keys
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
@@ -19,7 +26,15 @@ from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
 DEFAULT_CHAT_MODELS = ("llama-3.1-8b-instant", "qwen/qwen3-32b")
-DEFAULT_CHAT_RETRIEVERS = ("bm25", "tfidf", "keyword-match", "multi-query", "image-digits")
+DEFAULT_CHAT_RETRIEVERS = (
+    "bm25",
+    "tfidf",
+    "keyword-match",
+    "multi-query",
+    "graph-bm25",
+    "dictionary-graph",
+    "image-digits",
+)
 
 
 class ChatGenerationClient(Protocol):
@@ -58,6 +73,11 @@ class ChatProxyConfig:
     rate_limit_scope: str = "per-key"
     history_messages: int = 6
     image_top_k: int = 5
+    dictionary_artifact: Path | None = DEFAULT_DICTIONARY_ARTIFACT
+    dictionary_source_dir: Path | None = DEFAULT_DICTIONARY_SOURCE_DIR
+    dictionary_letters: tuple[str, ...] = DEFAULT_DICTIONARY_LETTERS
+    dictionary_top_k: int = 5
+    dictionary_required: bool = False
 
 
 @dataclass
@@ -77,6 +97,7 @@ class RagChatService:
     llm: ChatGenerationClient
     started_at_s: float = field(default_factory=time.time)
     retrievers: dict[str, Retriever] = field(default_factory=dict)
+    dictionary_status: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.retrievers:
@@ -93,9 +114,17 @@ class RagChatService:
         keys = load_groq_keys(config.groq_keys_path)
         benchmark = benchmark_loader(config.bench, limit=None, allow_large=config.allow_large_bench)
         llm = llm_factory(keys) if llm_factory is not None else _build_llm(config, keys)
-        retrievers = _build_retrievers(config, benchmark, llm=llm)
+        dictionary = _load_dictionary(config)
+        retrievers = _build_retrievers(config, benchmark, llm=llm, dictionary=dictionary)
         retriever = _default_retriever(config, retrievers)
-        return cls(config=config, benchmark=benchmark, retriever=retriever, llm=llm, retrievers=retrievers)
+        return cls(
+            config=config,
+            benchmark=benchmark,
+            retriever=retriever,
+            llm=llm,
+            retrievers=retrievers,
+            dictionary_status=dictionary.status,
+        )
 
     def answer(
         self,
@@ -117,6 +146,9 @@ class RagChatService:
         if command and command[0] == "img":
             mode = "image"
             question = command[1] or "digit image"
+        elif command and command[0] == "dict":
+            mode = "dictionary"
+            question = command[1] or question
 
         if mode == "image":
             image_query, rewrite_metadata = self._image_query(question, generation_model, image_rewrite=image_rewrite)
@@ -151,6 +183,66 @@ class RagChatService:
                 retrieval_metadata=retrieval_metadata,
                 retriever=retriever,
                 top_k=request_image_top_k,
+                response_model=response_model,
+                generation_model=generation_model,
+            )
+            return ChatServiceResult(
+                response=response,
+                generation=generation,
+                hits=retrieval.hits,
+                retrieval_latency_s=retrieval.latency_s,
+                retrieval_metadata=retrieval_metadata,
+            )
+
+        if mode == "dictionary":
+            retriever = self.resolve_request_retriever("dictionary-graph")
+            request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
+            retrieval = retriever.search(Query(query_id="chat-dict", text=question), request_top_k)
+            retrieval_metadata = {
+                **retrieval.metadata,
+                "command": "/dict" if command and command[0] == "dict" else None,
+                "response_mode": "dictionary",
+                "raw_query": last_user_text(messages),
+                "dictionary_status": self.dictionary_status,
+            }
+            if retrieval.hits:
+                prompt_messages = build_dictionary_rag_messages(
+                    messages,
+                    retrieval.hits,
+                    query=question,
+                    max_context_chars=self.config.max_context_chars,
+                    history_messages=self.config.history_messages,
+                )
+                generation = self.llm.generate(
+                    prompt_messages,
+                    model=generation_model,
+                    temperature=self.config.temperature if temperature is None else temperature,
+                    max_completion_tokens=self.config.max_completion_tokens if max_tokens is None else max_tokens,
+                )
+                if generation.error:
+                    raise RuntimeError(generation.error)
+                answer = _format_dictionary_answer(retrieval.hits, generation.answer)
+            else:
+                generation = GenerationResult(
+                    answer="",
+                    key_alias=None,
+                    attempted_aliases=[],
+                    latency_s=0.0,
+                    retry_count=0,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    estimated_tokens=0,
+                )
+                answer = _format_no_dictionary_answer(question)
+            response = self._build_response(
+                answer=answer,
+                generation=generation,
+                hits=retrieval.hits,
+                retrieval_latency_s=retrieval.latency_s,
+                retrieval_metadata=retrieval_metadata,
+                retriever=retriever,
+                top_k=request_top_k,
                 response_model=response_model,
                 generation_model=generation_model,
             )
@@ -555,18 +647,30 @@ def _build_retrievers(
     benchmark: BenchmarkData,
     *,
     llm: ChatGenerationClient | None = None,
+    dictionary: DictionaryLoadResult | None = None,
 ) -> dict[str, Retriever]:
     retrievers: dict[str, Retriever] = {}
     for name in _dedupe_normalized_retriever_ids((config.retriever, *config.available_retrievers)):
+        spec = get_retriever_spec(name)
         retriever = create_retriever(
             name,
             vector_model=config.vector_model,
             query_expander=llm,
             query_model=config.model,
         )
-        retriever.build(benchmark.documents)
+        documents = dictionary.documents if spec.category == "dictionary" and dictionary is not None else benchmark.documents
+        retriever.build(documents)
         retrievers[retriever.name] = retriever
     return retrievers
+
+
+def _load_dictionary(config: ChatProxyConfig) -> DictionaryLoadResult:
+    return load_dictionary_documents(
+        artifact_dir=config.dictionary_artifact,
+        source_dir=config.dictionary_source_dir,
+        letters=config.dictionary_letters,
+        required=config.dictionary_required,
+    )
 
 
 def _default_retriever(config: ChatProxyConfig, retrievers: dict[str, Retriever]) -> Retriever:
@@ -629,6 +733,35 @@ def build_chat_rag_messages(
     ]
 
 
+def build_dictionary_rag_messages(
+    messages: list[dict[str, Any]],
+    hits: list[RetrievalHit],
+    *,
+    query: str,
+    max_context_chars: int,
+    history_messages: int,
+) -> list[dict[str, str]]:
+    context = _format_context(hits, max_context_chars=max_context_chars)
+    history = _format_history(messages[:-1], history_messages=history_messages)
+    user_prompt = (
+        f"Recent conversation:\n{history}\n\n"
+        f"Dictionary question:\n{query}\n\n"
+        f"Retrieved dictionary entries:\n{context}\n\n"
+        "Explain the term in the user's language. Cite dictionary entries with their ids in square brackets. "
+        "Do not invent content not supported by the retrieved dictionary entries."
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a careful military dictionary assistant. Use the retrieved local dictionary entries first. "
+                "Keep abbreviations, casing, and Vietnamese diacritics intact. Cite sources as [entry-id]."
+            ),
+        },
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def last_user_text(messages: list[dict[str, Any]]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
@@ -647,6 +780,8 @@ def parse_chat_command(text: str) -> tuple[str, str] | None:
     normalized = command.lower()
     if normalized in {"/img", "/image"}:
         return "img", remainder.strip()
+    if normalized in {"/dict", "/dictionary", "/tu-dien", "/từ-điển"}:
+        return "dict", remainder.strip()
     return None
 
 
@@ -662,12 +797,14 @@ def _normalize_response_mode(value: str | None) -> str:
         return "image"
     if normalized in {"text_image", "text_images", "text_and_image", "text_and_images", "mixed"}:
         return "text_image"
-    raise ValueError("response_mode must be one of: text, image, text_image")
+    if normalized in {"dictionary", "dict", "tu_dien", "từ_điển"}:
+        return "dictionary"
+    raise ValueError("response_mode must be one of: text, image, text_image, dictionary")
 
 
 def _strip_command_prefix(text: str) -> str:
     command = parse_chat_command(text)
-    if command and command[0] == "img":
+    if command and command[0] in {"img", "dict"}:
         return command[1].strip()
     return text.strip()
 
@@ -721,8 +858,38 @@ def _format_image_answer(query: str, hits: list[RetrievalHit]) -> str:
     return f"Found {len(hits)} image result(s) for '{query}'."
 
 
+def _format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str:
+    first = hits[0]
+    raw = str(first.metadata.get("raw_docx_text") or first.text or "").strip()
+    header = f"Mục từ gốc [{first.doc_id}]:"
+    parts = [header]
+    if raw:
+        parts.append(raw)
+    cleaned = (explanation or "").strip()
+    if cleaned:
+        parts.append("Giải thích:\n" + cleaned)
+    return "\n\n".join(parts)
+
+
+def _format_no_dictionary_answer(query: str) -> str:
+    return f"Không tìm thấy mục từ phù hợp trong từ điển cho: {query}"
+
+
 def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    allowed_keys = {"kind", "image_data_url", "image_url", "label", "dataset", "width", "height"}
+    allowed_keys = {
+        "kind",
+        "image_data_url",
+        "image_url",
+        "label",
+        "dataset",
+        "width",
+        "height",
+        "schema_version",
+        "headword",
+        "raw_docx_text",
+        "rich_blocks",
+        "source",
+    }
     return {key: value for key, value in metadata.items() if key in allowed_keys}
 
 

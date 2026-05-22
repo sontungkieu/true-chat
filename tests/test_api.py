@@ -151,6 +151,7 @@ def test_chat_page() -> None:
     assert "searchChoice" in response.text
     assert "Search" in response.text
     assert "TF-IDF" in response.text
+    assert "Graph BM25" in response.text
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
     assert "modelSelector" not in response.text
@@ -163,7 +164,14 @@ def test_chat_page() -> None:
     assert "chip-divider" in response.text
     assert "chip-caret" in response.text
     assert "normalizedTextRetrieverChoices" in response.text
-    assert 'retriever !== "image-digits"' in response.text
+    assert 'retriever !== "image-digits" && retriever !== "dictionary-graph"' in response.text
+    assert "Dictionary" in response.text
+    assert "Từ điển" in response.text
+    assert "isDictionaryCommand" in response.text
+    assert 'response_mode: requestOptions.response_mode' in response.text
+    assert '"dictionary-graph"' in response.text
+    assert "renderRichBlocks" in response.text
+    assert "rich-run" in response.text
     assert "positionComposerToolMenu" in response.text
     assert "--composer-menu-left" in response.text
     assert '--composer-menu-bottom' in response.text
@@ -172,7 +180,7 @@ def test_chat_page() -> None:
     assert "user-request-meta" in response.text
     assert "captureRequestOptions" in response.text
     assert "formatUserRequestMeta" in response.text
-    assert 'mode !== "text" && request.image_rewrite' in response.text
+    assert '(mode === "image" || mode === "text_image") && request.image_rewrite' in response.text
     assert "image_top_k: requestOptions.image_top_k" in response.text
     assert "composerToolMenu" in response.text
     assert "imageSource" in response.text

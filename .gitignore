@@ -212,3 +212,5 @@ __marimo__/
 runs/
 *.zip*
 .webui_secret_key
+*private*
+data/rules.md

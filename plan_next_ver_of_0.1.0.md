@@ -189,11 +189,13 @@ Status: implemented in the current working tree; pending final commit.
    - In chat mode, let `keyword-match` use the selected Groq model to extract up to 5 short-to-long keyword/keyphrase queries before searching.
    - Add `multi-query` for deterministic BM25 query variants merged by reciprocal-rank fusion.
    - Harden lexical tokenization for multilingual prompts so Vietnamese instruction text does not overwhelm short scientific identifiers such as `BH1`.
+   - Add `graph-bm25`, a lightweight in-memory document-term graph retriever that expands BM25 seed docs through shared terms and reranks by lexical plus graph-neighbor scores.
    - Add `hybrid-rrf` for BM25 plus vector reciprocal-rank fusion.
    - Add `vector-rerank` for vector candidates reranked by normalized BM25 lexical scores.
    - Add Groq-backed `llm-query-rewrite` and `llm-multi-query` strategies that spend one retrieval LLM call per benchmark query.
    - Add `rag-bench serve --available-retrievers ...` so the built-in UI can expose selected cheap, vector, or LLM-backed search strategies explicitly.
    - Record retrieval LLM latency, token usage, retry count, error count, and query variants in per-query metadata and aggregate retrieval metrics.
+   - Document HotpotQA as an explicit large-benchmark target for `bm25` versus `graph-bm25` retrieval-only runs.
 
 27. Add reproducible retrieval benchmark reporting
    - Status: done.
@@ -259,6 +261,25 @@ Status: implemented in the current working tree; pending final commit.
    - Add optional `--embed-groq-keys` to write `.secrets/groq_key.env` into a generated notebook cell for private throwaway kernels.
    - Record successful uploads in `.secrets/kaggle_notebooks.jsonl` and add list/delete commands for API-key cleanup.
 
+34. Add reproducible private dictionary graph pipeline
+   - Status: in progress.
+   - Add `scripts/build_dictionary_graph.py` as a production-style replacement for one-off graph-building snippets.
+   - Extract root DOCX letters from `data/semi_private/File Từ điển PB_2021` into stable `entries.jsonl` ids.
+   - Refactor DOCX read/parse into reusable dictionary code that preserves high-fidelity rich blocks for casing, Vietnamese text, table rows, bold, italic, underline, strike, color, highlight, and subscript/superscript.
+   - Support provider-backed generation with MiMo OpenAI-compatible API or Groq round-robin keys.
+   - Keep raw LLM batch responses under `raw_batches/` for resume and audit.
+   - Validate JSON outputs, retry malformed batches with a shorter repair prompt, micro-repair missing entries one-by-one, and mark local fallback entries explicitly.
+   - Export `nodes.jsonl`, `edges.jsonl`, `manifest.json`, `graph_summary.md`, `graph.graphml`, and a standalone `graph_visualization.html`.
+   - Print human-readable progress lines with batch count, entry count, percent, elapsed time, and ETA while keeping JSON event logs on stdout.
+   - Preserve the existing Groq ABC graph run and create a separate MiMo ABCD graph run.
+
+35. Integrate dictionary mode into chat
+   - Status: in progress.
+   - Register `dictionary-graph` as a dictionary retrieval strategy with `/dict` aliases.
+   - Load dictionary artifacts from `runs/pb_dictionary_abcd_mimo_graph` with DOCX fallback from `data/semi_private/File Từ điển PB_2021`.
+   - Add `Dictionary` / `Từ điển` UI mode that retrieves dictionary entries, shows the original entry first, and asks the selected model for an explanation.
+   - Render rich dictionary source blocks in the document panel without affecting retrieval text normalization.
+
 ## Verification
 
 - `uv lock --check`
@@ -282,6 +303,7 @@ Status: implemented in the current working tree; pending final commit.
 - Confirm `--embed-groq-keys`, `--list-uploads`, and delete registry commands work without printing secret values.
 - Confirm Kaggle startup logs show `uv environment synced`; if `/health` still times out, read the emitted `/kaggle/working/rag-proxy.log` tail.
 - Confirm SciFact can load from the Hugging Face fallback when `ir_datasets`/BEIR direct download fails.
+- Reproduce a dictionary graph build with `uv run --frozen python scripts/build_dictionary_graph.py --provider mimo --model mimo-v2.5-pro --letters A,B,C,D --batch-size 8 --max-completion-tokens 8192`.
 
 ## Benchmark Snapshot
 
