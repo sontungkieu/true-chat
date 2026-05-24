@@ -56,6 +56,45 @@ def load_groq_keys(path: str | Path) -> list[ApiKey]:
     return keys
 
 
+def load_env_values(path: str | Path) -> dict[str, str]:
+    """Load simple KEY=value env files without expanding or exposing values."""
+
+    env_path = Path(path)
+    if not env_path.exists():
+        raise SecretFormatError(f"Env file does not exist: {env_path}")
+    if not env_path.is_file():
+        raise SecretFormatError(f"Env path is not a file: {env_path}")
+
+    values: dict[str, str] = {}
+    for line_no, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            raise SecretFormatError(f"Invalid env line {line_no}: expected key=value")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise SecretFormatError(f"Invalid env line {line_no}: empty key")
+        values[key] = _strip_env_quotes(value.strip())
+    return values
+
+
+def load_env_api_key(path: str | Path, variable: str, *, alias: str) -> ApiKey:
+    """Load one API key from an env file and return a log-safe alias."""
+
+    variable = variable.strip()
+    if not variable:
+        raise SecretFormatError("API key variable name must not be empty")
+    values = load_env_values(path)
+    value = values.get(variable)
+    if not value:
+        raise SecretFormatError(f"{variable} was not found in {Path(path)}")
+    return ApiKey(alias=alias, value=value)
+
+
 def _strip_env_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]

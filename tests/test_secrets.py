@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from rag_bench.secrets import SecretFormatError, load_groq_keys
+from rag_bench.secrets import SecretFormatError, load_env_api_key, load_groq_keys
 
 
 def test_load_groq_keys_parses_aliases_without_exposing_values(tmp_path: Path) -> None:
@@ -39,3 +39,21 @@ def test_load_groq_keys_rejects_malformed_line_without_secret_leak(tmp_path: Pat
 
     assert "gsk_secret_one" not in str(exc_info.value)
     assert "line 2" in str(exc_info.value)
+
+
+def test_load_env_api_key_reads_named_variable_without_exposing_value(tmp_path: Path) -> None:
+    path = tmp_path / ".env"
+    path.write_text("OTHER=value\nexport MIMO_API_KEY='secret-mimo'\n", encoding="utf-8")
+
+    key = load_env_api_key(path, "MIMO_API_KEY", alias="mimo")
+
+    assert key.alias == "mimo"
+    assert key.value == "secret-mimo"
+
+
+def test_load_env_api_key_fails_clearly_when_missing(tmp_path: Path) -> None:
+    path = tmp_path / ".env"
+    path.write_text("OTHER=value\n", encoding="utf-8")
+
+    with pytest.raises(SecretFormatError, match="MIMO_API_KEY was not found"):
+        load_env_api_key(path, "MIMO_API_KEY", alias="mimo")

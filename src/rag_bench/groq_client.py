@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 import time
+import urllib.error
+import urllib.request
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
@@ -44,6 +47,150 @@ class _Reservation:
     waited_s: float
 
 
+class OpenAIHTTPStatusError(RuntimeError):
+    def __init__(self, status_code: int, body: str) -> None:
+        self.status_code = status_code
+        super().__init__(f"HTTP {status_code}: {body}")
+
+
+@dataclass
+class _OpenAIUsage:
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+@dataclass
+class _OpenAIMessage:
+    content: str
+
+
+@dataclass
+class _OpenAIChoice:
+    message: _OpenAIMessage
+
+
+@dataclass
+class _OpenAIResponse:
+    choices: list[_OpenAIChoice]
+    usage: _OpenAIUsage | None = None
+
+
+class OpenAICompatibleClient:
+    """Minimal OpenAI-compatible chat client for providers not covered by the Groq SDK."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        timeout_s: float,
+        token_parameter: str = "max_tokens",
+        auth_header: str = "authorization",
+    ) -> None:
+        self.chat = _OpenAIChat(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_s=timeout_s,
+            token_parameter=token_parameter,
+            auth_header=auth_header,
+        )
+
+
+class _OpenAIChat:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        timeout_s: float,
+        token_parameter: str,
+        auth_header: str,
+    ) -> None:
+        self.completions = _OpenAICompletions(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_s=timeout_s,
+            token_parameter=token_parameter,
+            auth_header=auth_header,
+        )
+
+
+class _OpenAICompletions:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        timeout_s: float,
+        token_parameter: str,
+        auth_header: str,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout_s = timeout_s
+        self.token_parameter = token_parameter
+        self.auth_header = auth_header
+
+    def create(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float,
+        max_completion_tokens: int | None = None,
+        max_tokens: int | None = None,
+    ) -> _OpenAIResponse:
+        token_budget = max_tokens if max_tokens is not None else max_completion_tokens
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": False,
+        }
+        if token_budget is not None:
+            payload[self.token_parameter] = token_budget
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if self.auth_header in {"authorization", "both"}:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        if self.auth_header in {"api-key", "both"}:
+            headers["api-key"] = self.api_key
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                parsed = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            response_text = exc.read().decode("utf-8", errors="replace")
+            raise OpenAIHTTPStatusError(exc.code, _redact_secret(response_text)) from exc
+
+        choices = parsed.get("choices") or []
+        choice_items = [
+            _OpenAIChoice(_OpenAIMessage(_extract_message_text(choice.get("message") or {})))
+            for choice in choices
+            if isinstance(choice, dict)
+        ]
+        usage = parsed.get("usage") or None
+        return _OpenAIResponse(
+            choices=choice_items or [_OpenAIChoice(_OpenAIMessage(""))],
+            usage=_OpenAIUsage(
+                prompt_tokens=usage.get("prompt_tokens") if isinstance(usage, dict) else None,
+                completion_tokens=usage.get("completion_tokens") if isinstance(usage, dict) else None,
+                total_tokens=usage.get("total_tokens") if isinstance(usage, dict) else None,
+            )
+            if isinstance(usage, dict)
+            else None,
+        )
+
+
 @dataclass
 class RateLimitScheduler:
     keys: list[ApiKey]
@@ -69,7 +216,7 @@ class RateLimitScheduler:
         while True:
             if not self.has_available_keys():
                 disabled = ", ".join(sorted(self._disabled_aliases)) or "none"
-                raise RuntimeError(f"no Groq API keys remain available in this session; disabled aliases: {disabled}")
+                raise RuntimeError(f"no API keys remain available in this session; disabled aliases: {disabled}")
             now_s = self.time_fn()
             self._prune(now_s)
             candidate = self._find_available_key(now_s, estimated_tokens)
@@ -178,6 +325,9 @@ class RoundRobinGroqClient:
     key_requests_per_minute: int = 30
     rate_limit_scope: str = "per-key"
     client_factory: Callable[[ApiKey, float], Any] | None = None
+    provider_name: str = "Groq"
+    base_url: str | None = None
+    completion_token_parameter: str = "max_completion_tokens"
     sleep_fn: Callable[[float], None] = time.sleep
     time_fn: Callable[[], float] = time.monotonic
     _next_index: int = 0
@@ -186,7 +336,7 @@ class RoundRobinGroqClient:
 
     def __post_init__(self) -> None:
         if not self.keys:
-            raise ValueError("RoundRobinGroqClient requires at least one API key")
+            raise ValueError(f"RoundRobinGroqClient requires at least one {self.provider_name} API key")
         self.scheduler = RateLimitScheduler(
             keys=self.keys,
             tokens_per_minute=self.key_tokens_per_minute,
@@ -245,7 +395,7 @@ class RoundRobinGroqClient:
                     messages=messages_list,
                     model=request_model,
                     temperature=temperature,
-                    max_completion_tokens=max_completion_tokens,
+                    **{self.completion_token_parameter: max_completion_tokens},
                 )
                 request_latency_s = time.perf_counter() - request_started
                 answer = response.choices[0].message.content or ""
@@ -273,7 +423,10 @@ class RoundRobinGroqClient:
                     if self.scheduler.has_available_keys():
                         continue
                     disabled = ", ".join(self.scheduler.disabled_aliases())
-                    last_error = f"{last_error}; no available Groq API keys remain after disabling aliases: {disabled}"
+                    last_error = (
+                        f"{last_error}; no available {self.provider_name} API keys remain "
+                        f"after disabling aliases: {disabled}"
+                    )
                     return GenerationResult(
                         answer="",
                         key_alias=None,
@@ -320,7 +473,7 @@ class RoundRobinGroqClient:
             return self.client_factory(key, self.timeout_s)
         from groq import Groq
 
-        return Groq(api_key=key.value, timeout=self.timeout_s, max_retries=0)
+        return Groq(api_key=key.value, base_url=self.base_url, timeout=self.timeout_s, max_retries=0)
 
 
 def _extract_usage(response: Any) -> tuple[int | None, int | None, int | None]:
@@ -332,6 +485,23 @@ def _extract_usage(response: Any) -> tuple[int | None, int | None, int | None]:
         getattr(usage, "completion_tokens", None),
         getattr(usage, "total_tokens", None),
     )
+
+
+def _extract_message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts)
+    return ""
 
 
 def estimate_requested_tokens(
@@ -353,7 +523,7 @@ def _is_retryable(exc: Exception) -> bool:
     if isinstance(status_code, int) and status_code >= 500:
         return True
     name = exc.__class__.__name__.lower()
-    retryable_names = ("rate", "timeout", "connection", "temporar", "server")
+    retryable_names = ("rate", "timeout", "connection", "temporar", "server", "urlerror")
     return any(token in name for token in retryable_names)
 
 
@@ -414,4 +584,10 @@ def _safe_error(exc: Exception) -> str:
     status_code = _status_code(exc)
     prefix = f"status={status_code} " if status_code is not None else ""
     message = f"{prefix}{exc.__class__.__name__}: {exc}"
-    return re.sub(r"gsk_[A-Za-z0-9_-]+", "gsk_***REDACTED***", message)
+    return _redact_secret(message)
+
+
+def _redact_secret(value: str) -> str:
+    redacted = re.sub(r"gsk_[A-Za-z0-9_-]+", "gsk_***REDACTED***", value)
+    redacted = re.sub(r"tp-[A-Za-z0-9*_-]+", "tp-***REDACTED***", redacted)
+    return redacted

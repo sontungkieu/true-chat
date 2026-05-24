@@ -89,6 +89,19 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "--dictionary-required",
             "--max-completion-tokens",
             "96",
+            "--enable-mimo",
+            "--mimo-env-file",
+            ".secrets/.env",
+            "--mimo-api-key-var",
+            "MIMO_API_KEY",
+            "--mimo-base-url",
+            "https://token-plan-sgp.xiaomimimo.com/v1",
+            "--mimo-models",
+            "mimo-v2.5-pro,mimo-v2.5",
+            "--mimo-key-tpm",
+            "0",
+            "--mimo-key-rpm",
+            "0",
             "--key-tpm",
             "5000",
             "--key-rpm",
@@ -114,6 +127,14 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.dictionary_top_k == 6
     assert seen["config"].chat.dictionary_required is True
     assert seen["config"].chat.max_completion_tokens == 96
+    assert seen["config"].chat.mimo_enabled is True
+    assert seen["config"].chat.mimo_env_file == Path(".secrets/.env")
+    assert seen["config"].chat.mimo_api_key_var == "MIMO_API_KEY"
+    assert seen["config"].chat.mimo_base_url == "https://token-plan-sgp.xiaomimimo.com/v1"
+    assert seen["config"].chat.mimo_models == ("mimo-v2.5-pro", "mimo-v2.5")
+    assert seen["config"].chat.mimo_key_tokens_per_minute == 0
+    assert seen["config"].chat.mimo_key_requests_per_minute == 0
+    assert "mimo-v2.5-pro" in seen["config"].chat.available_models
     assert seen["config"].chat.key_tokens_per_minute == 5000
     assert seen["config"].chat.key_requests_per_minute == 20
     assert seen["config"].chat.rate_limit_scope == "shared"

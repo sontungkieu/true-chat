@@ -154,6 +154,7 @@ def test_chat_page() -> None:
     assert "Graph BM25" in response.text
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
+    assert "MiMo V2.5 Pro" in response.text
     assert "modelSelector" not in response.text
     assert "activeTitle" not in response.text
     assert "model-selector" not in response.text
@@ -172,6 +173,9 @@ def test_chat_page() -> None:
     assert '"dictionary-graph"' in response.text
     assert "renderRichBlocks" in response.text
     assert "rich-run" in response.text
+    assert "renderDictionaryAnswer" in response.text
+    assert "dictionary-inline" in response.text
+    assert "dictionaryAnswerParts" in response.text
     assert "positionComposerToolMenu" in response.text
     assert "--composer-menu-left" in response.text
     assert '--composer-menu-bottom' in response.text
@@ -201,7 +205,11 @@ def test_chat_page() -> None:
     assert "think-details" in response.text
     assert "splitThinkContent" in response.text
     assert "renderTextWithCitations" in response.text
+    assert "renderMarkdownBlocks" in response.text
+    assert "markdown-content" in response.text
     assert "citation-ref" in response.text
+    assert "ragDetailsOpen" in response.text
+    assert "ragDetailsKey" in response.text
     assert "min-width: 1.7em" in response.text
     assert "font-size: 0.74em" in response.text
     assert "Citations and related documents" in response.text

@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rag_bench.chat_service import ChatProxyConfig, RagChatService, last_user_text, parse_chat_command
+from rag_bench.chat_service import (
+    ChatProxyConfig,
+    ModelRoutedChatClient,
+    RagChatService,
+    last_user_text,
+    parse_chat_command,
+)
 from rag_bench.groq_client import GenerationResult
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
 
@@ -126,7 +132,8 @@ class FakeDictionaryRetriever:
 
 
 class FakeLLM:
-    def __init__(self) -> None:
+    def __init__(self, alias: str = "alias-a") -> None:
+        self.alias = alias
         self.key_usage_counts = {"alias-a": 1}
         self.messages: list[dict[str, str]] = []
         self.model: str | None = None
@@ -147,8 +154,8 @@ class FakeLLM:
         self.max_completion_tokens = max_completion_tokens
         return GenerationResult(
             answer="Cats purr [cat-doc]",
-            key_alias="alias-a",
-            attempted_aliases=["alias-a"],
+            key_alias=self.alias,
+            attempted_aliases=[self.alias],
             latency_s=0.03,
             retry_count=0,
             prompt_tokens=20,
@@ -289,6 +296,37 @@ def test_rag_chat_service_can_switch_to_qwen_model() -> None:
     assert result.response["model"] == "qwen/qwen3-32b"
     assert result.response["rag"]["generation_model"] == "qwen/qwen3-32b"
     assert llm.model == "qwen/qwen3-32b"
+
+
+def test_model_routed_chat_client_routes_mimo_models() -> None:
+    groq = FakeLLM(alias="groq-a")
+    mimo = FakeLLM(alias="mimo")
+    router = ModelRoutedChatClient(default_client=groq, routes={"mimo-v2.5-pro": mimo})
+
+    result = router.generate([{"role": "user", "content": "hello"}], model="mimo-v2.5-pro")
+    fallback = router.generate([{"role": "user", "content": "hello"}], model="qwen/qwen3-32b")
+
+    assert result.key_alias == "mimo"
+    assert mimo.model == "mimo-v2.5-pro"
+    assert fallback.key_alias == "groq-a"
+    assert groq.model == "qwen/qwen3-32b"
+
+
+def test_available_models_include_mimo_only_when_enabled() -> None:
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test", mimo_enabled=True),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=FakeRetriever(),
+        llm=FakeLLM(),
+    )
+
+    assert "mimo-v2.5-pro" in service.available_generation_models()
 
 
 def test_rag_chat_service_resolves_retriever_alias() -> None:

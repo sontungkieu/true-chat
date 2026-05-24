@@ -7,7 +7,13 @@ import sys
 from pathlib import Path
 
 from rag_bench.benchmarks import BENCHMARKS
-from rag_bench.chat_service import ChatProxyConfig, DEFAULT_CHAT_RETRIEVERS, DEFAULT_PROXY_MODEL_ID
+from rag_bench.chat_service import (
+    ChatProxyConfig,
+    DEFAULT_CHAT_RETRIEVERS,
+    DEFAULT_MIMO_BASE_URL,
+    DEFAULT_MIMO_MODELS,
+    DEFAULT_PROXY_MODEL_ID,
+)
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.runner import RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
@@ -96,6 +102,28 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--groq-keys-path", type=Path, default=Path(".secrets/groq_key.env"))
     serve_parser.add_argument("--model", default=DEFAULT_MODEL)
     serve_parser.add_argument("--model-id", default=DEFAULT_PROXY_MODEL_ID, help="Model id exposed to Open WebUI.")
+    serve_parser.add_argument(
+        "--available-models",
+        default=None,
+        help="Comma-separated generation models exposed in the built-in UI.",
+    )
+    serve_parser.add_argument("--enable-mimo", action="store_true", help="Enable MiMo OpenAI-compatible chat models.")
+    serve_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"), help="Env file containing MIMO_API_KEY.")
+    serve_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY", help="Variable name used for the MiMo API key.")
+    serve_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL, help="OpenAI-compatible MiMo base URL.")
+    serve_parser.add_argument("--mimo-models", default=",".join(DEFAULT_MIMO_MODELS), help="Comma-separated MiMo model ids.")
+    serve_parser.add_argument(
+        "--mimo-key-tpm",
+        type=int,
+        default=0,
+        help="MiMo token budget per 60s scheduler bucket. Use 0 to disable token scheduling.",
+    )
+    serve_parser.add_argument(
+        "--mimo-key-rpm",
+        type=int,
+        default=0,
+        help="MiMo request budget per 60s scheduler bucket. Use 0 to disable request scheduling.",
+    )
     serve_parser.add_argument("--vector-model", default=DEFAULT_VECTOR_MODEL)
     serve_parser.add_argument("--max-retries", type=int, default=2)
     serve_parser.add_argument("--max-completion-tokens", type=int, default=128)
@@ -245,12 +273,33 @@ def _serve(args: argparse.Namespace) -> int:
     if args.key_rpm < 0:
         print("--key-rpm must be non-negative.", file=sys.stderr)
         return 2
+    if args.mimo_key_tpm < 0:
+        print("--mimo-key-tpm must be non-negative.", file=sys.stderr)
+        return 2
+    if args.mimo_key_rpm < 0:
+        print("--mimo-key-rpm must be non-negative.", file=sys.stderr)
+        return 2
     available_retrievers = None
     if args.available_retrievers is not None:
         available_retrievers = tuple(item.strip() for item in args.available_retrievers.split(",") if item.strip())
         if not available_retrievers:
             print("--available-retrievers must include at least one retriever.", file=sys.stderr)
             return 2
+    available_models = None
+    if args.available_models is not None:
+        available_models = tuple(item.strip() for item in args.available_models.split(",") if item.strip())
+        if not available_models:
+            print("--available-models must include at least one model.", file=sys.stderr)
+            return 2
+    mimo_models = tuple(item.strip() for item in args.mimo_models.split(",") if item.strip())
+    if not mimo_models:
+        print("--mimo-models must include at least one model.", file=sys.stderr)
+        return 2
+    mimo_enabled = bool(args.enable_mimo or args.model in mimo_models)
+    if available_models is None:
+        available_models = _dedupe_preserve_order(
+            (DEFAULT_MODEL, "qwen/qwen3-32b", *(mimo_models if mimo_enabled else ()))
+        )
 
     chat_config = ChatProxyConfig(
         bench=args.bench,
@@ -259,6 +308,14 @@ def _serve(args: argparse.Namespace) -> int:
         groq_keys_path=args.groq_keys_path,
         model=args.model,
         model_id=args.model_id,
+        available_models=available_models,
+        mimo_enabled=mimo_enabled,
+        mimo_env_file=args.mimo_env_file,
+        mimo_api_key_var=args.mimo_api_key_var,
+        mimo_base_url=args.mimo_base_url,
+        mimo_models=mimo_models,
+        mimo_key_tokens_per_minute=args.mimo_key_tpm,
+        mimo_key_requests_per_minute=args.mimo_key_rpm,
         vector_model=args.vector_model,
         max_retries=args.max_retries,
         max_completion_tokens=args.max_completion_tokens,
@@ -289,3 +346,13 @@ def _serve(args: argparse.Namespace) -> int:
         print(f"rag-bench serve failed: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def _dedupe_preserve_order(values: tuple[str, ...]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return tuple(result)

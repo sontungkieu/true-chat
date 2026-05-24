@@ -1062,6 +1062,47 @@
       white-space: pre-wrap;
     }
 
+    .content.markdown-content,
+    .markdown-content {
+      white-space: normal;
+    }
+
+    .markdown-content p {
+      margin: 0 0 0.78em;
+    }
+
+    .markdown-content p:last-child,
+    .markdown-content ul:last-child,
+    .markdown-content ol:last-child {
+      margin-bottom: 0;
+    }
+
+    .markdown-content ul,
+    .markdown-content ol {
+      margin: 0 0 0.88em;
+      padding-left: 1.35em;
+    }
+
+    .markdown-content li {
+      margin: 0.24em 0;
+      padding-left: 0.1em;
+    }
+
+    .markdown-content strong {
+      font-weight: 760;
+    }
+
+    .markdown-content em {
+      font-style: italic;
+    }
+
+    .markdown-content .md-heading {
+      margin: 0 0 0.52em;
+      font-size: 1.03em;
+      font-weight: 760;
+      line-height: 1.42;
+    }
+
     .think-details {
       margin: 0 0 10px;
       color: var(--muted);
@@ -1108,6 +1149,92 @@
       50% {
         opacity: 0;
       }
+    }
+
+    .dictionary-inline {
+      display: grid;
+      gap: 10px;
+      max-width: min(760px, 100%);
+      margin: 2px 0 14px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: linear-gradient(180deg, var(--surface) 0%, var(--surface-soft) 100%);
+      box-shadow: 0 1px 0 rgba(15, 15, 16, 0.02);
+      overflow: hidden;
+    }
+
+    .dictionary-inline-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+      padding: 12px 14px 10px;
+    }
+
+    .dictionary-inline-title {
+      min-width: 0;
+    }
+
+    .dictionary-inline-title strong {
+      display: block;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 760;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dictionary-inline-title span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .dictionary-open {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 auto;
+      min-height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--muted-strong);
+      padding: 0 9px;
+      font-size: 12px;
+      transition: border-color 0.13s ease, color 0.13s ease, background 0.13s ease;
+    }
+
+    .dictionary-open:hover {
+      border-color: var(--text);
+      color: var(--text);
+      background: var(--surface-soft);
+    }
+
+    .dictionary-inline-body {
+      padding: 13px 14px 14px;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.7;
+      overflow-wrap: anywhere;
+    }
+
+    .dictionary-inline-body .rich-table-cell {
+      border-color: transparent;
+      background: transparent;
+      padding: 0;
+    }
+
+    .dictionary-explanation-label {
+      margin: 6px 0 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
     }
 
     .meta-line {
@@ -2044,6 +2171,7 @@
     let editingUserIndex = null;
     let chatSwipeStart = null;
     let activeComposerMenu = null;
+    const ragDetailsOpen = new Map();
     const ICONS = {
       copy: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
       edit: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>',
@@ -2614,12 +2742,16 @@
     function modelLabel(model) {
       if (model === "llama-3.1-8b-instant") return "Llama 3.1 8B Instant";
       if (model === "qwen/qwen3-32b") return "Qwen3 32B";
+      if (model === "mimo-v2.5-pro") return "MiMo V2.5 Pro";
+      if (model === "mimo-v2.5") return "MiMo V2.5";
       return model;
     }
 
     function shortModelLabel(model) {
       if (model === "llama-3.1-8b-instant") return "Llama 8B";
       if (model === "qwen/qwen3-32b") return "Qwen3 32B";
+      if (model === "mimo-v2.5-pro") return "MiMo Pro";
+      if (model === "mimo-v2.5") return "MiMo V2.5";
       return modelLabel(model);
     }
 
@@ -2959,7 +3091,27 @@
       if (message.role === "assistant" && display.thinking.length) {
         bubble.appendChild(renderThinkDetails(display.thinking));
       }
-      renderTextWithCitations(content, display.answer || (message.pending ? "" : display.fallback), documentSources);
+      const dictionaryAnswer = message.role === "assistant" ? dictionaryAnswerParts(display.answer, documentSources) : null;
+      if (dictionaryAnswer) {
+        bubble.appendChild(renderDictionaryAnswer(dictionaryAnswer));
+        const explanation = dictionaryAnswer.explanation || (message.pending ? "" : display.fallback);
+        if (explanation) {
+          const explanationLabel = document.createElement("div");
+          explanationLabel.className = "dictionary-explanation-label";
+          explanationLabel.textContent = currentLanguage() === "vi" ? "Giải thích" : "Explanation";
+          const explanationText = document.createElement("div");
+          content.appendChild(explanationLabel);
+          renderTextWithCitations(explanationText, explanation, documentSources, { markdown: true });
+          content.appendChild(explanationText);
+        }
+      } else {
+        renderTextWithCitations(
+          content,
+          display.answer || (message.pending ? "" : display.fallback),
+          documentSources,
+          { markdown: message.role === "assistant" }
+        );
+      }
       bubble.appendChild(content);
       if (message.role === "assistant" && images.length) {
         bubble.appendChild(renderImageGrid(images));
@@ -2993,7 +3145,7 @@
       body.appendChild(footer);
 
       if (documentSources.length) {
-        body.appendChild(renderRagDetails(documentSources));
+        body.appendChild(renderRagDetails(documentSources, ragDetailsKey(index)));
       }
 
       turn.append(avatar, body);
@@ -3091,27 +3243,118 @@
       return button;
     }
 
-    function renderTextWithCitations(container, text, sources) {
+    function renderTextWithCitations(container, text, sources, options = {}) {
       container.textContent = "";
-      const sourceByDocId = new Map();
-      for (const source of sources || []) {
-        if (source.doc_id) sourceByDocId.set(String(source.doc_id), source);
+      container.classList.toggle("markdown-content", Boolean(options.markdown));
+      const sourceByDocId = sourceLookup(sources);
+      if (options.markdown) {
+        renderMarkdownBlocks(container, String(text || ""), sourceByDocId);
+        return;
       }
+      appendInlineText(container, String(text || ""), sourceByDocId, { markdown: false });
+    }
+
+    function sourceLookup(sources) {
+      const lookup = new Map();
+      for (const source of sources || []) {
+        if (source.doc_id) lookup.set(String(source.doc_id), source);
+        if (source.rank !== undefined && source.rank !== null) lookup.set(String(source.rank), source);
+      }
+      return lookup;
+    }
+
+    function renderMarkdownBlocks(container, text, sourceByDocId) {
+      const normalized = String(text || "").replace(/\r\n/g, "\n");
+      const lines = normalized.split("\n");
+      let index = 0;
+      while (index < lines.length) {
+        if (!lines[index].trim()) {
+          index += 1;
+          continue;
+        }
+        const listInfo = markdownListInfo(lines[index]);
+        if (listInfo) {
+          const list = document.createElement(listInfo.ordered ? "ol" : "ul");
+          while (index < lines.length) {
+            const current = markdownListInfo(lines[index]);
+            if (!current || current.ordered !== listInfo.ordered) break;
+            const item = document.createElement("li");
+            appendInlineText(item, current.text, sourceByDocId, { markdown: true });
+            list.appendChild(item);
+            index += 1;
+          }
+          container.appendChild(list);
+          continue;
+        }
+        const heading = markdownHeading(lines[index]);
+        if (heading) {
+          const block = document.createElement("div");
+          block.className = "md-heading";
+          appendInlineText(block, heading, sourceByDocId, { markdown: true });
+          container.appendChild(block);
+          index += 1;
+          continue;
+        }
+        const paragraphLines = [];
+        while (index < lines.length && lines[index].trim() && !markdownListInfo(lines[index]) && !markdownHeading(lines[index])) {
+          paragraphLines.push(lines[index].trim());
+          index += 1;
+        }
+        const paragraph = document.createElement("p");
+        appendInlineText(paragraph, paragraphLines.join(" "), sourceByDocId, { markdown: true });
+        container.appendChild(paragraph);
+      }
+    }
+
+    function markdownListInfo(line) {
+      const ordered = /^\s*\d+[.)]\s+(.+)$/.exec(line);
+      if (ordered) return { ordered: true, text: ordered[1].trim() };
+      const unordered = /^\s*[-*]\s+(.+)$/.exec(line);
+      if (unordered) return { ordered: false, text: unordered[1].trim() };
+      return null;
+    }
+
+    function markdownHeading(line) {
+      const match = /^\s{0,3}#{1,4}\s+(.+?)\s*$/.exec(line);
+      return match ? match[1].trim() : "";
+    }
+
+    function appendInlineText(container, text, sourceByDocId, options = {}) {
       const sourcePattern = /\[([^\[\]]+)\]/g;
       let cursor = 0;
       let match;
       while ((match = sourcePattern.exec(text)) !== null) {
-        const source = sourceByDocId.get(match[1]);
+        const source = sourceByDocId.get(match[1].trim());
         if (!source) continue;
         if (match.index > cursor) {
-          container.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+          appendMarkdownInline(container, text.slice(cursor, match.index), Boolean(options.markdown));
         }
         container.appendChild(renderCitation(source));
         cursor = match.index + match[0].length;
       }
       if (cursor < text.length) {
-        container.appendChild(document.createTextNode(text.slice(cursor)));
+        appendMarkdownInline(container, text.slice(cursor), Boolean(options.markdown));
       }
+    }
+
+    function appendMarkdownInline(container, text, markdown) {
+      if (!markdown) {
+        container.appendChild(document.createTextNode(text));
+        return;
+      }
+      const pattern = /(\*\*[^*]+?\*\*|__[^_]+?__|\*[^*\s][^*]*?\*|_[^_\s][^_]*?_)/g;
+      let cursor = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > cursor) container.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+        const token = match[0];
+        const strong = token.startsWith("**") || token.startsWith("__");
+        const element = document.createElement(strong ? "strong" : "em");
+        element.textContent = token.slice(strong ? 2 : 1, strong ? -2 : -1);
+        container.appendChild(element);
+        cursor = match.index + token.length;
+      }
+      if (cursor < text.length) container.appendChild(document.createTextNode(text.slice(cursor)));
     }
 
     function renderCitation(source) {
@@ -3122,6 +3365,73 @@
       button.title = `${t("openDocument")} #${source.rank || "?"}: ${source.title || source.doc_id || t("source")}`;
       button.addEventListener("click", () => openDocument(source));
       return button;
+    }
+
+    function dictionaryAnswerParts(answer, sources) {
+      const source = (sources || []).find(isDictionarySource);
+      if (!source || !richBlocks(source).length) return null;
+      const text = String(answer || "").trim();
+      const marker = /(?:^|\n)\s*(Giải thích|Explanation)\s*:\s*/i.exec(text);
+      let explanation = "";
+      if (marker) {
+        explanation = text.slice(marker.index + marker[0].length).trim();
+      } else if (text && !looksLikeDictionaryRawText(text, source)) {
+        explanation = stripDictionaryHeader(text, source).trim();
+      }
+      return { source, explanation };
+    }
+
+    function renderDictionaryAnswer(parts) {
+      const source = parts.source;
+      const card = document.createElement("section");
+      card.className = "dictionary-inline";
+      const head = document.createElement("div");
+      head.className = "dictionary-inline-head";
+      const title = document.createElement("div");
+      title.className = "dictionary-inline-title";
+      const strong = document.createElement("strong");
+      strong.textContent = source.title || source.doc_id || t("dictionary");
+      const meta = document.createElement("span");
+      const score = typeof source.score === "number" ? " · score " + source.score.toFixed(3) : "";
+      meta.textContent = (source.doc_id || t("source")) + score;
+      title.append(strong, meta);
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "dictionary-open";
+      open.textContent = currentLanguage() === "vi" ? "Mở tài liệu" : "Open source";
+      open.addEventListener("click", () => openDocument(source));
+      head.append(title, open);
+      const body = document.createElement("div");
+      body.className = "dictionary-inline-body";
+      renderRichBlocks(body, richBlocks(source));
+      card.append(head, body);
+      return card;
+    }
+
+    function isDictionarySource(source) {
+      return source?.kind === "dictionary" || source?.metadata?.kind === "dictionary" || richBlocks(source).length > 0;
+    }
+
+    function stripDictionaryHeader(text, source) {
+      const docId = escapeRegExp(String(source?.doc_id || ""));
+      const sourcePattern = docId
+        ? new RegExp("^\\s*(?:Mục từ gốc|Original entry)\\s*\\[(?:" + docId + "|[^\\]]+)\\]\\s*:\\s*", "i")
+        : /^\s*(?:Mục từ gốc|Original entry)\s*(?:\[[^\]]+\])?\s*:\s*/i;
+      return String(text || "").replace(sourcePattern, "");
+    }
+
+    function looksLikeDictionaryRawText(text, source) {
+      const stripped = stripDictionaryHeader(text, source);
+      const sourceText = String(source?.raw_docx_text || source?.metadata?.raw_docx_text || source?.text || "");
+      return comparableText(stripped).startsWith(comparableText(sourceText).slice(0, 80));
+    }
+
+    function comparableText(value) {
+      return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+
+    function escapeRegExp(value) {
+      return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
     function renderImageGrid(sources) {
@@ -3163,9 +3473,20 @@
       return list;
     }
 
-    function renderRagDetails(sources) {
+    function ragDetailsKey(index) {
+      const conversation = activeConversation();
+      return (conversation?.id || "chat") + ":" + index;
+    }
+
+    function renderRagDetails(sources, detailsKey) {
       const details = document.createElement("details");
       details.className = "rag-details";
+      if (ragDetailsOpen.has(detailsKey)) {
+        details.open = Boolean(ragDetailsOpen.get(detailsKey));
+      }
+      details.addEventListener("toggle", () => {
+        ragDetailsOpen.set(detailsKey, details.open);
+      });
       const summary = document.createElement("summary");
       summary.textContent = t("retrievedContext");
       const table = document.createElement("div");

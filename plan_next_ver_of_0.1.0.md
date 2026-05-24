@@ -278,7 +278,10 @@ Status: implemented in the current working tree; pending final commit.
    - Register `dictionary-graph` as a dictionary retrieval strategy with `/dict` aliases.
    - Load dictionary artifacts from `runs/pb_dictionary_abcd_mimo_graph` with DOCX fallback from `data/semi_private/File Từ điển PB_2021`.
    - Add `Dictionary` / `Từ điển` UI mode that retrieves dictionary entries, shows the original entry first, and asks the selected model for an explanation.
-   - Render rich dictionary source blocks in the document panel without affecting retrieval text normalization.
+   - Render rich dictionary source blocks in the main answer and document panel without affecting retrieval text normalization.
+   - Add optional MiMo chat completion routing behind `--enable-mimo`, using `MIMO_API_KEY` from `.secrets/.env` and exposing `mimo-v2.5-pro` / `mimo-v2.5` in the model selector.
+   - Render assistant explanations with a safe Markdown subset for headings, bold, italic, paragraphs, and lists while preserving clickable citations.
+   - Preserve each citations/related-documents disclosure open state when clicking rows or inline citations.
 
 36. Productionize dictionary knowledge graph artifacts
    - Status: in progress.

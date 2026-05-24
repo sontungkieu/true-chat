@@ -16,16 +16,18 @@ from rag_bench.dictionary import (
     DictionaryLoadResult,
     load_dictionary_documents,
 )
-from rag_bench.groq_client import GenerationResult, RoundRobinGroqClient
+from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.prompts import SYSTEM_PROMPT
 from rag_bench.retriever_registry import create_retriever, get_retriever_spec, normalize_retriever_id
 from rag_bench.retrievers import Retriever
-from rag_bench.secrets import ApiKey, load_groq_keys
+from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 
 DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
 DEFAULT_CHAT_MODELS = ("llama-3.1-8b-instant", "qwen/qwen3-32b")
+DEFAULT_MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
+DEFAULT_MIMO_MODELS = ("mimo-v2.5-pro", "mimo-v2.5")
 DEFAULT_CHAT_RETRIEVERS = (
     "bm25",
     "tfidf",
@@ -61,6 +63,13 @@ class ChatProxyConfig:
     model: str = "llama-3.1-8b-instant"
     model_id: str = DEFAULT_PROXY_MODEL_ID
     available_models: tuple[str, ...] = DEFAULT_CHAT_MODELS
+    mimo_enabled: bool = False
+    mimo_env_file: Path = Path(".secrets/.env")
+    mimo_api_key_var: str = "MIMO_API_KEY"
+    mimo_base_url: str = DEFAULT_MIMO_BASE_URL
+    mimo_models: tuple[str, ...] = DEFAULT_MIMO_MODELS
+    mimo_key_tokens_per_minute: int = 0
+    mimo_key_requests_per_minute: int = 0
     available_retrievers: tuple[str, ...] = DEFAULT_CHAT_RETRIEVERS
     vector_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     max_retries: int = 2
@@ -393,10 +402,12 @@ class RagChatService:
         }
 
     def available_model_ids(self) -> tuple[str, ...]:
-        return _dedupe_preserve_order((self.config.model_id, self.config.model, *self.config.available_models))
+        mimo_models = self.config.mimo_models if self.config.mimo_enabled else ()
+        return _dedupe_preserve_order((self.config.model_id, self.config.model, *self.config.available_models, *mimo_models))
 
     def available_generation_models(self) -> tuple[str, ...]:
-        return _dedupe_preserve_order((self.config.model, *self.config.available_models))
+        mimo_models = self.config.mimo_models if self.config.mimo_enabled else ()
+        return _dedupe_preserve_order((self.config.model, *self.config.available_models, *mimo_models))
 
     def available_retriever_ids(self) -> tuple[str, ...]:
         return tuple(self.retrievers.keys())
@@ -503,6 +514,50 @@ class RagChatService:
             latency_s=time.perf_counter() - started,
             metadata=metadata,
         )
+
+
+@dataclass
+class ModelRoutedChatClient:
+    default_client: ChatGenerationClient
+    routes: dict[str, ChatGenerationClient]
+
+    @property
+    def key_usage_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for client in self._clients():
+            for alias, count in dict(getattr(client, "key_usage_counts", {}) or {}).items():
+                counts[alias] = counts.get(alias, 0) + int(count)
+        return counts
+
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_completion_tokens: int = 512,
+    ) -> GenerationResult:
+        client = self.routes.get(model or "") or self.default_client
+        return client.generate(
+            messages,
+            model=model,
+            temperature=temperature,
+            max_completion_tokens=max_completion_tokens,
+        )
+
+    def rate_limit_snapshot(self) -> dict[str, dict[str, float | int | str]]:
+        snapshot: dict[str, dict[str, float | int | str]] = {}
+        for client in self._clients():
+            for alias, details in client.rate_limit_snapshot().items():
+                snapshot[alias] = details
+        return snapshot
+
+    def _clients(self) -> list[ChatGenerationClient]:
+        clients = [self.default_client]
+        for client in self.routes.values():
+            if not any(client is existing for existing in clients):
+                clients.append(client)
+        return clients
 
 
 def _keyword_query_variants(
@@ -631,14 +686,39 @@ def _dedupe_strings(values: list[str]) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _build_llm(config: ChatProxyConfig, keys: list[ApiKey]) -> RoundRobinGroqClient:
-    return RoundRobinGroqClient(
+def _build_llm(config: ChatProxyConfig, keys: list[ApiKey]) -> ChatGenerationClient:
+    groq_client = RoundRobinGroqClient(
         keys=keys,
         model=config.model,
         max_retries=config.max_retries,
         key_tokens_per_minute=config.key_tokens_per_minute,
         key_requests_per_minute=config.key_requests_per_minute,
         rate_limit_scope=config.rate_limit_scope,
+        provider_name="Groq",
+    )
+    if not config.mimo_enabled:
+        return groq_client
+
+    mimo_key = load_env_api_key(config.mimo_env_file, config.mimo_api_key_var, alias="mimo")
+    mimo_client = RoundRobinGroqClient(
+        keys=[mimo_key],
+        model=config.mimo_models[0] if config.mimo_models else "mimo-v2.5-pro",
+        max_retries=config.max_retries,
+        key_tokens_per_minute=config.mimo_key_tokens_per_minute,
+        key_requests_per_minute=config.mimo_key_requests_per_minute,
+        rate_limit_scope="per-key",
+        client_factory=lambda key, timeout: OpenAICompatibleClient(
+            api_key=key.value,
+            base_url=config.mimo_base_url,
+            timeout_s=timeout,
+            token_parameter="max_tokens",
+        ),
+        provider_name="MiMo",
+        completion_token_parameter="max_tokens",
+    )
+    return ModelRoutedChatClient(
+        default_client=groq_client,
+        routes={model: mimo_client for model in config.mimo_models},
     )
 
 
