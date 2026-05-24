@@ -1163,6 +1163,18 @@
       overflow: hidden;
     }
 
+    .dictionary-inline-list {
+      display: grid;
+      gap: 10px;
+      max-width: min(760px, 100%);
+      margin: 2px 0 14px;
+    }
+
+    .dictionary-inline-list .dictionary-inline {
+      max-width: 100%;
+      margin: 0;
+    }
+
     .dictionary-inline-head {
       display: flex;
       align-items: flex-start;
@@ -2130,6 +2142,7 @@
     const AVAILABLE_RETRIEVERS = __AVAILABLE_RETRIEVERS_JSON__;
     const STORAGE_KEY = "ragChatUiState.v1";
     const SETTINGS_KEY = "ragChatUiSettings.v1";
+    const MAX_INLINE_DICTIONARY_SOURCES = 3;
     const app = document.querySelector("[data-app='rag-chat']");
     const chat = document.getElementById("chat");
     const conversationList = document.getElementById("conversationList");
@@ -3368,21 +3381,34 @@
     }
 
     function dictionaryAnswerParts(answer, sources) {
-      const source = (sources || []).find(isDictionarySource);
-      if (!source || !richBlocks(source).length) return null;
+      const dictionarySources = dictionaryInlineSources(answer, sources);
+      if (!dictionarySources.length) return null;
+      const primarySource = (sources || []).find((source) => isDictionarySource(source) && richBlocks(source).length) || dictionarySources[0];
       const text = String(answer || "").trim();
       const marker = /(?:^|\n)\s*(Giải thích|Explanation)\s*:\s*/i.exec(text);
       let explanation = "";
       if (marker) {
         explanation = text.slice(marker.index + marker[0].length).trim();
-      } else if (text && !looksLikeDictionaryRawText(text, source)) {
-        explanation = stripDictionaryHeader(text, source).trim();
+      } else if (text && !looksLikeDictionaryRawText(text, primarySource)) {
+        explanation = stripDictionaryHeader(text, primarySource).trim();
       }
-      return { source, explanation };
+      return { sources: dictionarySources, explanation };
     }
 
     function renderDictionaryAnswer(parts) {
-      const source = parts.source;
+      const sources = parts.sources || (parts.source ? [parts.source] : []);
+      if (sources.length > 1) {
+        const list = document.createElement("div");
+        list.className = "dictionary-inline-list";
+        for (const source of sources) {
+          list.appendChild(renderDictionaryCard(source));
+        }
+        return list;
+      }
+      return renderDictionaryCard(sources[0]);
+    }
+
+    function renderDictionaryCard(source) {
       const card = document.createElement("section");
       card.className = "dictionary-inline";
       const head = document.createElement("div");
@@ -3406,6 +3432,48 @@
       renderRichBlocks(body, richBlocks(source));
       card.append(head, body);
       return card;
+    }
+
+    function dictionaryInlineSources(answer, sources) {
+      const dictionarySources = (sources || []).filter((source) => isDictionarySource(source) && richBlocks(source).length);
+      if (!dictionarySources.length) return [];
+      const cited = citedSources(answer, dictionarySources);
+      const citedKeys = new Set(cited.map(sourceKey));
+      const priority = [
+        ...dictionarySources.filter((source) => citedKeys.has(sourceKey(source))),
+        ...dictionarySources.filter((source) => !citedKeys.has(sourceKey(source)))
+      ];
+      const seen = new Set();
+      const selected = [];
+      for (const source of priority) {
+        const key = sourceKey(source);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        selected.push(source);
+        if (selected.length >= MAX_INLINE_DICTIONARY_SOURCES) break;
+      }
+      return selected;
+    }
+
+    function citedSources(answer, sources) {
+      const lookup = sourceLookup(sources);
+      const selected = [];
+      const seen = new Set();
+      const pattern = /\[([^\[\]]+)\]/g;
+      let match;
+      while ((match = pattern.exec(String(answer || ""))) !== null) {
+        const source = lookup.get(match[1].trim());
+        if (!source) continue;
+        const key = sourceKey(source);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        selected.push(source);
+      }
+      return selected;
+    }
+
+    function sourceKey(source) {
+      return String(source?.doc_id || "") + "#" + String(source?.rank || "");
     }
 
     function isDictionarySource(source) {

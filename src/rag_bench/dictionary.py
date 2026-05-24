@@ -5,7 +5,7 @@ import json
 import re
 import unicodedata
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from zipfile import ZipFile
@@ -34,6 +34,8 @@ class DictionaryEntry:
     raw_docx_text: str | None = None
     rich_blocks: list[dict[str, Any]] = field(default_factory=list)
     source: dict[str, Any] = field(default_factory=dict)
+    aliases: list[str] = field(default_factory=list)
+    concepts: list[str] = field(default_factory=list)
     source_set: str | None = None
     schema_version: int = DICTIONARY_SCHEMA_VERSION
 
@@ -50,6 +52,8 @@ class DictionaryEntry:
             "raw_docx_text": self.raw_docx_text or self.text,
             "rich_blocks": self.rich_blocks,
             "source": self.source,
+            "aliases": self.aliases,
+            "concepts": self.concepts,
         }
         return Document(doc_id=self.id, title=self.headword, text=plain, metadata=metadata)
 
@@ -145,6 +149,8 @@ def load_dictionary_artifact(path: Path) -> list[DictionaryEntry]:
             if not isinstance(row, dict):
                 continue
             entries.append(entry_from_mapping(row))
+    if path.is_dir():
+        entries = _attach_graph_metadata(entries, path)
     return entries
 
 
@@ -275,9 +281,108 @@ def entry_from_mapping(row: dict[str, Any]) -> DictionaryEntry:
         raw_docx_text=str(row.get("raw_docx_text") or row.get("text") or text),
         rich_blocks=list(row.get("rich_blocks") or []),
         source=source,
+        aliases=_string_list(row.get("aliases")),
+        concepts=_string_list(row.get("concepts")),
         source_set=str(row.get("source_set") or source.get("source_set") or "") or None,
         schema_version=int(row.get("schema_version") or (DICTIONARY_SCHEMA_VERSION if row.get("rich_blocks") else 1)),
     )
+
+
+def _attach_graph_metadata(entries: list[DictionaryEntry], artifact_dir: Path) -> list[DictionaryEntry]:
+    graph_metadata = _load_graph_entry_metadata(artifact_dir)
+    if not graph_metadata:
+        return entries
+    updated: list[DictionaryEntry] = []
+    for entry in entries:
+        metadata = graph_metadata.get(entry.id)
+        if not metadata:
+            updated.append(entry)
+            continue
+        updated.append(
+            replace(
+                entry,
+                aliases=_dedupe_strings([*entry.aliases, *metadata.get("aliases", [])]),
+                concepts=_dedupe_strings([*entry.concepts, *metadata.get("concepts", [])]),
+            )
+        )
+    return updated
+
+
+def _load_graph_entry_metadata(artifact_dir: Path) -> dict[str, dict[str, list[str]]]:
+    nodes_path = artifact_dir / "nodes.jsonl"
+    edges_path = artifact_dir / "edges.jsonl"
+    if not nodes_path.is_file() or not edges_path.is_file():
+        return {}
+
+    node_labels: dict[str, str] = {}
+    with nodes_path.open(encoding="utf-8") as file_obj:
+        for line in file_obj:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            node_id = str(row.get("id") or "")
+            label = normalize_spaces(str(row.get("label") or ""))
+            if node_id and label:
+                node_labels[node_id] = label
+
+    metadata: dict[str, dict[str, list[str]]] = {}
+    with edges_path.open(encoding="utf-8") as file_obj:
+        for line in file_obj:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            relation = str(row.get("type") or "")
+            if relation not in {"has_alias", "has_concept"}:
+                continue
+            entry_id = normalize_spaces(str(row.get("source_entry_id") or row.get("source") or ""))
+            target = normalize_spaces(str(row.get("target") or ""))
+            label = node_labels.get(target) or _graph_target_label(target)
+            if not entry_id or not label:
+                continue
+            key = "aliases" if relation == "has_alias" else "concepts"
+            metadata.setdefault(entry_id, {"aliases": [], "concepts": []})[key].append(label)
+
+    return {
+        entry_id: {
+            "aliases": _dedupe_strings(values.get("aliases", [])),
+            "concepts": _dedupe_strings(values.get("concepts", [])),
+        }
+        for entry_id, values in metadata.items()
+    }
+
+
+def _graph_target_label(value: str) -> str:
+    if ":" not in value:
+        return value
+    return normalize_spaces(value.split(":", 1)[1])
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return _dedupe_strings(str(item) for item in value if item is not None)
+
+
+def _dedupe_strings(values: Any) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = normalize_spaces(str(value))
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
 
 
 def extract_headword(row: dict[str, Any]) -> str:

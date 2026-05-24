@@ -78,6 +78,62 @@ def test_dictionary_artifact_loader_accepts_plain_legacy_entries(tmp_path: Path)
     assert entries[0].to_document().metadata["kind"] == "dictionary"
 
 
+def test_dictionary_artifact_loader_attaches_graph_aliases_and_concepts(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "rich_entries.jsonl").write_text(
+        json.dumps(
+            {
+                "id": "base:P-0023",
+                "letter": "P",
+                "source_file": "P.docx",
+                "paragraph_index": 23,
+                "headword": "PHÁO BINH",
+                "plain_text": "PHÁO BINH, lực lượng tác chiến.",
+                "rich_blocks": [{"type": "paragraph"}],
+                "schema_version": 2,
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (artifact / "nodes.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"id": "alias:pb", "type": "alias", "label": "PB"}, ensure_ascii=False),
+                json.dumps({"id": "concept:luc luong tac chien", "type": "concept", "label": "lực lượng tác chiến"}, ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (artifact / "edges.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"source": "base:P-0023", "target": "alias:pb", "type": "has_alias", "source_entry_id": "base:P-0023"}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "source": "base:P-0023",
+                        "target": "concept:luc luong tac chien",
+                        "type": "has_concept",
+                        "source_entry_id": "base:P-0023",
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    entries = load_dictionary_artifact(artifact)
+
+    assert entries[0].aliases == ["PB"]
+    assert entries[0].concepts == ["lực lượng tác chiến"]
+    assert entries[0].to_document().metadata["aliases"] == ["PB"]
+
+
 def test_dictionary_parser_can_namespace_supplement_source_ids(tmp_path: Path) -> None:
     base = tmp_path / "base"
     supp = tmp_path / "supp"

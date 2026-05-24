@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 from urllib.parse import quote
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -352,6 +353,32 @@ class DictionaryGraphRetriever:
     def build(self, documents: list[Document]) -> None:
         started = time.perf_counter()
         self._documents = list(documents)
+        self._headword_indexes: dict[str, list[int]] = {}
+        self._alias_indexes: dict[str, list[int]] = {}
+        self._concept_indexes: dict[str, list[int]] = {}
+        self._abbreviation_scores: dict[str, dict[int, float]] = {}
+        self._folded_texts: list[str] = []
+        for index, doc in enumerate(self._documents):
+            headword = str(doc.metadata.get("headword") or doc.title or "")
+            headword_key = _dictionary_query_key(headword)
+            for key in _dictionary_query_keys(headword):
+                self._headword_indexes.setdefault(key, []).append(index)
+            alias_keys: list[str] = []
+            for alias in _metadata_text_values(doc.metadata.get("aliases")):
+                for alias_key in _dictionary_query_keys(alias):
+                    alias_keys.append(alias_key)
+                    self._alias_indexes.setdefault(alias_key, []).append(index)
+            abbreviation_key = _dictionary_abbreviation_key(headword)
+            if abbreviation_key and _has_abbreviation_evidence(doc, abbreviation_key, alias_keys):
+                self._abbreviation_scores.setdefault(abbreviation_key, {})[index] = _abbreviation_score(
+                    abbreviation_key,
+                    headword_key,
+                    alias_keys,
+                )
+            for concept in _metadata_text_values(doc.metadata.get("concepts")):
+                for concept_key in _dictionary_query_keys(concept):
+                    self._concept_indexes.setdefault(concept_key, []).append(index)
+            self._folded_texts.append(_dictionary_document_key(doc))
         self._bm25 = BM25Retriever()
         self._graph = GraphBm25Retriever()
         if self._documents:
@@ -372,7 +399,8 @@ class DictionaryGraphRetriever:
         candidate_k = _candidate_k(top_k, self.min_candidates, self.candidate_multiplier)
         lexical = self._bm25.search(query, candidate_k)
         graph = self._graph.search(query, candidate_k)
-        hits = _dictionary_merge(lexical, graph, query=query, top_k=top_k, rrf_k=self.rrf_k)
+        direct = self._direct_search(query, candidate_k)
+        hits = _dictionary_merge(lexical, graph, direct, query=query, top_k=top_k, rrf_k=self.rrf_k)
         return RetrievalResult(
             query=query,
             hits=hits,
@@ -382,9 +410,58 @@ class DictionaryGraphRetriever:
                 "entry_count": len(self._documents),
                 "lexical_latency_s": lexical.latency_s,
                 "graph_latency_s": graph.latency_s,
+                "direct_candidate_count": len(direct.hits),
                 "graph_metadata": graph.metadata,
             },
         )
+
+    def _direct_search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        query_keys = _dictionary_query_keys(query.text)
+        if not query_keys:
+            return RetrievalResult(query=query, hits=[], latency_s=time.perf_counter() - started)
+
+        index_scores: dict[int, float] = {}
+        for query_key in query_keys:
+            for index in self._headword_indexes.get(query_key, []):
+                index_scores[index] = max(index_scores.get(index, 0.0), 1.0)
+            for index, score in self._abbreviation_scores.get(query_key, {}).items():
+                index_scores[index] = max(index_scores.get(index, 0.0), score)
+            for index in self._alias_indexes.get(query_key, []):
+                index_scores[index] = max(index_scores.get(index, 0.0), 0.8)
+            for index in self._concept_indexes.get(query_key, []):
+                index_scores[index] = max(index_scores.get(index, 0.0), 0.55)
+
+            if len(query_key) >= 3:
+                for headword_key, indexes in self._headword_indexes.items():
+                    if headword_key == query_key:
+                        continue
+                    if query_key in headword_key or headword_key in query_key:
+                        for index in indexes:
+                            index_scores[index] = max(index_scores.get(index, 0.0), 0.7)
+
+                phrase = f" {query_key} "
+                for index, folded_text in enumerate(self._folded_texts):
+                    if phrase in f" {folded_text} ":
+                        index_scores[index] = max(index_scores.get(index, 0.0), 0.45)
+
+        ranked = sorted(index_scores, key=lambda index: (-index_scores[index], self._documents[index].doc_id))
+        hits = []
+        for rank, index in enumerate(ranked[:top_k], 1):
+            doc = self._documents[index]
+            metadata = dict(doc.metadata)
+            metadata["dictionary_direct_score"] = index_scores[index]
+            hits.append(
+                RetrievalHit(
+                    doc_id=doc.doc_id,
+                    score=index_scores[index],
+                    rank=rank,
+                    title=doc.title,
+                    text=doc.text,
+                    metadata=metadata,
+                )
+            )
+        return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
 
 
 @dataclass
@@ -798,27 +875,29 @@ def _rrf_merge(results: list[RetrievalResult], *, top_k: int, rrf_k: int) -> lis
 def _dictionary_merge(
     lexical: RetrievalResult,
     graph: RetrievalResult,
+    direct: RetrievalResult,
     *,
     query: Query,
     top_k: int,
     rrf_k: int,
 ) -> list[RetrievalHit]:
-    query_key = _dictionary_query_key(query.text)
+    query_keys = _dictionary_query_keys(query.text)
     scores: dict[str, float] = {}
     best_rank: dict[str, int] = {}
     hits_by_doc_id: dict[str, RetrievalHit] = {}
-    for weight, result in ((1.0, lexical), (0.75, graph)):
+    for weight, result in ((1.0, lexical), (0.75, graph), (1.25, direct)):
         for hit in result.hits:
-            scores[hit.doc_id] = scores.get(hit.doc_id, 0.0) + weight / (rrf_k + hit.rank)
+            direct_score = float(hit.metadata.get("dictionary_direct_score") or 0.0)
+            scores[hit.doc_id] = scores.get(hit.doc_id, 0.0) + weight / (rrf_k + hit.rank) + direct_score
             best_rank[hit.doc_id] = min(best_rank.get(hit.doc_id, hit.rank), hit.rank)
             hits_by_doc_id.setdefault(hit.doc_id, hit)
-    if query_key:
+    if query_keys:
         for doc_id, hit in hits_by_doc_id.items():
             headword = str(hit.metadata.get("headword") or hit.title or "")
-            headword_key = _dictionary_query_key(headword)
-            if headword_key == query_key:
+            headword_keys = _dictionary_query_keys(headword)
+            if set(headword_keys) & set(query_keys):
                 scores[doc_id] = scores.get(doc_id, 0.0) + 1.0
-            elif query_key and (query_key in headword_key or headword_key in query_key):
+            elif any(query_key in headword_key or headword_key in query_key for query_key in query_keys for headword_key in headword_keys):
                 scores[doc_id] = scores.get(doc_id, 0.0) + 0.35
     ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank.get(doc_id, 9999), doc_id))
     return [
@@ -835,10 +914,87 @@ def _dictionary_merge(
 
 
 def _dictionary_query_key(text: str) -> str:
+    keys = _dictionary_query_keys(text)
+    return keys[0] if keys else ""
+
+
+def _dictionary_query_keys(text: str) -> list[str]:
     normalized = re.sub(r"\s+", " ", text).strip().lower()
     normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized)
     normalized = normalized.split(",", 1)[0]
-    return normalized.strip()
+    return _dictionary_key_variants(normalized)
+
+
+def _dictionary_document_key(doc: Document) -> str:
+    parts = [
+        doc.title,
+        doc.text,
+        str(doc.metadata.get("headword") or ""),
+        str(doc.metadata.get("raw_docx_text") or ""),
+        " ".join(_metadata_text_values(doc.metadata.get("aliases"))),
+        " ".join(_metadata_text_values(doc.metadata.get("concepts"))),
+    ]
+    folded = _dictionary_fold_text(" ".join(part for part in parts if part))
+    compact = folded.replace(" ", "")
+    return f"{folded} {compact}" if compact and compact != folded else folded
+
+
+def _dictionary_abbreviation_key(text: str) -> str:
+    tokens = _dictionary_fold_text(text).split()
+    abbreviation = "".join(token[0] for token in tokens if any(character.isalpha() for character in token))
+    return abbreviation if len(abbreviation) >= 2 else ""
+
+
+def _has_abbreviation_evidence(doc: Document, abbreviation_key: str, alias_keys: list[str]) -> bool:
+    if abbreviation_key in alias_keys:
+        return True
+    if len(abbreviation_key) < 2:
+        return False
+    pattern = re.compile(rf"(?<![A-Za-z0-9]){re.escape(abbreviation_key)}(?![A-Za-z0-9])", re.IGNORECASE)
+    return any(
+        pattern.search(str(value or ""))
+        for value in (
+            doc.text,
+            doc.metadata.get("raw_docx_text"),
+        )
+    )
+
+
+def _abbreviation_score(abbreviation_key: str, headword_key: str, alias_keys: list[str]) -> float:
+    if abbreviation_key in alias_keys and headword_key in alias_keys:
+        return 0.95
+    if abbreviation_key in alias_keys:
+        return 0.75
+    return 0.6
+
+
+def _metadata_text_values(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None and str(item).strip()]
+
+
+def _dictionary_fold_text(text: str) -> str:
+    lowered = text.lower().replace("đ", "d")
+    folded = "".join(
+        char for char in unicodedata.normalize("NFD", lowered) if unicodedata.category(char) != "Mn"
+    )
+    folded = re.sub(r"[^a-z0-9]+", " ", folded)
+    return re.sub(r"\s+", " ", folded).strip()
+
+
+def _dictionary_key_variants(text: str) -> list[str]:
+    folded = _dictionary_fold_text(text)
+    variants = [folded] if folded else []
+    compact = folded.replace(" ", "")
+    if compact and compact != folded:
+        tokens = folded.split()
+        # Hyphenated transliterations like "hê-xô-gen" should match the canonical
+        # entry "HEXOGEN", but broad multi-word terms such as "pháo binh" should
+        # keep their normal spaced key.
+        if len(tokens) >= 2 and all(len(token) <= 3 for token in tokens):
+            variants.append(compact)
+    return _dedupe_nonempty(variants)
 
 
 def _normalize_vector(values: np.ndarray) -> np.ndarray:

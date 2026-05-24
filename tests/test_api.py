@@ -175,6 +175,9 @@ def test_chat_page() -> None:
     assert "rich-run" in response.text
     assert "renderDictionaryAnswer" in response.text
     assert "dictionary-inline" in response.text
+    assert "dictionary-inline-list" in response.text
+    assert "dictionaryInlineSources" in response.text
+    assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
     assert "dictionaryAnswerParts" in response.text
     assert "positionComposerToolMenu" in response.text
     assert "--composer-menu-left" in response.text

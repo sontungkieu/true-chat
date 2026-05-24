@@ -279,6 +279,9 @@ Status: implemented in the current working tree; pending final commit.
    - Load dictionary artifacts from `runs/pb_dictionary_abcd_mimo_graph` with DOCX fallback from `data/semi_private/File Từ điển PB_2021`.
    - Add `Dictionary` / `Từ điển` UI mode that retrieves dictionary entries, shows the original entry first, and asks the selected model for an explanation.
    - Render rich dictionary source blocks in the main answer and document panel without affecting retrieval text normalization.
+   - Show up to three cited or top-ranked dictionary entries as rich cards in the main answer for terms that only appear inside related entries.
+   - Add accent-insensitive dictionary direct matching over headwords and entry text so spelling variants such as `hexogen`, `hêxôgen`, and hyphenated `hê-xô-gen` resolve to the same canonical entry before related mentions are ranked.
+   - Attach graph aliases/concepts to dictionary documents at load time and direct-match inferred headword abbreviations so terms such as `PB` can resolve to `PHÁO BINH` instead of unrelated entries that merely contain the abbreviation.
    - Add optional MiMo chat completion routing behind `--enable-mimo`, using `MIMO_API_KEY` from `.secrets/.env` and exposing `mimo-v2.5-pro` / `mimo-v2.5` in the model selector.
    - Render assistant explanations with a safe Markdown subset for headings, bold, italic, paragraphs, and lists while preserving clickable citations.
    - Preserve each citations/related-documents disclosure open state when clicking rows or inline citations.

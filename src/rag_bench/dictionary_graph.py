@@ -623,6 +623,22 @@ def load_sqlite_entries(path: Path) -> list[dict[str, Any]]:
     with sqlite3.connect(path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM entries ORDER BY id").fetchall()
+        alias_rows = conn.execute("SELECT entry_id, alias_text FROM aliases ORDER BY entry_id, alias_text").fetchall()
+        concept_rows = conn.execute(
+            """
+            SELECT edges.source_entry_id AS entry_id, nodes.label AS concept
+            FROM edges
+            JOIN nodes ON nodes.id = edges.target
+            WHERE edges.type = 'has_concept'
+            ORDER BY edges.source_entry_id, nodes.label
+            """
+        ).fetchall()
+    aliases_by_entry: dict[str, list[str]] = {}
+    for row in alias_rows:
+        aliases_by_entry.setdefault(row["entry_id"], []).append(row["alias_text"])
+    concepts_by_entry: dict[str, list[str]] = {}
+    for row in concept_rows:
+        concepts_by_entry.setdefault(row["entry_id"], []).append(row["concept"])
     entries: list[dict[str, Any]] = []
     for row in rows:
         keys = set(row.keys())
@@ -639,6 +655,8 @@ def load_sqlite_entries(path: Path) -> list[dict[str, Any]]:
                 "raw_docx_text": row["raw_docx_text"],
                 "rich_blocks": json.loads(row["rich_blocks_json"] or "[]"),
                 "source": json.loads(row["source_json"] or "{}"),
+                "aliases": aliases_by_entry.get(row["id"], []),
+                "concepts": concepts_by_entry.get(row["id"], []),
                 "schema_version": row["schema_version"] or DICTIONARY_SCHEMA_VERSION,
             }
         )

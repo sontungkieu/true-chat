@@ -170,6 +170,78 @@ def test_dictionary_graph_retriever_preserves_dictionary_metadata() -> None:
     assert result.metadata["kind"] == "dictionary"
 
 
+def test_dictionary_graph_retriever_matches_accent_folded_headword() -> None:
+    docs = [
+        Document(
+            doc_id="base:H-0011",
+            title="HEXOGEN",
+            text="HEXOGEN, thuốc nổ mạnh dùng trong kỹ thuật quân sự.",
+            metadata={"kind": "dictionary", "headword": "HEXOGEN"},
+        ),
+        Document(
+            doc_id="base:T-0217",
+            title="TRẠM NỔ",
+            text="TRẠM NỔ, phần tử của mạch nổ có thể chứa têtryl, hêxôgen.",
+            metadata={"kind": "dictionary", "headword": "TRẠM NỔ"},
+        ),
+        Document(
+            doc_id="base:A-0002",
+            title="AMONIT",
+            text="AMONIT, hỗn hợp có các chất nổ có thể là hêxôgen, TNT.",
+            metadata={"kind": "dictionary", "headword": "AMONIT"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    plain = retriever.search(Query("q1", "hexogen"), top_k=3)
+    accented = retriever.search(Query("q2", "hêxôgen"), top_k=3)
+    hyphenated = retriever.search(Query("q3", "hê-xô-gen"), top_k=3)
+    ascii_hyphenated = retriever.search(Query("q4", "he-xo-gen"), top_k=3)
+
+    assert plain.hits[0].doc_id == "base:H-0011"
+    assert accented.hits[0].doc_id == "base:H-0011"
+    assert hyphenated.hits[0].doc_id == "base:H-0011"
+    assert ascii_hyphenated.hits[0].doc_id == "base:H-0011"
+    assert accented.metadata["direct_candidate_count"] >= 3
+
+
+def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> None:
+    docs = [
+        Document(
+            doc_id="base:T-0130",
+            title="THƯỚC PB-74",
+            text="THƯỚC PB-74, khí tài tính toán của pháo binh.",
+            metadata={"kind": "dictionary", "headword": "THƯỚC PB-74"},
+        ),
+        Document(
+            doc_id="base:P-0023",
+            title="PHÁO BINH",
+            text="PHÁO BINH, lực lượng tác chiến. Ở Việt Nam, PB ra đời sớm.",
+            metadata={
+                "kind": "dictionary",
+                "headword": "PHÁO BINH",
+                "aliases": ["PB", "Pháo binh"],
+                "concepts": ["lực lượng tác chiến"],
+            },
+        ),
+        Document(
+            doc_id="base:P-0025",
+            title="PHÁO BINH BIÊN CHẾ",
+            text="PHÁO BINH BIÊN CHẾ, gọi chung các phân đội pháo binh.",
+            metadata={"kind": "dictionary", "headword": "PHÁO BINH BIÊN CHẾ", "aliases": ["PBBC"]},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    pb = retriever.search(Query("q1", "pb"), top_k=3)
+    pbbc = retriever.search(Query("q2", "pbbc"), top_k=3)
+
+    assert pb.hits[0].doc_id == "base:P-0023"
+    assert pbbc.hits[0].doc_id == "base:P-0025"
+
+
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:
     docs = [
         Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),
