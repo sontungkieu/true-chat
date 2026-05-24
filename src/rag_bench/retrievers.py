@@ -422,7 +422,21 @@ class DictionaryGraphRetriever:
             return RetrievalResult(query=query, hits=[], latency_s=time.perf_counter() - started)
 
         index_scores: dict[int, float] = {}
+        highlight_terms = _dictionary_highlight_terms(query.text)
         for query_key in query_keys:
+            query_token_count = len(query_key.split())
+            if query_token_count >= 2:
+                phrase = f" {query_key} "
+                phrase_score = 1.1 + min(query_token_count, 6) * 0.05
+                for index, folded_text in enumerate(self._folded_texts):
+                    if phrase in f" {folded_text} ":
+                        index_scores[index] = max(index_scores.get(index, 0.0), phrase_score)
+            elif len(query_key) >= 3:
+                phrase = f" {query_key} "
+                for index, folded_text in enumerate(self._folded_texts):
+                    if phrase in f" {folded_text} ":
+                        index_scores[index] = max(index_scores.get(index, 0.0), 0.45)
+
             for index in self._headword_indexes.get(query_key, []):
                 index_scores[index] = max(index_scores.get(index, 0.0), 1.0)
             for index, score in self._abbreviation_scores.get(query_key, {}).items():
@@ -440,17 +454,14 @@ class DictionaryGraphRetriever:
                         for index in indexes:
                             index_scores[index] = max(index_scores.get(index, 0.0), 0.7)
 
-                phrase = f" {query_key} "
-                for index, folded_text in enumerate(self._folded_texts):
-                    if phrase in f" {folded_text} ":
-                        index_scores[index] = max(index_scores.get(index, 0.0), 0.45)
-
         ranked = sorted(index_scores, key=lambda index: (-index_scores[index], self._documents[index].doc_id))
         hits = []
         for rank, index in enumerate(ranked[:top_k], 1):
             doc = self._documents[index]
             metadata = dict(doc.metadata)
             metadata["dictionary_direct_score"] = index_scores[index]
+            if highlight_terms:
+                metadata["query_highlights"] = list(highlight_terms)
             hits.append(
                 RetrievalHit(
                     doc_id=doc.doc_id,
@@ -890,14 +901,20 @@ def _dictionary_merge(
             direct_score = float(hit.metadata.get("dictionary_direct_score") or 0.0)
             scores[hit.doc_id] = scores.get(hit.doc_id, 0.0) + weight / (rrf_k + hit.rank) + direct_score
             best_rank[hit.doc_id] = min(best_rank.get(hit.doc_id, hit.rank), hit.rank)
-            hits_by_doc_id.setdefault(hit.doc_id, hit)
+            existing = hits_by_doc_id.setdefault(hit.doc_id, hit)
+            if existing is not hit and hit.metadata:
+                existing.metadata.update(hit.metadata)
     if query_keys:
         for doc_id, hit in hits_by_doc_id.items():
             headword = str(hit.metadata.get("headword") or hit.title or "")
             headword_keys = _dictionary_query_keys(headword)
             if set(headword_keys) & set(query_keys):
                 scores[doc_id] = scores.get(doc_id, 0.0) + 1.0
-            elif any(query_key in headword_key or headword_key in query_key for query_key in query_keys for headword_key in headword_keys):
+            elif any(
+                _dictionary_headword_partial_match(query_key, headword_key)
+                for query_key in query_keys
+                for headword_key in headword_keys
+            ):
                 scores[doc_id] = scores.get(doc_id, 0.0) + 0.35
     ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank.get(doc_id, 9999), doc_id))
     return [
@@ -921,8 +938,31 @@ def _dictionary_query_key(text: str) -> str:
 def _dictionary_query_keys(text: str) -> list[str]:
     normalized = re.sub(r"\s+", " ", text).strip().lower()
     normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized)
-    normalized = normalized.split(",", 1)[0]
-    return _dictionary_key_variants(normalized)
+    segments = [segment.strip() for segment in re.split(r"[,;]+", normalized) if segment.strip()]
+    keys: list[str] = []
+    for segment in segments or [normalized]:
+        keys.extend(_dictionary_key_variants(segment))
+    return list(_dedupe_nonempty(keys))
+
+
+def _dictionary_highlight_terms(text: str) -> tuple[str, ...]:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized, flags=re.IGNORECASE)
+    terms = [segment.strip() for segment in re.split(r"[,;]+", normalized) if segment.strip()]
+    terms = [term for term in terms if len(_dictionary_fold_text(term)) >= 2]
+    return _dedupe_nonempty(terms)
+
+
+def _dictionary_headword_partial_match(query_key: str, headword_key: str) -> bool:
+    if not query_key or not headword_key:
+        return False
+    query_tokens = query_key.split()
+    headword_tokens = headword_key.split()
+    if query_key in headword_key:
+        return True
+    if headword_key in query_key:
+        return len(headword_tokens) >= 2 or len(query_tokens) == 1
+    return False
 
 
 def _dictionary_document_key(doc: Document) -> str:

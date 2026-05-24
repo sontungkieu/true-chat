@@ -182,6 +182,11 @@ def test_chat_page() -> None:
     assert "renderDictionaryAnswer" in response.text
     assert "dictionary-inline" in response.text
     assert "dictionary-inline-list" in response.text
+    assert "query-highlight" in response.text
+    assert "sourceHighlightTerms" in response.text
+    assert "dictionarySourceLabel" in response.text
+    assert "Từ điển PB 2021" in response.text
+    assert "Bổ sung 2021" in response.text
     assert "dictionaryInlineSources" in response.text
     assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
     assert "dictionaryAnswerParts" in response.text

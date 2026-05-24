@@ -242,6 +242,40 @@ def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> 
     assert pbbc.hits[0].doc_id == "base:P-0025"
 
 
+def test_dictionary_graph_retriever_prefers_exact_phrase_mentions_over_generic_headwords() -> None:
+    docs = [
+        Document(
+            doc_id="base:P-0001",
+            title="PHÁO",
+            text="PHÁO, vũ khí bắn đạn theo đường đạn cong hoặc thẳng.",
+            metadata={"kind": "dictionary", "headword": "PHÁO"},
+        ),
+        Document(
+            doc_id="base:N-0001",
+            title="NGÀY TRUYỀN THỐNG PHÁO BINH",
+            text="NGÀY TRUYỀN THỐNG PHÁO BINH, ngày kỷ niệm trận đánh ở pháo đài Xuân Canh.",
+            metadata={"kind": "dictionary", "headword": "NGÀY TRUYỀN THỐNG PHÁO BINH"},
+        ),
+        Document(
+            doc_id="base:L-0001",
+            title="LÁNG",
+            text="LÁNG, địa danh có pháo đài Láng trong lịch sử lực lượng pháo binh.",
+            metadata={"kind": "dictionary", "headword": "LÁNG"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    xuan_canh = retriever.search(Query("q1", "Pháo đài Xuân Canh"), top_k=3)
+    two_places = retriever.search(Query("q2", "pháo đài Láng, pháo đài Xuân Tảo"), top_k=3)
+
+    assert xuan_canh.hits[0].doc_id == "base:N-0001"
+    assert xuan_canh.hits[0].metadata["query_highlights"] == ["Pháo đài Xuân Canh"]
+    assert two_places.hits[0].doc_id == "base:L-0001"
+    assert "PHÁO" not in [hit.title for hit in xuan_canh.hits[:1]]
+    assert two_places.hits[0].metadata["query_highlights"] == ["pháo đài Láng", "pháo đài Xuân Tảo"]
+
+
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:
     docs = [
         Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),

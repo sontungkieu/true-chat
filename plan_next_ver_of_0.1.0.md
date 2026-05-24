@@ -282,6 +282,8 @@ Status: implemented in the current working tree; pending final commit.
    - Show up to three cited or top-ranked dictionary entries as rich cards in the main answer for terms that only appear inside related entries.
    - Add accent-insensitive dictionary direct matching over headwords and entry text so spelling variants such as `hexogen`, `hêxôgen`, and hyphenated `hê-xô-gen` resolve to the same canonical entry before related mentions are ranked.
    - Attach graph aliases/concepts to dictionary documents at load time and direct-match inferred headword abbreviations so terms such as `PB` can resolve to `PHÁO BINH` instead of unrelated entries that merely contain the abbreviation.
+   - Prefer exact multi-word phrase mentions in dictionary definitions over generic one-word partial headword matches, and highlight matched query phrases in rich dictionary cards/source panels.
+   - Replace the generic dictionary card `Open document` label with source-location labels such as `Từ điển PB 2021 · Bổ sung 2021 · P-0001`.
    - Add optional MiMo chat completion routing behind `--enable-mimo`, using `MIMO_API_KEY` from `.secrets/.env` and exposing `mimo-v2.5-pro` / `mimo-v2.5` in the model selector.
    - Send the selected English/Vietnamese UI language with every chat request and force generated answers, dictionary explanations, and local image result messages into that response language.
    - Add a local `Memory` toggle that sends `memory=false` and forces `history_messages=0` for that request, so the selected model answers from only the current question plus retrieved context.

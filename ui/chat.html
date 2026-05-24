@@ -858,6 +858,14 @@
       border-radius: 3px;
     }
 
+    .query-highlight {
+      background: rgba(250, 204, 21, 0.44);
+      border-radius: 4px;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      padding: 0 2px;
+    }
+
     sup.rich-run,
     sub.rich-run {
       font-size: 0.72em;
@@ -1219,6 +1227,10 @@
       color: var(--muted-strong);
       padding: 0 9px;
       font-size: 12px;
+      max-width: min(320px, 48vw);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
       transition: border-color 0.13s ease, color 0.13s ease, background 0.13s ease;
     }
 
@@ -3455,12 +3467,13 @@
       const open = document.createElement("button");
       open.type = "button";
       open.className = "dictionary-open";
-      open.textContent = currentLanguage() === "vi" ? "Mở tài liệu" : "Open source";
+      open.textContent = dictionarySourceLabel(source);
+      open.title = `${t("openDocument")}: ${dictionarySourceLabel(source)}`;
       open.addEventListener("click", () => openDocument(source));
       head.append(title, open);
       const body = document.createElement("div");
       body.className = "dictionary-inline-body";
-      renderRichBlocks(body, richBlocks(source));
+      renderRichBlocks(body, richBlocks(source), sourceHighlightTerms(source));
       card.append(head, body);
       return card;
     }
@@ -3509,6 +3522,23 @@
 
     function isDictionarySource(source) {
       return source?.kind === "dictionary" || source?.metadata?.kind === "dictionary" || richBlocks(source).length > 0;
+    }
+
+    function dictionarySourceLabel(source) {
+      const sourceInfo = dictionarySourceInfo(source);
+      const sourceSet = String(sourceInfo.source_set || "").toLowerCase();
+      const sourceFile = String(sourceInfo.source_file || "");
+      const entryId = String(sourceInfo.source_entry_id || source?.doc_id || "").trim();
+      const isSupplement = sourceSet === "supp2021" || /bổ sung|bo sung|supp/i.test(sourceFile);
+      const parts = [currentLanguage() === "vi" ? "Từ điển PB 2021" : "PB Dictionary 2021"];
+      if (isSupplement) parts.push(currentLanguage() === "vi" ? "Bổ sung 2021" : "2021 supplement");
+      if (entryId) parts.push(entryId);
+      return parts.join(" · ");
+    }
+
+    function dictionarySourceInfo(source) {
+      const info = source?.source || source?.metadata?.source || {};
+      return info && typeof info === "object" ? info : {};
     }
 
     function stripDictionaryHeader(text, source) {
@@ -3642,10 +3672,12 @@
 
     function renderDocumentPanel(source) {
       const docId = source.doc_id || t("source");
+      const dictionarySource = isDictionarySource(source);
       docTitle.textContent = source.title || docId;
-      docSubtitle.textContent = docId;
+      docSubtitle.textContent = dictionarySource ? dictionarySourceLabel(source) : docId;
       docMeta.textContent = "";
       const metaItems = [
+        dictionarySource ? docId : null,
         source.rank ? "rank #" + source.rank : null,
         typeof source.score === "number" ? "score " + source.score.toFixed(3) : null
       ].filter(Boolean);
@@ -3673,11 +3705,15 @@
       const blocks = richBlocks(source);
       if (blocks.length) {
         docText.classList.remove("plain");
-        renderRichBlocks(docText, blocks);
+        renderRichBlocks(docText, blocks, sourceHighlightTerms(source));
         return;
       }
       docText.classList.add("plain");
-      docText.textContent = source.text || source.raw_docx_text || source.metadata?.raw_docx_text || t("noDocumentText");
+      appendHighlightedText(
+        docText,
+        source.text || source.raw_docx_text || source.metadata?.raw_docx_text || t("noDocumentText"),
+        sourceHighlightTerms(source)
+      );
     }
 
     function richBlocks(source) {
@@ -3685,20 +3721,26 @@
       return Array.isArray(blocks) ? blocks.filter((block) => block && typeof block === "object") : [];
     }
 
-    function renderRichBlocks(container, blocks) {
+    function sourceHighlightTerms(source) {
+      const terms = source?.query_highlights || source?.metadata?.query_highlights || [];
+      if (!Array.isArray(terms)) return [];
+      return terms.map((term) => String(term || "").trim()).filter(Boolean);
+    }
+
+    function renderRichBlocks(container, blocks, highlights = []) {
       const wrapper = document.createElement("div");
       wrapper.className = "rich-block";
       for (const block of blocks) {
         if (block.type === "table_row") {
-          wrapper.appendChild(renderRichTableRow(block));
+          wrapper.appendChild(renderRichTableRow(block, highlights));
         } else if (block.type === "paragraph") {
-          wrapper.appendChild(renderRichParagraph(block));
+          wrapper.appendChild(renderRichParagraph(block, highlights));
         }
       }
       container.appendChild(wrapper);
     }
 
-    function renderRichTableRow(block) {
+    function renderRichTableRow(block, highlights = []) {
       const row = document.createElement("div");
       row.className = "rich-table-row";
       const cells = Array.isArray(block.cells) ? block.cells : [];
@@ -3707,33 +3749,33 @@
         cellElement.className = "rich-table-cell";
         const paragraphs = Array.isArray(cell.paragraphs) ? cell.paragraphs : [];
         for (const paragraph of paragraphs) {
-          cellElement.appendChild(renderRichParagraph(paragraph));
+          cellElement.appendChild(renderRichParagraph(paragraph, highlights));
         }
         row.appendChild(cellElement);
       }
-      if (!cells.length && block.text) row.textContent = block.text;
+      if (!cells.length && block.text) appendHighlightedText(row, block.text, highlights);
       return row;
     }
 
-    function renderRichParagraph(paragraph) {
+    function renderRichParagraph(paragraph, highlights = []) {
       const element = document.createElement("div");
       element.className = "rich-paragraph";
       const runs = Array.isArray(paragraph.runs) ? paragraph.runs : [];
       if (!runs.length) {
-        element.textContent = paragraph.text || paragraph.plain_text || "";
+        appendHighlightedText(element, paragraph.text || paragraph.plain_text || "", highlights);
         return element;
       }
       for (const run of runs) {
-        element.appendChild(renderRichRun(run));
+        element.appendChild(renderRichRun(run, highlights));
       }
       return element;
     }
 
-    function renderRichRun(run) {
+    function renderRichRun(run, highlights = []) {
       const tag = run.superscript ? "sup" : run.subscript ? "sub" : "span";
       const element = document.createElement(tag);
       element.className = "rich-run";
-      element.textContent = run.text || "";
+      appendHighlightedText(element, run.text || "", highlights);
       if (run.bold) element.style.fontWeight = "700";
       if (run.italic) element.style.fontStyle = "italic";
       const decorations = [];
@@ -3745,6 +3787,79 @@
       }
       if (run.highlight && run.highlight !== "none") element.dataset.highlight = String(run.highlight);
       return element;
+    }
+
+    function appendHighlightedText(container, text, highlights = []) {
+      const value = String(text || "");
+      const ranges = highlightRanges(value, highlights);
+      if (!ranges.length) {
+        container.appendChild(document.createTextNode(value));
+        return;
+      }
+      let cursor = 0;
+      for (const range of ranges) {
+        if (range.start > cursor) container.appendChild(document.createTextNode(value.slice(cursor, range.start)));
+        const mark = document.createElement("span");
+        mark.className = "query-highlight";
+        mark.textContent = value.slice(range.start, range.end);
+        container.appendChild(mark);
+        cursor = range.end;
+      }
+      if (cursor < value.length) container.appendChild(document.createTextNode(value.slice(cursor)));
+    }
+
+    function highlightRanges(text, highlights = []) {
+      const foldedText = foldForMatchWithMap(text);
+      if (!foldedText.folded) return [];
+      const terms = highlights
+        .map((term) => foldForMatchWithMap(term).folded)
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length);
+      const ranges = [];
+      for (const term of terms) {
+        let index = foldedText.folded.indexOf(term);
+        while (index !== -1) {
+          const endIndex = index + term.length - 1;
+          const start = foldedText.map[index];
+          const end = (foldedText.map[endIndex] ?? start) + 1;
+          if (!ranges.some((range) => start < range.end && end > range.start)) {
+            ranges.push({ start, end });
+          }
+          index = foldedText.folded.indexOf(term, index + Math.max(1, term.length));
+        }
+      }
+      return ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+    }
+
+    function foldForMatchWithMap(value) {
+      const text = String(value || "");
+      let folded = "";
+      const map = [];
+      let pendingSpace = false;
+      let pendingSpaceIndex = 0;
+      for (let index = 0; index < text.length; index += 1) {
+        const raw = text[index] === "đ" || text[index] === "Đ"
+          ? "d"
+          : text[index].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const chars = raw.replace(/[^a-z0-9]+/g, " ");
+        for (const char of chars) {
+          if (char === " ") {
+            if (folded) {
+              pendingSpace = true;
+              pendingSpaceIndex = index;
+            }
+            continue;
+          }
+          if (pendingSpace && folded && !folded.endsWith(" ")) {
+            folded += " ";
+            map.push(pendingSpaceIndex);
+          }
+          pendingSpace = false;
+          folded += char;
+          map.push(index);
+        }
+      }
+      return { folded: folded.trim(), map };
     }
 
     function imageSource(source) {

@@ -1033,6 +1033,7 @@ def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "raw_docx_text",
         "rich_blocks",
         "source",
+        "query_highlights",
     }
     return {key: value for key, value in metadata.items() if key in allowed_keys}
 

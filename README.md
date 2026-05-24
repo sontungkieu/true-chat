@@ -235,6 +235,8 @@ The built-in page is the recommended temporary frontend for this repo. The UI li
 
 Use optional local auth:
 
+Dictionary mode also carries query highlight terms through retrieval metadata. Matching phrases such as `pháo đài Xuân Canh` are marked in yellow inside rich entry cards and the source panel, while generic one-word headword matches such as `PHÁO` no longer get partial headword boost for multi-word place names. Dictionary entry cards show the source location, for example `Từ điển PB 2021 · Bổ sung 2021 · P-0001`, instead of a generic `Open document` action label.
+
 ```bash
 RAG_PROXY_API_KEY=dev-local-key uv run --frozen rag-bench serve
 ```
