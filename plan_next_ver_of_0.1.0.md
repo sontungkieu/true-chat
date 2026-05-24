@@ -283,7 +283,10 @@ Status: implemented in the current working tree; pending final commit.
    - Add accent-insensitive dictionary direct matching over headwords and entry text so spelling variants such as `hexogen`, `hêxôgen`, and hyphenated `hê-xô-gen` resolve to the same canonical entry before related mentions are ranked.
    - Attach graph aliases/concepts to dictionary documents at load time and direct-match inferred headword abbreviations so terms such as `PB` can resolve to `PHÁO BINH` instead of unrelated entries that merely contain the abbreviation.
    - Prefer exact multi-word phrase mentions in dictionary definitions over generic one-word partial headword matches, and highlight matched query phrases in rich dictionary cards/source panels.
+   - Keep dictionary highlighting accent-insensitive but token-boundary aware, avoiding substring highlights such as `thạ` matching inside `THANG` or `tham gia`.
+   - Keep broad dictionary queries responsive by rendering large streamed answers only after RAG metadata is available and by compacting persisted source payloads instead of storing full rich DOCX blocks in `localStorage`.
    - Replace the generic dictionary card `Open document` label with source-location labels such as `Từ điển PB 2021 · Bổ sung 2021 · P-0001`.
+   - Expand `semantic_corner_cases.md` with concrete examples and failure modes so the cases can be reused for prompt/eval tuning.
    - Add optional MiMo chat completion routing behind `--enable-mimo`, using `MIMO_API_KEY` from `.secrets/.env` and exposing `mimo-v2.5-pro` / `mimo-v2.5` in the model selector.
    - Send the selected English/Vietnamese UI language with every chat request and force generated answers, dictionary explanations, and local image result messages into that response language.
    - Add a local `Memory` toggle that sends `memory=false` and forces `history_messages=0` for that request, so the selected model answers from only the current question plus retrieved context.

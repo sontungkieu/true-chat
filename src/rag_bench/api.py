@@ -209,6 +209,7 @@ def _stream_chat_completion(response: dict[str, Any]) -> Any:
             "created": created,
             "model": model,
             "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+            "rag": rag,
         },
         {
             "id": completion_id,

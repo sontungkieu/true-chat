@@ -184,6 +184,7 @@ def test_chat_page() -> None:
     assert "dictionary-inline-list" in response.text
     assert "query-highlight" in response.text
     assert "sourceHighlightTerms" in response.text
+    assert "isHighlightBoundary" in response.text
     assert "dictionarySourceLabel" in response.text
     assert "Từ điển PB 2021" in response.text
     assert "Bổ sung 2021" in response.text
@@ -217,6 +218,10 @@ def test_chat_page() -> None:
     assert "memoryMode" in response.text
     assert "settings.memory" in response.text
     assert "memory: requestOptions.memory" in response.text
+    assert "compactStateForStorage" in response.text
+    assert "compactSourceForStorage" in response.text
+    assert "shouldRenderStreamingDelta" in response.text
+    assert "updatePendingAssistant(content, rag)" in response.text
     assert "Đang sửa câu hỏi" in response.text
     assert "message-footer" in response.text
     assert "think-details" in response.text
@@ -335,6 +340,7 @@ def test_chat_completion_stream() -> None:
     assert '"doc_id": "doc-1"' in response.text
     assert '"text": "Document text"' in response.text
     assert '"answer": "hello [doc-1]"' in response.text
+    assert response.text.count('"rag"') >= 2
     assert '"rejected_aliases": ["bad-key"]' in response.text
     assert '"output_tokens_per_s": 200.0' in response.text
     assert "data: [DONE]" in response.text

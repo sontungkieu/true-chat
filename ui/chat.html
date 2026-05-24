@@ -2879,7 +2879,52 @@
     }
 
     function saveState() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(compactStateForStorage(state)));
+      } catch (error) {
+        console.warn("Could not persist full chat state; retrying without source payloads.", error);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(compactStateForStorage(state, { dropSources: true })));
+        } catch (retryError) {
+          console.warn("Could not persist chat state.", retryError);
+        }
+      }
+    }
+
+    function compactStateForStorage(sourceState, options = {}) {
+      const conversations = Array.isArray(sourceState.conversations) ? sourceState.conversations : [];
+      return {
+        ...sourceState,
+        conversations: conversations.map((conversation) => ({
+          ...conversation,
+          messages: Array.isArray(conversation.messages)
+            ? conversation.messages.map((message) => compactMessageForStorage(message, options))
+            : []
+        }))
+      };
+    }
+
+    function compactMessageForStorage(message, options = {}) {
+      const compact = { ...message };
+      if (Array.isArray(compact.sources)) {
+        compact.sources = options.dropSources ? [] : compact.sources.map(compactSourceForStorage);
+      }
+      return compact;
+    }
+
+    function compactSourceForStorage(source) {
+      const compact = { ...source };
+      delete compact.rich_blocks;
+      delete compact.raw_docx_text;
+      if (compact.text && compact.text.length > 2400) {
+        compact.text = compact.text.slice(0, 2400).trimEnd();
+      }
+      if (compact.metadata && typeof compact.metadata === "object") {
+        compact.metadata = { ...compact.metadata };
+        delete compact.metadata.rich_blocks;
+        delete compact.metadata.raw_docx_text;
+      }
+      return compact;
     }
 
     function ensureConversation() {
@@ -3820,15 +3865,21 @@
         let index = foldedText.folded.indexOf(term);
         while (index !== -1) {
           const endIndex = index + term.length - 1;
-          const start = foldedText.map[index];
-          const end = (foldedText.map[endIndex] ?? start) + 1;
-          if (!ranges.some((range) => start < range.end && end > range.start)) {
-            ranges.push({ start, end });
+          if (isHighlightBoundary(foldedText.folded, index - 1) && isHighlightBoundary(foldedText.folded, index + term.length)) {
+            const start = foldedText.map[index];
+            const end = (foldedText.map[endIndex] ?? start) + 1;
+            if (!ranges.some((range) => start < range.end && end > range.start)) {
+              ranges.push({ start, end });
+            }
           }
           index = foldedText.folded.indexOf(term, index + Math.max(1, term.length));
         }
       }
       return ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+    }
+
+    function isHighlightBoundary(folded, index) {
+      return index < 0 || index >= folded.length || folded[index] === " ";
     }
 
     function foldForMatchWithMap(value) {
@@ -4099,21 +4150,30 @@
         for (const event of events) {
           const parsed = parseSseEvent(event);
           if (!parsed) continue;
+          if (parsed.rag) rag = parsed.rag;
           const delta = parsed.choices?.[0]?.delta || {};
           if (delta.content) {
             content += delta.content;
-            updatePendingAssistant(content);
+            if (shouldRenderStreamingDelta(delta.content)) {
+              updatePendingAssistant(content, rag);
+            }
           }
           const messageContent = parsed.choices?.[0]?.message?.content;
           if (messageContent && !content) {
             content = messageContent;
-            updatePendingAssistant(content);
+            if (shouldRenderStreamingDelta(messageContent)) {
+              updatePendingAssistant(content, rag);
+            }
           }
           if (parsed.answer && !content) {
             content = parsed.answer;
-            updatePendingAssistant(content);
+            if (shouldRenderStreamingDelta(parsed.answer)) {
+              updatePendingAssistant(content, rag);
+            }
           }
-          if (parsed.rag) rag = parsed.rag;
+          if (parsed.rag && content) {
+            updatePendingAssistant(content, rag);
+          }
         }
       }
       if (buffer.trim()) {
@@ -4122,6 +4182,10 @@
         if (parsed?.answer && !content) content = parsed.answer;
       }
       return resultFromContentAndRag(content, rag);
+    }
+
+    function shouldRenderStreamingDelta(text) {
+      return String(text || "").length <= 480;
     }
 
     function parseSseEvent(event) {
@@ -4135,13 +4199,18 @@
       return JSON.parse(data);
     }
 
-    function updatePendingAssistant(content) {
+    function updatePendingAssistant(content, rag = null) {
       const conversation = activeConversation();
       const pending = conversation.messages.findLast
         ? conversation.messages.findLast((message) => message.pending)
         : [...conversation.messages].reverse().find((message) => message.pending);
       if (!pending) return;
       pending.content = content;
+      if (rag) {
+        const result = resultFromContentAndRag(content, rag);
+        pending.sources = result.sources || [];
+        pending.meta = result.meta || null;
+      }
       saveState();
       renderChat();
     }
