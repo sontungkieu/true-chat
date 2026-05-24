@@ -147,9 +147,11 @@ class RagChatService:
         image_top_k: int | None = None,
         response_mode: str | None = None,
         image_rewrite: bool | None = None,
+        language: str | None = None,
     ) -> ChatServiceResult:
         response_model, generation_model = self.resolve_request_model(request_model)
         question = last_user_text(messages)
+        response_language = _normalize_response_language(language)
         command = parse_chat_command(question)
         mode = _normalize_response_mode(response_mode)
         if command and command[0] == "img":
@@ -165,7 +167,7 @@ class RagChatService:
             request_image_top_k = _clamp_top_k(image_top_k if image_top_k is not None else top_k, fallback=self.config.image_top_k)
             retrieval = retriever.search(Query(query_id="chat-img", text=image_query), request_image_top_k)
             generation = GenerationResult(
-                answer=_format_image_answer(image_query, retrieval.hits),
+                answer=_format_image_answer(image_query, retrieval.hits, language=response_language),
                 key_alias=None,
                 attempted_aliases=[],
                 latency_s=0.0,
@@ -182,6 +184,7 @@ class RagChatService:
                 "raw_query": last_user_text(messages),
                 "image_query": image_query,
                 "image_top_k": request_image_top_k,
+                "language": response_language,
                 **rewrite_metadata,
             }
             response = self._build_response(
@@ -213,6 +216,7 @@ class RagChatService:
                 "response_mode": "dictionary",
                 "raw_query": last_user_text(messages),
                 "dictionary_status": self.dictionary_status,
+                "language": response_language,
             }
             if retrieval.hits:
                 prompt_messages = build_dictionary_rag_messages(
@@ -221,6 +225,7 @@ class RagChatService:
                     query=question,
                     max_context_chars=self.config.max_context_chars,
                     history_messages=self.config.history_messages,
+                    language=response_language,
                 )
                 generation = self.llm.generate(
                     prompt_messages,
@@ -243,7 +248,7 @@ class RagChatService:
                     total_tokens=0,
                     estimated_tokens=0,
                 )
-                answer = _format_no_dictionary_answer(question)
+                answer = _localized_no_dictionary_answer(question, response_language)
             response = self._build_response(
                 answer=answer,
                 generation=generation,
@@ -279,6 +284,7 @@ class RagChatService:
             retrieval.hits,
             max_context_chars=self.config.max_context_chars,
             history_messages=self.config.history_messages,
+            language=response_language,
         )
         generation = self.llm.generate(
             prompt_messages,
@@ -309,11 +315,13 @@ class RagChatService:
                     "image_top_k": request_image_top_k,
                     "image_query": image_query,
                     "image_retrieval_metadata": image_retrieval.metadata,
+                    "language": response_language,
                     **image_query_metadata,
                 }
             )
         else:
             retrieval_metadata.setdefault("response_mode", "text")
+        retrieval_metadata.setdefault("language", response_language)
 
         response = self._build_response(
             answer=generation.answer,
@@ -797,10 +805,12 @@ def build_chat_rag_messages(
     *,
     max_context_chars: int,
     history_messages: int,
+    language: str | None = None,
 ) -> list[dict[str, str]]:
     question = last_user_text(messages)
     context = _format_context(hits, max_context_chars=max_context_chars)
     history = _format_history(messages[:-1], history_messages=history_messages)
+    language_instruction = _language_instruction(language)
     user_prompt = (
         f"Recent conversation:\n{history}\n\n"
         f"Question:\n{question}\n\n"
@@ -808,7 +818,7 @@ def build_chat_rag_messages(
         "Answer:"
     )
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": _join_prompt_parts(SYSTEM_PROMPT, language_instruction)},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -820,22 +830,26 @@ def build_dictionary_rag_messages(
     query: str,
     max_context_chars: int,
     history_messages: int,
+    language: str | None = None,
 ) -> list[dict[str, str]]:
     context = _format_context(hits, max_context_chars=max_context_chars)
     history = _format_history(messages[:-1], history_messages=history_messages)
+    response_language = _normalize_response_language(language)
+    language_instruction = _language_instruction(response_language)
     user_prompt = (
         f"Recent conversation:\n{history}\n\n"
         f"Dictionary question:\n{query}\n\n"
         f"Retrieved dictionary entries:\n{context}\n\n"
-        "Explain the term in the user's language. Cite dictionary entries with their ids in square brackets. "
+        "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
         "Do not invent content not supported by the retrieved dictionary entries."
     )
     return [
         {
             "role": "system",
-            "content": (
+            "content": _join_prompt_parts(
                 "You are a careful military dictionary assistant. Use the retrieved local dictionary entries first. "
-                "Keep abbreviations, casing, and Vietnamese diacritics intact. Cite sources as [entry-id]."
+                "Keep abbreviations, casing, and Vietnamese diacritics intact. Cite sources as [entry-id].",
+                language_instruction,
             ),
         },
         {"role": "user", "content": user_prompt},
@@ -880,6 +894,38 @@ def _normalize_response_mode(value: str | None) -> str:
     if normalized in {"dictionary", "dict", "tu_dien", "từ_điển"}:
         return "dictionary"
     raise ValueError("response_mode must be one of: text, image, text_image, dictionary")
+
+
+def _normalize_response_language(value: str | None) -> str:
+    if value is None:
+        return "en"
+    if not isinstance(value, str):
+        raise ValueError("language must be a string")
+    normalized = value.strip().lower().replace("_", "-")
+    if normalized in {"vi", "vi-vn", "vietnamese", "tieng-viet", "tiếng-việt"}:
+        return "vi"
+    if normalized in {"en", "en-us", "en-gb", "english"}:
+        return "en"
+    if normalized in {"", "system", "auto"}:
+        return "en"
+    raise ValueError("language must be one of: en, vi")
+
+
+def _language_instruction(language: str | None) -> str:
+    normalized = _normalize_response_language(language)
+    if normalized == "vi":
+        return (
+            "Required response language: Vietnamese. "
+            "Answer only in Vietnamese, regardless of the user's input language, unless quoting source text."
+        )
+    return (
+        "Required response language: English. "
+        "Answer only in English, regardless of the user's input language, unless quoting source text."
+    )
+
+
+def _join_prompt_parts(*parts: str) -> str:
+    return "\n\n".join(part.strip() for part in parts if part and part.strip())
 
 
 def _strip_command_prefix(text: str) -> str:
@@ -932,9 +978,14 @@ def _format_context(hits: list[RetrievalHit], *, max_context_chars: int) -> str:
     return "\n\n---\n\n".join(context_blocks) if context_blocks else "No retrieved context."
 
 
-def _format_image_answer(query: str, hits: list[RetrievalHit]) -> str:
+def _format_image_answer(query: str, hits: list[RetrievalHit], *, language: str | None = None) -> str:
+    response_language = _normalize_response_language(language)
     if not hits:
+        if response_language == "vi":
+            return f"Không tìm thấy kết quả ảnh cho '{query}'."
         return f"No image results found for '{query}'."
+    if response_language == "vi":
+        return f"Tìm thấy {len(hits)} kết quả ảnh cho '{query}'."
     return f"Found {len(hits)} image result(s) for '{query}'."
 
 
@@ -953,6 +1004,12 @@ def _format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str
 
 def _format_no_dictionary_answer(query: str) -> str:
     return f"Không tìm thấy mục từ phù hợp trong từ điển cho: {query}"
+
+
+def _localized_no_dictionary_answer(query: str, language: str | None) -> str:
+    if _normalize_response_language(language) == "vi":
+        return f"Không tìm thấy mục từ phù hợp trong từ điển cho: {query}"
+    return f"No matching dictionary entry was found for: {query}"
 
 
 def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:

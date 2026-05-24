@@ -267,10 +267,36 @@ def test_rag_chat_service_answers_with_retrieved_context_and_history() -> None:
     assert llm.model == "llama-3.1-8b-instant"
     assert llm.temperature == 0.2
     assert llm.max_completion_tokens == 64
+    assert "Required response language: English" in llm.messages[0]["content"]
     user_prompt = llm.messages[1]["content"]
     assert "Previous question" in user_prompt
     assert "Cats purr and chase toys." in user_prompt
     assert "What do cats do?" in user_prompt
+
+
+def test_rag_chat_service_forces_selected_response_language() -> None:
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[Document("cat-doc", "Cats purr and chase toys.", "Cats")],
+            qrels={},
+        ),
+        retriever=FakeRetriever(),
+        llm=llm,
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "What do cats do?"}],
+        language="vi",
+    )
+
+    assert result.response["rag"]["retrieval_metadata"]["language"] == "vi"
+    assert "Required response language: Vietnamese" in llm.messages[0]["content"]
+    assert "Answer only in Vietnamese" in llm.messages[0]["content"]
 
 
 def test_rag_chat_service_can_switch_to_qwen_model() -> None:
@@ -546,11 +572,13 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
         dictionary_status={"source": "artifact", "entry_count": 1},
     )
 
-    result = service.answer([{"role": "user", "content": "/dict AMONIT"}])
+    result = service.answer([{"role": "user", "content": "/dict AMONIT"}], language="vi")
 
     assert dictionary_retriever.seen_query == "AMONIT"
     assert result.response["rag"]["retriever"] == "dictionary-graph"
     assert result.response["rag"]["retrieval_metadata"]["response_mode"] == "dictionary"
+    assert result.response["rag"]["retrieval_metadata"]["language"] == "vi"
+    assert "Required response language: Vietnamese" in llm.messages[0]["content"]
     assert result.response["rag"]["retrieval_metadata"]["dictionary_status"]["entry_count"] == 1
     assert result.response["rag"]["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
     assert result.response["choices"][0]["message"]["content"].startswith("Mục từ gốc [A-0001]:")

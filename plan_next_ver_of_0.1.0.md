@@ -283,6 +283,7 @@ Status: implemented in the current working tree; pending final commit.
    - Add accent-insensitive dictionary direct matching over headwords and entry text so spelling variants such as `hexogen`, `hêxôgen`, and hyphenated `hê-xô-gen` resolve to the same canonical entry before related mentions are ranked.
    - Attach graph aliases/concepts to dictionary documents at load time and direct-match inferred headword abbreviations so terms such as `PB` can resolve to `PHÁO BINH` instead of unrelated entries that merely contain the abbreviation.
    - Add optional MiMo chat completion routing behind `--enable-mimo`, using `MIMO_API_KEY` from `.secrets/.env` and exposing `mimo-v2.5-pro` / `mimo-v2.5` in the model selector.
+   - Send the selected English/Vietnamese UI language with every chat request and force generated answers, dictionary explanations, and local image result messages into that response language.
    - Render assistant explanations with a safe Markdown subset for headings, bold, italic, paragraphs, and lists while preserving clickable citations.
    - Preserve each citations/related-documents disclosure open state when clicking rows or inline citations.
 

@@ -30,6 +30,7 @@ class FakeService:
         self.seen_image_top_k = None
         self.seen_response_mode = None
         self.seen_image_rewrite = None
+        self.seen_language = None
 
     def answer(
         self,
@@ -43,6 +44,7 @@ class FakeService:
         image_top_k=None,
         response_mode=None,
         image_rewrite=None,
+        language=None,
     ):
         self.seen_messages = messages
         self.seen_model = request_model
@@ -53,6 +55,7 @@ class FakeService:
         self.seen_image_top_k = image_top_k
         self.seen_response_mode = response_mode
         self.seen_image_rewrite = image_rewrite
+        self.seen_language = language
         response = {
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -254,6 +257,7 @@ def test_chat_completion_non_stream() -> None:
             "image_top_k": 4,
             "response_mode": "text_image",
             "image_rewrite": True,
+            "language": "vi",
         },
     )
 
@@ -271,6 +275,7 @@ def test_chat_completion_non_stream() -> None:
     assert service.seen_image_top_k == 4
     assert service.seen_response_mode == "text_image"
     assert service.seen_image_rewrite is True
+    assert service.seen_language == "vi"
 
 
 def test_chat_completion_accepts_qwen_model_choice() -> None:
@@ -288,6 +293,19 @@ def test_chat_completion_accepts_qwen_model_choice() -> None:
     assert response.status_code == 200
     assert response.json()["model"] == "qwen/qwen3-32b"
     assert service.seen_model == "qwen/qwen3-32b"
+
+
+def test_chat_completion_rejects_unknown_language() -> None:
+    service = FakeService()
+    client = TestClient(create_app(service))
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "hi"}], "language": "fr"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "language must be one of: en, vi"
 
 
 def test_chat_completion_stream() -> None:

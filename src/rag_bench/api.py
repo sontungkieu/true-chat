@@ -88,6 +88,9 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                     payload.get("image_rewrite", payload.get("rewrite_image_query")),
                     "image_rewrite",
                 ),
+                language=_optional_language(
+                    payload.get("language", payload.get("response_language", payload.get("locale"))),
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -153,6 +156,21 @@ def _optional_bool(value: Any, name: str) -> bool | None:
         if normalized in {"0", "false", "no", "off"}:
             return False
     raise ValueError(f"{name} must be a boolean")
+
+
+def _optional_language(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("language must be a string")
+    normalized = value.strip().lower().replace("_", "-")
+    if normalized in {"vi", "vi-vn", "vietnamese", "tieng-viet", "tiếng-việt"}:
+        return "vi"
+    if normalized in {"en", "en-us", "en-gb", "english"}:
+        return "en"
+    if normalized in {"", "system", "auto"}:
+        return None
+    raise ValueError("language must be one of: en, vi")
 
 
 def _require_bearer(
