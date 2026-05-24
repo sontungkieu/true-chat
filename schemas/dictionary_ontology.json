@@ -1,0 +1,61 @@
+{
+  "ontology_version": "1.0.0",
+  "graph_schema_version": 3,
+  "description": "Versioned ontology for PB dictionary knowledge graph artifacts.",
+  "node_types": [
+    "entry",
+    "concept",
+    "alias",
+    "category"
+  ],
+  "edge_types": [
+    "has_alias",
+    "has_concept",
+    "in_category",
+    "is_a",
+    "part_of",
+    "component_of",
+    "used_for",
+    "measures",
+    "controls",
+    "fires",
+    "supports",
+    "located_in",
+    "requires",
+    "see_also",
+    "related_to"
+  ],
+  "categories": [
+    "vũ khí/trang bị",
+    "đạn dược/thuốc nổ",
+    "khí tài đo đạc/trinh sát",
+    "bản đồ/địa hình",
+    "chỉ huy/huấn luyện",
+    "bảo đảm kỹ thuật",
+    "khái niệm tác chiến",
+    "tổ chức/lực lượng",
+    "khí tượng/địa vật",
+    "khác"
+  ],
+  "confidence": {
+    "minimum": 0.0,
+    "maximum": 1.0,
+    "weak_threshold": 0.6
+  },
+  "required_edge_fields": [
+    "source",
+    "target",
+    "type",
+    "source_entry_id",
+    "evidence_text",
+    "confidence",
+    "extractor",
+    "prompt_version"
+  ],
+  "required_provenance_fields": [
+    "source_entry_id",
+    "evidence_text",
+    "extractor",
+    "prompt_version"
+  ]
+}

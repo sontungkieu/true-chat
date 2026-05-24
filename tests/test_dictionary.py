@@ -78,6 +78,28 @@ def test_dictionary_artifact_loader_accepts_plain_legacy_entries(tmp_path: Path)
     assert entries[0].to_document().metadata["kind"] == "dictionary"
 
 
+def test_dictionary_parser_can_namespace_supplement_source_ids(tmp_path: Path) -> None:
+    base = tmp_path / "base"
+    supp = tmp_path / "supp"
+    base.mkdir()
+    supp.mkdir()
+    document_xml = """
+    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <w:body><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>BẢN ĐỒ</w:t></w:r><w:r><w:t>, tài liệu địa hình.</w:t></w:r></w:p></w:body>
+    </w:document>
+    """
+    _write_minimal_docx(base / "B.docx", document_xml)
+    _write_minimal_docx(supp / "B.docx", document_xml)
+
+    base_entries = load_dictionary_entries(base, ["B"], source_set="base", id_prefix="base")
+    supp_entries = load_dictionary_entries(supp, ["B"], source_set="supp2021", id_prefix="supp2021")
+
+    assert base_entries[0].id == "base:B-0001"
+    assert supp_entries[0].id == "supp2021:B-0001"
+    assert base_entries[0].source["source_entry_id"] == "B-0001"
+    assert supp_entries[0].to_document().metadata["source_set"] == "supp2021"
+
+
 def _write_minimal_docx(path: Path, document_xml: str) -> None:
     with ZipFile(path, "w") as zf:
         zf.writestr("word/document.xml", document_xml)

@@ -34,6 +34,7 @@ class DictionaryEntry:
     raw_docx_text: str | None = None
     rich_blocks: list[dict[str, Any]] = field(default_factory=list)
     source: dict[str, Any] = field(default_factory=dict)
+    source_set: str | None = None
     schema_version: int = DICTIONARY_SCHEMA_VERSION
 
     def to_document(self) -> Document:
@@ -43,6 +44,7 @@ class DictionaryEntry:
             "schema_version": self.schema_version,
             "letter": self.letter,
             "source_file": self.source_file,
+            "source_set": self.source_set,
             "paragraph_index": self.paragraph_index,
             "headword": self.headword,
             "raw_docx_text": self.raw_docx_text or self.text,
@@ -118,8 +120,17 @@ def load_dictionary_documents(
 
 
 def load_dictionary_artifact(path: Path) -> list[DictionaryEntry]:
+    if path.suffix == ".sqlite" and path.is_file():
+        from rag_bench.dictionary_graph import load_sqlite_entries
+
+        return [entry_from_mapping(row) for row in load_sqlite_entries(path)]
+    sqlite_path = path / "dictionary_graph.sqlite" if path.is_dir() else None
     candidates = [path / "rich_entries.jsonl", path / "entries.jsonl"] if path.is_dir() else [path]
     jsonl_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    if jsonl_path is None and sqlite_path and sqlite_path.is_file():
+        from rag_bench.dictionary_graph import load_sqlite_entries
+
+        return [entry_from_mapping(row) for row in load_sqlite_entries(sqlite_path)]
     if jsonl_path is None:
         raise FileNotFoundError(f"No dictionary entries JSONL found under {path}")
     entries: list[DictionaryEntry] = []
@@ -137,7 +148,13 @@ def load_dictionary_artifact(path: Path) -> list[DictionaryEntry]:
     return entries
 
 
-def load_dictionary_entries(source_dir: Path, letters: list[str] | tuple[str, ...]) -> list[DictionaryEntry]:
+def load_dictionary_entries(
+    source_dir: Path,
+    letters: list[str] | tuple[str, ...],
+    *,
+    source_set: str | None = None,
+    id_prefix: str | None = None,
+) -> list[DictionaryEntry]:
     entries: list[DictionaryEntry] = []
     for letter in letters:
         path = source_dir / f"{letter}.docx"
@@ -146,9 +163,14 @@ def load_dictionary_entries(source_dir: Path, letters: list[str] | tuple[str, ..
         for local_index, row in enumerate(parse_dictionary_docx(path), start=1):
             raw_text = str(row["raw_text"])
             plain_text = normalize_spaces(raw_text)
+            base_id = f"{letter}-{local_index:04d}"
+            entry_source = dict(row["source"])
+            if source_set:
+                entry_source["source_set"] = source_set
+                entry_source["source_entry_id"] = base_id
             entries.append(
                 DictionaryEntry(
-                    id=f"{letter}-{local_index:04d}",
+                    id=f"{id_prefix}:{base_id}" if id_prefix else base_id,
                     letter=letter,
                     source_file=str(path),
                     paragraph_index=int(row["paragraph_index"]),
@@ -157,7 +179,8 @@ def load_dictionary_entries(source_dir: Path, letters: list[str] | tuple[str, ..
                     plain_text=plain_text,
                     raw_docx_text=raw_text,
                     rich_blocks=list(row["rich_blocks"]),
-                    source=dict(row["source"]),
+                    source=entry_source,
+                    source_set=source_set,
                 )
             )
     return entries
@@ -252,6 +275,7 @@ def entry_from_mapping(row: dict[str, Any]) -> DictionaryEntry:
         raw_docx_text=str(row.get("raw_docx_text") or row.get("text") or text),
         rich_blocks=list(row.get("rich_blocks") or []),
         source=source,
+        source_set=str(row.get("source_set") or source.get("source_set") or "") or None,
         schema_version=int(row.get("schema_version") or (DICTIONARY_SCHEMA_VERSION if row.get("rich_blocks") else 1)),
     )
 
@@ -269,11 +293,24 @@ def extract_headword(row: dict[str, Any]) -> str:
     return candidate[:120]
 
 
-def source_file_manifest(source_dir: Path, letters: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
+def source_file_manifest(
+    source_dir: Path,
+    letters: list[str] | tuple[str, ...],
+    *,
+    source_set: str | None = None,
+) -> list[dict[str, Any]]:
     rows = []
     for letter in letters:
         path = source_dir / f"{letter}.docx"
-        rows.append({"letter": letter, "path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size})
+        rows.append(
+            {
+                "letter": letter,
+                "path": str(path),
+                "source_set": source_set,
+                "sha256": sha256_file(path),
+                "bytes": path.stat().st_size,
+            }
+        )
     return rows
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -28,6 +29,15 @@ from rag_bench.dictionary import (
     slugify as dictionary_slugify,
     source_file_manifest as dictionary_source_file_manifest,
     strip_accents as dictionary_strip_accents,
+)
+from rag_bench.dictionary_graph import (
+    DEFAULT_ONTOLOGY_PATH,
+    GRAPH_SCHEMA_VERSION,
+    PROMPT_VERSION,
+    finalize_dictionary_graph,
+    load_ontology,
+    write_quality_report,
+    write_sqlite_store,
 )
 
 DEFAULT_SOURCE_DIR = DEFAULT_DICTIONARY_SOURCE_DIR
@@ -76,6 +86,14 @@ class ProviderResult:
     total_tokens: int | None
     estimated_tokens: int | None
     scheduled_wait_s: float | None
+
+
+@dataclass(frozen=True)
+class SourceSpec:
+    name: str
+    path: Path
+    letters: list[str]
+    namespace_ids: bool
 
 
 @dataclass
@@ -282,23 +300,38 @@ class GroqProviderClient:
 
 def main() -> int:
     args = parse_args()
-    letters = parse_letters(args.letters)
+    source_specs = parse_source_specs(args)
+    letters = unique_letters(source_specs)
     model = args.model or (DEFAULT_MIMO_MODEL if args.provider == "mimo" else DEFAULT_GROQ_MODEL)
-    run_dir = resolve_run_dir(args, letters)
+    run_dir = resolve_run_dir(args, letters, source_specs)
     raw_dir = run_dir / "raw_batches"
     raw_dir.mkdir(parents=True, exist_ok=True)
+    ontology = load_ontology(args.ontology_path)
 
-    entries = load_entries(args.source_dir, letters)
+    entries = load_entries(source_specs)
     if args.limit_entries is not None:
         entries = entries[: args.limit_entries]
     if not entries:
         raise SystemExit("No dictionary entries found for the selected letters.")
 
     config = {
-        "schema_version": DICTIONARY_SCHEMA_VERSION,
+        "schema_version": GRAPH_SCHEMA_VERSION,
+        "dictionary_schema_version": DICTIONARY_SCHEMA_VERSION,
+        "ontology_path": str(args.ontology_path),
+        "ontology_version": ontology.ontology_version,
+        "prompt_version": PROMPT_VERSION,
         "provider": args.provider,
         "model": model,
         "source_dir": str(args.source_dir),
+        "source_sets": [
+            {
+                "name": spec.name,
+                "path": str(spec.path),
+                "letters": spec.letters,
+                "namespace_ids": spec.namespace_ids,
+            }
+            for spec in source_specs
+        ],
         "letters": letters,
         "batch_size": args.batch_size,
         "entry_char_limit": args.entry_char_limit,
@@ -307,16 +340,28 @@ def main() -> int:
         "temperature": args.temperature,
         "repair": not args.no_repair,
         "fallback": not args.no_fallback,
+        "quality_pass": args.quality_pass,
+        "force_reextract": args.force_reextract,
+        "validate_only": args.validate_only,
+        "export_only": args.export_only,
+        "sqlite_path": str(args.sqlite_path) if args.sqlite_path else "dictionary_graph.sqlite",
         "progress": args.progress,
-        "source_files": source_file_manifest(args.source_dir, letters),
+        "source_files": source_file_manifest(source_specs),
     }
     write_json(run_dir / "run_config.json", config)
     write_entries(run_dir / "entries.jsonl", entries)
 
-    client = build_provider_client(args, model)
     total_batches = math.ceil(len(entries) / args.batch_size)
     batch_numbers = list(range(1, total_batches + 1))
-    pending = find_pending_batches(raw_dir, entries, args.batch_size, batch_numbers, args.resume)
+    pending = find_pending_batches(
+        raw_dir,
+        entries,
+        args.batch_size,
+        batch_numbers,
+        args.resume and not args.force_reextract,
+        model=model,
+        prompt_version=PROMPT_VERSION,
+    )
 
     print_json(
         {
@@ -329,56 +374,80 @@ def main() -> int:
         }
     )
 
-    generate_batches(
-        client=client,
-        raw_dir=raw_dir,
-        entries=entries,
-        batch_numbers=pending,
-        batch_size=args.batch_size,
-        entry_char_limit=args.entry_char_limit,
-        model=model,
-        temperature=args.temperature,
-        max_completion_tokens=args.max_completion_tokens,
-        total_expected_batches=total_batches,
-        progress=args.progress,
-    )
-
-    failures, missing_ids = validate_raw_batches(raw_dir, entries, args.batch_size, batch_numbers)
-    if not args.no_repair and failures:
-        repair_bad_batches(
+    client = None
+    if not args.validate_only and not args.export_only:
+        client = build_provider_client(args, model)
+        generate_batches(
             client=client,
             raw_dir=raw_dir,
             entries=entries,
-            batch_numbers=[failure["batch"] for failure in failures if isinstance(failure.get("batch"), int)],
+            batch_numbers=pending,
             batch_size=args.batch_size,
-            entry_char_limit=args.repair_entry_char_limit,
+            entry_char_limit=args.entry_char_limit,
             model=model,
             temperature=args.temperature,
-            max_completion_tokens=args.repair_max_completion_tokens,
+            max_completion_tokens=args.max_completion_tokens,
             total_expected_batches=total_batches,
             progress=args.progress,
         )
 
-    failures, missing_ids = validate_raw_batches(raw_dir, entries, args.batch_size, batch_numbers)
-    if not args.no_repair and missing_ids:
-        micro_repair_entries(
-            client=client,
-            raw_dir=raw_dir,
-            entries_by_id={entry.id: entry for entry in entries},
-            missing_ids=missing_ids,
-            entry_char_limit=args.micro_entry_char_limit,
-            model=model,
-            temperature=args.temperature,
-            max_completion_tokens=args.micro_max_completion_tokens,
-            fallback=not args.no_fallback,
-            progress=args.progress,
-        )
+        failures, missing_ids = validate_raw_batches(raw_dir, entries, args.batch_size, batch_numbers)
+        if not args.no_repair and failures:
+            repair_bad_batches(
+                client=client,
+                raw_dir=raw_dir,
+                entries=entries,
+                batch_numbers=[failure["batch"] for failure in failures if isinstance(failure.get("batch"), int)],
+                batch_size=args.batch_size,
+                entry_char_limit=args.repair_entry_char_limit,
+                model=model,
+                temperature=args.temperature,
+                max_completion_tokens=args.repair_max_completion_tokens,
+                total_expected_batches=total_batches,
+                progress=args.progress,
+            )
 
-    failures, missing_ids = validate_raw_batches(raw_dir, entries, args.batch_size, batch_numbers)
-    if not args.no_fallback and (failures or missing_ids):
-        apply_fallbacks(raw_dir, entries, args.batch_size, failures, missing_ids)
+        failures, missing_ids = validate_raw_batches(raw_dir, entries, args.batch_size, batch_numbers)
+        if not args.no_repair and missing_ids:
+            micro_repair_entries(
+                client=client,
+                raw_dir=raw_dir,
+                entries_by_id={entry.id: entry for entry in entries},
+                missing_ids=missing_ids,
+                entry_char_limit=args.micro_entry_char_limit,
+                model=model,
+                temperature=args.temperature,
+                max_completion_tokens=args.micro_max_completion_tokens,
+                fallback=not args.no_fallback,
+                progress=args.progress,
+            )
+
+        failures, missing_ids = validate_raw_batches(raw_dir, entries, args.batch_size, batch_numbers)
+        if not args.no_fallback and (failures or missing_ids):
+            apply_fallbacks(raw_dir, entries, args.batch_size, failures, missing_ids)
 
     graph = build_graph(raw_dir, entries, args.batch_size, batch_numbers)
+    graph = finalize_dictionary_graph(
+        graph=graph,
+        entries=entries,
+        ontology=ontology,
+        extractor=args.provider,
+        prompt_version=PROMPT_VERSION,
+    )
+    if client is not None and args.quality_pass != "none":
+        graph = run_quality_pass(
+            client=client,
+            run_dir=run_dir,
+            graph=graph,
+            entries=entries,
+            ontology=ontology,
+            provider=args.provider,
+            model=model,
+            temperature=args.temperature,
+            quality_pass=args.quality_pass,
+            max_completion_tokens=args.repair_max_completion_tokens,
+            progress=args.progress,
+        )
     progress_log(args.progress, "[export] writing graph artifacts")
     write_graph_artifacts(
         run_dir=run_dir,
@@ -388,6 +457,7 @@ def main() -> int:
         provider=args.provider,
         model=model,
         total_batches=total_batches,
+        sqlite_path=args.sqlite_path,
     )
     if args.graphml:
         write_graphml(run_dir / "graph.graphml", graph["nodes"], graph["edges"])
@@ -403,6 +473,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a reproducible dictionary knowledge graph from DOCX entries.")
     parser.add_argument("--source-dir", type=Path, default=DEFAULT_SOURCE_DIR)
     parser.add_argument("--letters", default="A,B,C", help="Comma-separated root DOCX letters, e.g. A,B,C,D.")
+    parser.add_argument(
+        "--source-set",
+        action="append",
+        default=[],
+        metavar="NAME=PATH|LETTERS",
+        help=(
+            "Repeatable multi-source input. Example: "
+            "'base=data/semi_private/File Từ điển PB_2021|A,B,C' "
+            "'supp2021=data/semi_private/File Từ điển PB_2021/01. Mục từ Bổ sung 2021|B,C'. "
+            "When set, entry ids are namespaced as NAME:LETTER-0001."
+        ),
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("runs"))
     parser.add_argument("--run-name", help="Stable run directory name. Defaults to timestamped provider/letters name.")
     parser.add_argument("--provider", choices=("mimo", "groq"), default="mimo")
@@ -417,6 +499,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repair-entry-char-limit", type=int, default=420)
     parser.add_argument("--micro-entry-char-limit", type=int, default=360)
     parser.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--force-reextract", action="store_true", help="Ignore valid raw batch cache and call the provider again.")
+    parser.add_argument("--validate-only", action="store_true", help="Validate existing raw/artifact data without provider calls.")
+    parser.add_argument("--export-only", action="store_true", help="Rebuild artifacts from existing raw batches without provider calls.")
+    parser.add_argument("--quality-pass", choices=("none", "weak", "all"), default="weak")
+    parser.add_argument("--ontology-path", type=Path, default=DEFAULT_ONTOLOGY_PATH)
+    parser.add_argument("--sqlite-path", type=Path, default=None, help="SQLite output path. Defaults to <run-dir>/dictionary_graph.sqlite.")
     parser.add_argument("--no-repair", action="store_true", help="Skip LLM repair for invalid JSON or missing entries.")
     parser.add_argument("--no-fallback", action="store_true", help="Do not insert local minimal fallback entries.")
     parser.add_argument("--visualize", action=argparse.BooleanOptionalAction, default=True)
@@ -435,7 +523,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--key-tpm", type=int, default=6000)
     parser.add_argument("--key-rpm", type=int, default=30)
     parser.add_argument("--rate-limit-scope", choices=("per-key", "shared"), default="per-key")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.validate_only and args.export_only:
+        parser.error("--validate-only and --export-only are mutually exclusive")
+    return args
 
 
 def parse_letters(value: str) -> list[str]:
@@ -445,12 +536,48 @@ def parse_letters(value: str) -> list[str]:
     return letters
 
 
-def resolve_run_dir(args: argparse.Namespace, letters: list[str]) -> Path:
+def parse_source_specs(args: argparse.Namespace) -> list[SourceSpec]:
+    if not args.source_set:
+        return [SourceSpec(name="base", path=args.source_dir, letters=parse_letters(args.letters), namespace_ids=False)]
+    specs = [parse_source_set(value) for value in args.source_set]
+    names = [spec.name for spec in specs]
+    duplicate_names = sorted(name for name, count in Counter(names).items() if count > 1)
+    if duplicate_names:
+        raise SystemExit(f"Duplicate --source-set names: {', '.join(duplicate_names)}")
+    return specs
+
+
+def parse_source_set(value: str) -> SourceSpec:
+    if "=" not in value or "|" not in value:
+        raise SystemExit("--source-set must use format NAME=PATH|LETTERS")
+    name, rest = value.split("=", 1)
+    path_text, letters_text = rest.rsplit("|", 1)
+    name = slugify(name.strip())
+    if not name:
+        raise SystemExit("--source-set name cannot be empty")
+    path = Path(path_text.strip())
+    letters = parse_letters(letters_text)
+    return SourceSpec(name=name, path=path, letters=letters, namespace_ids=True)
+
+
+def unique_letters(source_specs: list[SourceSpec]) -> list[str]:
+    letters: list[str] = []
+    for spec in source_specs:
+        for letter in spec.letters:
+            if letter not in letters:
+                letters.append(letter)
+    return letters
+
+
+def resolve_run_dir(args: argparse.Namespace, letters: list[str], source_specs: list[SourceSpec]) -> Path:
     if args.run_name:
         return args.out_dir / args.run_name
     stamp = time.strftime("%Y%m%dT%H%M%S")
-    letters_slug = "".join(slugify(letter) for letter in letters).lower()
-    return args.out_dir / f"pb_dictionary_{letters_slug}_{args.provider}_graph_{stamp}"
+    if args.source_set:
+        source_slug = "-".join(spec.name for spec in source_specs)
+    else:
+        source_slug = "".join(slugify(letter) for letter in letters).lower()
+    return args.out_dir / f"pb_dictionary_{source_slug}_{args.provider}_graph_{stamp}"
 
 
 def build_provider_client(args: argparse.Namespace, model: str) -> Any:
@@ -501,8 +628,22 @@ def strip_env_quotes(value: str) -> str:
     return value
 
 
-def load_entries(source_dir: Path, letters: list[str]) -> list[Entry]:
-    return load_dictionary_entries(source_dir, letters)
+def load_entries(source_specs: list[SourceSpec]) -> list[Entry]:
+    entries: list[Entry] = []
+    seen: set[str] = set()
+    for spec in source_specs:
+        spec_entries = load_dictionary_entries(
+            spec.path,
+            spec.letters,
+            source_set=spec.name if spec.namespace_ids else None,
+            id_prefix=spec.name if spec.namespace_ids else None,
+        )
+        for entry in spec_entries:
+            if entry.id in seen:
+                raise SystemExit(f"Duplicate dictionary entry id after source-set namespacing: {entry.id}")
+            seen.add(entry.id)
+            entries.append(entry)
+    return entries
 
 
 def paragraph_rows(path: Path) -> list[dict[str, Any]]:
@@ -519,6 +660,9 @@ def find_pending_batches(
     batch_size: int,
     batch_numbers: list[int],
     resume: bool,
+    *,
+    model: str,
+    prompt_version: str,
 ) -> list[int]:
     if not resume:
         return batch_numbers
@@ -534,7 +678,17 @@ def find_pending_batches(
         if error is not None:
             pending.append(batch_number)
             continue
-        parsed = parse_json_object(read_raw(raw_path).get("answer") or "")
+        raw = read_raw(raw_path)
+        expected_cache_key = batch_cache_key(
+            batch_for_number(entries, batch_size, batch_number),
+            batch_size=batch_size,
+            model=model,
+            prompt_version=prompt_version,
+        )
+        if raw.get("cache_key") != expected_cache_key:
+            pending.append(batch_number)
+            continue
+        parsed = parse_json_object(raw.get("answer") or "")
         parsed_ids = {
             normalize_spaces(str(item.get("id", "")))
             for item in parsed.get("entries", [])
@@ -585,6 +739,7 @@ def generate_batches(
             max_completion_tokens=max_completion_tokens,
         )
         raw = provider_result_to_raw(batch_number, batch, result)
+        add_batch_cache_metadata(raw, batch, batch_size=batch_size, model=model, prompt_version=PROMPT_VERSION)
         raw["generated_at"] = iso_now()
         write_json(batch_path(raw_dir, batch_number), raw)
         parse_error = None if result.error else raw_parse_error(batch_path(raw_dir, batch_number))
@@ -654,6 +809,7 @@ def repair_bad_batches(
             max_completion_tokens=max_completion_tokens,
         )
         raw = provider_result_to_raw(batch_number, batch, result)
+        add_batch_cache_metadata(raw, batch, batch_size=batch_size, model=model, prompt_version=PROMPT_VERSION)
         raw["repair_attempt"] = True
         raw["repaired_at"] = iso_now()
         write_json(raw_path, raw)
@@ -693,7 +849,8 @@ def micro_repair_entries(
     grouped: dict[int, list[Entry]] = {}
     for entry_id in missing_ids:
         entry = entries_by_id[entry_id]
-        batch_number = int(entry.id.split("-", 1)[1])
+        match = re.search(r"-(\d+)$", entry.id)
+        batch_number = int(match.group(1)) if match else 0
         # This batch number is only valid for one-letter files, so compute from raw ids below if needed.
         grouped.setdefault(batch_number, []).append(entry)
 
@@ -953,7 +1110,20 @@ def build_graph(
                 if target_id.startswith("concept:"):
                     concept_nodes.setdefault(target_id, {"id": target_id, "type": "concept", "label": target})
                 evidence = normalize_spaces(str(relation_item.get("evidence") or ""))[:140]
-                edges.append({"source": entry_id, "target": target_id, "type": relation, "weight": 2.0, "evidence": evidence})
+                confidence = relation_item.get("confidence")
+                if not isinstance(confidence, (int, float)):
+                    confidence = 0.72 if evidence else 0.4
+                edges.append(
+                    {
+                        "source": entry_id,
+                        "target": target_id,
+                        "type": relation,
+                        "weight": 2.0,
+                        "evidence_text": evidence,
+                        "source_entry_id": entry_id,
+                        "confidence": confidence,
+                    }
+                )
                 relation_counter[relation] += 1
 
     nodes = list(entry_nodes.values()) + list(concept_nodes.values())
@@ -1000,6 +1170,7 @@ def write_graph_artifacts(
     provider: str,
     model: str,
     total_batches: int,
+    sqlite_path: Path | None = None,
 ) -> None:
     manifest = graph["manifest"]
     manifest.update(
@@ -1012,18 +1183,189 @@ def write_graph_artifacts(
             "batch_size": config["batch_size"],
             "entry_char_limit": config["entry_char_limit"],
             "total_expected_batches": total_batches,
+            "sqlite_path": str(sqlite_path or (run_dir / "dictionary_graph.sqlite")),
         }
     )
     write_jsonl(run_dir / "nodes.jsonl", graph["nodes"])
     write_jsonl(run_dir / "edges.jsonl", graph["edges"])
     write_jsonl(run_dir / "batches.jsonl", graph["batches"])
     write_entries(run_dir / "rich_entries.jsonl", entries)
+    write_jsonl(run_dir / "validation_errors.jsonl", graph.get("validation_errors", []))
     if graph["failures"]:
         write_jsonl(run_dir / "failures.jsonl", graph["failures"])
     else:
         (run_dir / "failures.jsonl").unlink(missing_ok=True)
     write_json(run_dir / "manifest.json", manifest)
     write_summary(run_dir / "graph_summary.md", manifest)
+    write_quality_report(
+        run_dir / "graph_quality_report.md",
+        manifest=manifest,
+        metrics=graph.get("quality_metrics") or manifest.get("quality_metrics") or {},
+        errors=graph.get("validation_errors", []),
+    )
+    write_sqlite_store(
+        sqlite_path or (run_dir / "dictionary_graph.sqlite"),
+        entries=entries,
+        nodes=graph["nodes"],
+        edges=graph["edges"],
+        batches=graph.get("batches", []),
+        validation_errors=graph.get("validation_errors", []),
+        manifest=manifest,
+    )
+
+
+def run_quality_pass(
+    *,
+    client: Any,
+    run_dir: Path,
+    graph: dict[str, Any],
+    entries: list[Entry],
+    ontology: Any,
+    provider: str,
+    model: str,
+    temperature: float,
+    quality_pass: str,
+    max_completion_tokens: int,
+    progress: bool,
+) -> dict[str, Any]:
+    selected = select_quality_edges(graph.get("edges", []), quality_pass=quality_pass, weak_threshold=0.6)
+    if not selected:
+        graph["manifest"]["quality_pass_edge_count"] = 0
+        return graph
+
+    quality_dir = run_dir / "quality_batches"
+    quality_dir.mkdir(parents=True, exist_ok=True)
+    entries_by_id = {entry.id: entry for entry in entries}
+    updates: list[dict[str, Any]] = []
+    tracker = ProgressTracker(stage="quality", total_items=len(selected), item_name="edge", enabled=progress)
+    for edge_index, edge in enumerate(selected, start=1):
+        raw_path = quality_dir / f"quality_{edge_index:04d}.json"
+        if raw_path.is_file():
+            raw = read_raw(raw_path)
+            parsed = raw.get("parsed") if isinstance(raw.get("parsed"), dict) else None
+            if parsed:
+                updates.append(parsed)
+                tracker.update(done_items=edge_index, note="cached")
+                continue
+        entry = entries_by_id.get(str(edge.get("source_entry_id")))
+        payload = {
+            "edge": {
+                "edge_id": edge.get("edge_id"),
+                "source": edge.get("source"),
+                "target": edge.get("target"),
+                "type": edge.get("type"),
+                "evidence_text": edge.get("evidence_text"),
+                "confidence": edge.get("confidence"),
+            },
+            "source_entry": {
+                "id": entry.id,
+                "headword": entry.headword,
+                "text": (entry.raw_docx_text or entry.text)[:900],
+            }
+            if entry
+            else None,
+        }
+        result = client.generate(
+            [
+                {"role": "system", "content": quality_system_prompt()},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            model=model,
+            temperature=temperature,
+            max_completion_tokens=max_completion_tokens,
+        )
+        parsed: dict[str, Any] | None = None
+        parse_error: str | None = None
+        if result.error is None:
+            try:
+                parsed = parse_json_object(result.answer)
+                parsed["edge_id"] = edge.get("edge_id")
+                updates.append(parsed)
+            except Exception as exc:  # noqa: BLE001 - quality pass should be auditable and non-fatal.
+                parse_error = str(exc)
+        raw = provider_result_to_raw(edge_index, [], result)
+        raw.update(
+            {
+                "edge_id": edge.get("edge_id"),
+                "quality_pass": quality_pass,
+                "input_edge": edge,
+                "parsed": parsed,
+                "parse_error": parse_error,
+                "generated_at": iso_now(),
+            }
+        )
+        write_json(raw_path, raw)
+        tracker.update(done_items=edge_index, note="error" if result.error or parse_error else None)
+
+    updated_graph = apply_quality_updates(graph, updates)
+    updated_graph = finalize_dictionary_graph(
+        graph=updated_graph,
+        entries=entries,
+        ontology=ontology,
+        extractor=provider,
+        prompt_version=PROMPT_VERSION,
+    )
+    updated_graph["manifest"]["quality_pass"] = quality_pass
+    updated_graph["manifest"]["quality_pass_edge_count"] = len(selected)
+    updated_graph["manifest"]["quality_update_count"] = len(updates)
+    return updated_graph
+
+
+def select_quality_edges(edges: list[dict[str, Any]], *, quality_pass: str, weak_threshold: float) -> list[dict[str, Any]]:
+    if quality_pass == "none":
+        return []
+    selected: list[dict[str, Any]] = []
+    for edge in edges:
+        edge_type = str(edge.get("type") or "")
+        if edge_type in {"has_alias", "has_concept", "in_category"}:
+            continue
+        if quality_pass == "all":
+            selected.append(edge)
+            continue
+        confidence = float(edge.get("confidence", 0.0)) if isinstance(edge.get("confidence"), (int, float)) else 0.0
+        if confidence < weak_threshold or not normalize_spaces(str(edge.get("evidence_text") or "")):
+            selected.append(edge)
+    return selected
+
+
+def apply_quality_updates(graph: dict[str, Any], updates: list[dict[str, Any]]) -> dict[str, Any]:
+    by_id = {str(update.get("edge_id")): update for update in updates if update.get("edge_id")}
+    if not by_id:
+        return graph
+    edges: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for edge in graph.get("edges", []):
+        update = by_id.get(str(edge.get("edge_id")))
+        if update is None:
+            edges.append(edge)
+            continue
+        if update.get("keep") is False:
+            dropped.append({"edge_id": edge.get("edge_id"), "reason": update.get("reason")})
+            continue
+        merged = dict(edge)
+        for field in ("evidence_text", "confidence"):
+            if update.get(field) not in (None, ""):
+                merged[field] = update[field]
+        metadata = dict(merged.get("metadata") or {})
+        metadata["quality_pass"] = {key: value for key, value in update.items() if key not in {"edge_id", "keep"}}
+        merged["metadata"] = metadata
+        edges.append(merged)
+    updated = dict(graph)
+    updated["edges"] = edges
+    updated["quality_dropped_edges"] = dropped
+    manifest = dict(graph.get("manifest") or {})
+    manifest["quality_dropped_edge_count"] = len(dropped)
+    updated["manifest"] = manifest
+    return updated
+
+
+def quality_system_prompt() -> str:
+    return (
+        "Bạn là critic cho graph từ điển. Final answer chỉ là JSON hợp lệ bắt đầu bằng {.\n"
+        'Schema: {"keep":true|false,"confidence":0.0-1.0,"evidence_text":"trích dẫn ngắn từ source_entry",'
+        '"reason":"lý do ngắn"}.\n'
+        "Giữ edge nếu quan hệ được chứng minh trực tiếp bởi mục từ. Bỏ edge nếu evidence không hỗ trợ relation."
+    )
 
 
 def write_visualization(path: Path, nodes: list[dict[str, Any]], edges: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
@@ -1045,12 +1387,16 @@ def write_visualization(path: Path, nodes: list[dict[str, Any]], edges: list[dic
             "source": edge.get("source"),
             "target": edge.get("target"),
             "type": edge.get("type"),
-            "evidence": edge.get("evidence", ""),
+            "evidence": edge.get("evidence_text") or edge.get("evidence", ""),
+            "source_entry_id": edge.get("source_entry_id"),
+            "confidence": edge.get("confidence"),
         }
         for edge in edges
     ]
     categories = sorted({node["category"] for node in compact_nodes if node.get("type") == "entry"})
     category_options = "\n".join(f'<option value="{escape(category)}">{escape(category)}</option>' for category in categories)
+    relations = sorted({str(edge.get("type")) for edge in compact_edges if edge.get("type")})
+    relation_options = "\n".join(f'<option value="{escape(relation)}">{escape(relation)}</option>' for relation in relations)
     data = json.dumps({"nodes": compact_nodes, "edges": compact_edges, "manifest": manifest}, ensure_ascii=False)
     data = data.replace("</script", "<\\/script")
     html = f"""<!doctype html>
@@ -1078,6 +1424,9 @@ def write_visualization(path: Path, nodes: list[dict[str, Any]], edges: list[dic
     .details {{ position: absolute; top: 16px; right: 16px; width: min(360px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; background: rgba(255,255,255,.94); border: 1px solid #deded8; border-radius: 12px; padding: 14px; box-shadow: 0 16px 50px rgba(0,0,0,.12); }}
     .details h2 {{ font-size: 16px; margin: 0 0 8px; overflow-wrap: anywhere; }}
     .meta {{ color: #666a73; font-size: 12px; line-height: 1.45; }}
+    .edge-list {{ margin-top: 12px; display: grid; gap: 8px; }}
+    .edge-row {{ border: 1px solid #e2e2dc; border-radius: 8px; padding: 8px; font-size: 12px; line-height: 1.4; }}
+    .evidence {{ color: #4b5563; margin-top: 4px; overflow-wrap: anywhere; }}
     .chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }}
     .chip {{ border-radius: 999px; background: #f0f0ec; padding: 5px 8px; font-size: 12px; }}
     .hidden {{ display: none; }}
@@ -1097,6 +1446,8 @@ def write_visualization(path: Path, nodes: list[dict[str, Any]], edges: list[dic
     </div>
     <label for="query">Search</label><input id="query" placeholder="term, id, concept..." />
     <label for="category">Category</label><select id="category"><option value="">All</option>{category_options}</select>
+    <label for="relation">Relation</label><select id="relation"><option value="">All</option>{relation_options}</select>
+    <label for="confidence">Minimum confidence</label><input id="confidence" type="number" min="0" max="1" step="0.05" value="0" />
     <label for="limit">Node limit</label><input id="limit" type="number" min="50" step="50" value="600" />
     <button id="apply">Apply</button>
   </aside>
@@ -1113,16 +1464,17 @@ let width = 0, height = 0, dpr = 1;
 function resize() {{ const r = canvas.getBoundingClientRect(); width = r.width; height = r.height; dpr = window.devicePixelRatio || 1; canvas.width = width*dpr; canvas.height = height*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); draw(); }}
 window.addEventListener('resize', resize);
 function color(n) {{ if (selected && selected.id === n.id) return '#c72c25'; if (n.type === 'concept') return '#d6a800'; return {{'vũ khí/trang bị':'#228b22','đạn dược/thuốc nổ':'#c72c25','khí tài đo đạc/trinh sát':'#3b82f6','bản đồ/địa hình':'#8b5cf6','chỉ huy/huấn luyện':'#0f766e','bảo đảm kỹ thuật':'#f97316','khái niệm tác chiến':'#111827','tổ chức/lực lượng':'#7c3aed','khí tượng/địa vật':'#0891b2','khác':'#6b7280'}}[n.category] || '#777'; }}
-function apply() {{ const q = document.getElementById('query').value.trim().toLowerCase(), cat = document.getElementById('category').value, limit = Number(document.getElementById('limit').value) || 600; const degree = new Map(); allEdges.forEach(e => {{ degree.set(e.source, (degree.get(e.source)||0)+1); degree.set(e.target, (degree.get(e.target)||0)+1); }}); let seed = allNodes.filter(n => (!cat || n.type !== 'entry' || n.category === cat) && (!q || [n.id,n.label,n.category,...(n.aliases||[]),...(n.concepts||[])].join(' ').toLowerCase().includes(q))); seed.sort((a,b)=>(degree.get(b.id)||0)-(degree.get(a.id)||0)); const live = new Set(seed.slice(0,limit).map(n=>n.id)); allEdges.forEach(e => {{ if (live.has(e.source)||live.has(e.target)) {{ live.add(e.source); live.add(e.target); }} }}); nodes = allNodes.filter(n => live.has(n.id)).slice(0, Math.max(limit, live.size)); const live2 = new Set(nodes.map(n=>n.id)); edges = allEdges.filter(e => live2.has(e.source)&&live2.has(e.target)); init(); simulate(170); }}
+function activeEdges() {{ const rel = document.getElementById('relation').value, minConf = Number(document.getElementById('confidence').value) || 0; return allEdges.filter(e => (!rel || e.type === rel) && (Number(e.confidence ?? 1) >= minConf)); }}
+function apply() {{ const q = document.getElementById('query').value.trim().toLowerCase(), cat = document.getElementById('category').value, limit = Number(document.getElementById('limit').value) || 600, edgePool = activeEdges(); const degree = new Map(); edgePool.forEach(e => {{ degree.set(e.source, (degree.get(e.source)||0)+1); degree.set(e.target, (degree.get(e.target)||0)+1); }}); let seed = allNodes.filter(n => (!cat || n.type !== 'entry' || n.category === cat) && (!q || [n.id,n.label,n.category,...(n.aliases||[]),...(n.concepts||[])].join(' ').toLowerCase().includes(q))); seed.sort((a,b)=>(degree.get(b.id)||0)-(degree.get(a.id)||0)); const live = new Set(seed.slice(0,limit).map(n=>n.id)); edgePool.forEach(e => {{ if (live.has(e.source)||live.has(e.target)) {{ live.add(e.source); live.add(e.target); }} }}); nodes = allNodes.filter(n => live.has(n.id)).slice(0, Math.max(limit, live.size)); const live2 = new Set(nodes.map(n=>n.id)); edges = edgePool.filter(e => live2.has(e.source)&&live2.has(e.target)); init(); simulate(170); }}
 function init() {{ nodes.forEach((n,i)=>{{ if (!Number.isFinite(n.x)) {{ const a=i*2.399963, r=45+Math.sqrt(i)*12; n.x=width/2+Math.cos(a)*r; n.y=height/2+Math.sin(a)*r; n.vx=0; n.vy=0; }} }}); }}
 function simulate(iter) {{ let t=0; const pairs = edges.map(e=>[byId.get(e.source),byId.get(e.target)]).filter(p=>p[0]&&p[1]); function step() {{ for (let k=0;k<3;k++) {{ t++; const a=Math.max(.02,1-t/iter); nodes.forEach(n=>{{ n.vx+=(width/2-n.x)*.0008*a; n.vy+=(height/2-n.y)*.0008*a; }}); for (const [x,y] of pairs) {{ const dx=y.x-x.x, dy=y.y-x.y, d=Math.hypot(dx,dy)||1, f=(d-95)*.006*a; x.vx+=dx/d*f; x.vy+=dy/d*f; y.vx-=dx/d*f; y.vy-=dy/d*f; }} for (let i=0;i<nodes.length;i++) for (let j=i+1;j<Math.min(nodes.length,i+55);j++) {{ const x=nodes[i], y=nodes[j], dx=x.x-y.x, dy=x.y-y.y, d2=dx*dx+dy*dy+.01; if (d2<12000) {{ const f=34/d2*a; x.vx+=dx*f; x.vy+=dy*f; y.vx-=dx*f; y.vy-=dy*f; }} }} nodes.forEach(n=>{{ n.vx*=.86; n.vy*=.86; n.x+=n.vx; n.y+=n.vy; }}); }} draw(); if(t<iter) requestAnimationFrame(step); }} requestAnimationFrame(step); }}
 function draw() {{ ctx.clearRect(0,0,width,height); ctx.save(); ctx.translate(transform.x,transform.y); ctx.scale(transform.scale,transform.scale); ctx.strokeStyle='rgba(80,80,80,.16)'; ctx.lineWidth=1/transform.scale; edges.forEach(e=>{{ const a=byId.get(e.source), b=byId.get(e.target); if(!a||!b) return; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); }}); nodes.forEach(n=>{{ ctx.beginPath(); ctx.fillStyle=color(n); ctx.arc(n.x,n.y,n.type==='entry'?5.4:3.7,0,Math.PI*2); ctx.fill(); }}); if(nodes.length<420||transform.scale>.8) {{ ctx.font=`${{11/transform.scale}}px Inter,sans-serif`; ctx.fillStyle='rgba(20,20,20,.78)'; nodes.forEach(n=>{{ if(n.type==='concept'&&nodes.length>340) return; ctx.fillText(String(n.label||n.id).slice(0,40), n.x+7, n.y+4/transform.scale); }}); }} ctx.restore(); }}
 function screenToWorld(x,y) {{ return {{x:(x-transform.x)/transform.scale,y:(y-transform.y)/transform.scale}}; }}
-canvas.addEventListener('click', ev=>{{ const r=canvas.getBoundingClientRect(), p=screenToWorld(ev.clientX-r.left,ev.clientY-r.top); let hit=null,best=14/transform.scale; nodes.forEach(n=>{{ const d=Math.hypot(n.x-p.x,n.y-p.y); if(d<best){{best=d; hit=n;}} }}); if(!hit){{selected=null;details.classList.add('hidden');draw();return;}} selected=hit; details.classList.remove('hidden'); details.innerHTML=`<h2>${{esc(hit.label||hit.id)}}</h2><div class="meta">${{esc(hit.id)}} · ${{esc(hit.type)}} · ${{esc(hit.category||'')}}</div><div class="chips">${{[...(hit.aliases||[]),...(hit.concepts||[])].slice(0,10).map(x=>`<span class="chip">${{esc(x)}}</span>`).join('')}}</div>`; draw(); }});
+canvas.addEventListener('click', ev=>{{ const r=canvas.getBoundingClientRect(), p=screenToWorld(ev.clientX-r.left,ev.clientY-r.top); let hit=null,best=14/transform.scale; nodes.forEach(n=>{{ const d=Math.hypot(n.x-p.x,n.y-p.y); if(d<best){{best=d; hit=n;}} }}); if(!hit){{selected=null;details.classList.add('hidden');draw();return;}} selected=hit; const related = edges.filter(e => e.source === hit.id || e.target === hit.id).slice(0,16); details.classList.remove('hidden'); details.innerHTML=`<h2>${{esc(hit.label||hit.id)}}</h2><div class="meta">${{esc(hit.id)}} · ${{esc(hit.type)}} · ${{esc(hit.category||'')}}</div><div class="chips">${{[...(hit.aliases||[]),...(hit.concepts||[])].slice(0,10).map(x=>`<span class="chip">${{esc(x)}}</span>`).join('')}}</div><div class="edge-list">${{related.map(e=>`<div class="edge-row"><b>${{esc(e.type)}}</b> ${{esc(e.source)}} → ${{esc(e.target)}}<div class="meta">entry ${{esc(e.source_entry_id||'')}} · confidence ${{esc(e.confidence??'')}}</div><div class="evidence">${{esc(e.evidence||'')}}</div></div>`).join('')}}</div>`; draw(); }});
 canvas.addEventListener('wheel', ev=>{{ ev.preventDefault(); const r=canvas.getBoundingClientRect(), mx=ev.clientX-r.left, my=ev.clientY-r.top, before=screenToWorld(mx,my), f=ev.deltaY<0?1.1:.9; transform.scale=Math.max(.25,Math.min(4,transform.scale*f)); transform.x=mx-before.x*transform.scale; transform.y=my-before.y*transform.scale; draw(); }},{{passive:false}});
 let pan=null; canvas.addEventListener('pointerdown',ev=>{{pan={{x:ev.clientX,y:ev.clientY,tx:transform.x,ty:transform.y}};}}); canvas.addEventListener('pointermove',ev=>{{if(!pan)return; transform.x=pan.tx+ev.clientX-pan.x; transform.y=pan.ty+ev.clientY-pan.y; draw();}}); canvas.addEventListener('pointerup',()=>pan=null);
 function esc(v) {{ return String(v??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}}[c])); }}
-document.getElementById('apply').addEventListener('click', apply); document.getElementById('query').addEventListener('keydown', e=>{{if(e.key==='Enter')apply();}});
+document.getElementById('apply').addEventListener('click', apply); document.getElementById('query').addEventListener('keydown', e=>{{if(e.key==='Enter')apply();}}); document.getElementById('relation').addEventListener('change', apply); document.getElementById('confidence').addEventListener('change', apply);
 resize(); apply();
 </script>
 </body>
@@ -1154,8 +1506,9 @@ def write_graphml(path: Path, nodes: list[dict[str, Any]], edges: list[dict[str,
         target = xml_escape(str(edge["target"]))
         lines.append(f'    <edge id="e{index}" source="{source}" target="{target}">')
         lines.append(f'      <data key="edge_type">{xml_escape(str(edge.get("type", "")))}</data>')
-        if edge.get("evidence"):
-            lines.append(f'      <data key="evidence">{xml_escape(str(edge["evidence"]))}</data>')
+        evidence = edge.get("evidence_text") or edge.get("evidence")
+        if evidence:
+            lines.append(f'      <data key="evidence">{xml_escape(str(evidence))}</data>')
         lines.append("    </edge>")
     lines.extend(["  </graph>", "</graphml>"])
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1175,10 +1528,20 @@ def write_summary(path: Path, manifest: dict[str, Any]) -> None:
         f"- Nodes: {manifest.get('node_count')}",
         f"- Edges: {manifest.get('edge_count')}",
         f"- Failures: {manifest.get('failure_count')}",
+        f"- Validation errors: {manifest.get('validation_error_count')}",
+        f"- SQLite: `{manifest.get('sqlite_path')}`",
+        "",
+        "## Quality Metrics",
+        "",
+    ]
+    for key, value in (manifest.get("quality_metrics") or {}).items():
+        if isinstance(value, (str, int, float)) or value is None:
+            lines.append(f"- `{key}`: {value}")
+    lines.extend([
         "",
         "## Relation Counts",
         "",
-    ]
+    ])
     for relation, count in (manifest.get("relation_counts") or {}).items():
         lines.append(f"- `{relation}`: {count}")
     lines.extend(["", "## Category Counts", ""])
@@ -1191,10 +1554,12 @@ def graph_system_prompt() -> str:
     return (
         "Trích xuất graph. Final answer PHẢI bắt đầu bằng ký tự { và chỉ chứa JSON hợp lệ.\n"
         'Schema: {"entries":[{"id":"...","category":"...","aliases":["..."],'
-        '"concepts":["..."],"relations":[{"target":"...","relation":"...","target_type":"entry|concept","evidence":"..."}]}]}\n'
+        '"concepts":["..."],"relations":[{"target":"...","relation":"...","target_type":"entry|concept",'
+        '"evidence":"trích dẫn ngắn từ mục từ","confidence":0.0-1.0}]}]}\n'
         f"category: {' | '.join(CATEGORIES)}.\n"
         f"relation: {' | '.join(RELATIONS)}.\n"
-        "Mỗi entry tối đa 3 concepts, tối đa 1 relation. Không chắc thì relations=[]. Giữ nguyên mọi id input."
+        "Mỗi entry tối đa 3 concepts, tối đa 1 relation. Không chắc thì relations=[]. "
+        f"prompt_version={PROMPT_VERSION}. Giữ nguyên mọi id input."
     )
 
 
@@ -1241,6 +1606,49 @@ def provider_result_to_raw(batch_number: int, batch: list[Entry], result: Provid
         "estimated_tokens": result.estimated_tokens,
         "scheduled_wait_s": result.scheduled_wait_s,
     }
+
+
+def add_batch_cache_metadata(
+    raw: dict[str, Any],
+    batch: list[Entry],
+    *,
+    batch_size: int,
+    model: str,
+    prompt_version: str,
+) -> None:
+    raw["model"] = model
+    raw["prompt_version"] = prompt_version
+    raw["batch_size"] = batch_size
+    raw["source_entry_hashes"] = {entry.id: entry_content_hash(entry) for entry in batch}
+    raw["cache_key"] = batch_cache_key(batch, batch_size=batch_size, model=model, prompt_version=prompt_version)
+
+
+def batch_cache_key(batch: list[Entry], *, batch_size: int, model: str, prompt_version: str) -> str:
+    payload = {
+        "batch_size": batch_size,
+        "model": model,
+        "prompt_version": prompt_version,
+        "entries": [{"id": entry.id, "hash": entry_content_hash(entry)} for entry in batch],
+    }
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(body).hexdigest()
+
+
+def entry_content_hash(entry: Entry) -> str:
+    body = json.dumps(
+        {
+            "id": entry.id,
+            "headword": entry.headword,
+            "plain_text": entry.plain_text or entry.text,
+            "raw_docx_text": entry.raw_docx_text or entry.text,
+            "source_file": entry.source_file,
+            "paragraph_index": entry.paragraph_index,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(body).hexdigest()
 
 
 def backup_raw(path: Path) -> None:
@@ -1362,8 +1770,11 @@ def slugify(value: str) -> str:
     return dictionary_slugify(value)
 
 
-def source_file_manifest(source_dir: Path, letters: list[str]) -> list[dict[str, Any]]:
-    return dictionary_source_file_manifest(source_dir, letters)
+def source_file_manifest(source_specs: list[SourceSpec]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for spec in source_specs:
+        rows.extend(dictionary_source_file_manifest(spec.path, spec.letters, source_set=spec.name if spec.namespace_ids else None))
+    return rows
 
 
 def sha256_file(path: Path) -> str:
@@ -1429,6 +1840,9 @@ def batch_row(raw: dict[str, Any]) -> dict[str, Any]:
         "estimated_tokens": raw.get("estimated_tokens"),
         "scheduled_wait_s": raw.get("scheduled_wait_s"),
         "error": raw.get("error"),
+        "model": raw.get("model"),
+        "prompt_version": raw.get("prompt_version"),
+        "cache_key": raw.get("cache_key"),
         "repair_attempt": raw.get("repair_attempt", False),
         "micro_repair": raw.get("micro_repair", False),
         "fallback_batch": raw.get("fallback_batch", False),

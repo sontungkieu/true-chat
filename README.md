@@ -52,22 +52,64 @@ Private dictionary graph builds use a reproducible script instead of one-off ter
 uv run --frozen python scripts/build_dictionary_graph.py \
   --provider mimo \
   --model mimo-v2.5-pro \
-  --letters A,B,C,D \
-  --run-name pb_dictionary_abcd_mimo_graph \
-  --batch-size 8 \
+  --letters A,B,C,D,F \
+  --run-name pb_dictionary_abcdf_prod_graph \
+  --batch-size 6 \
+  --quality-pass weak \
   --max-completion-tokens 8192 \
   --repair-max-completion-tokens 4096 \
   --micro-max-completion-tokens 1600
 ```
 
-The source DOCX files default to `data/semi_private/File Từ điển PB_2021/<letter>.docx`. The script reads `MIMO_API_KEY` and optional `MIMO_BASE_URL` from `.secrets/.env`; for Groq runs, use `--provider groq` and `.secrets/groq_key.env`. It keeps raw LLM batch outputs under `raw_batches/`, skips valid batches on resume, retries malformed JSON with a shorter repair prompt, micro-repairs missing entries one-by-one, and can insert explicit local fallback entries when the model still omits a source item. Outputs are written under ignored `runs/`:
+The source DOCX files default to `data/semi_private/File Từ điển PB_2021/<letter>.docx`. The script reads `MIMO_API_KEY` and optional `MIMO_BASE_URL` from `.secrets/.env`; for Groq runs, use `--provider groq` and `.secrets/groq_key.env`. It keeps raw LLM batch outputs under `raw_batches/`, skips valid batches on resume, retries malformed JSON with a shorter repair prompt, micro-repairs missing entries one-by-one, and can insert explicit local fallback entries when the model still omits a source item. Production graph output is validated against `schemas/dictionary_ontology.json` and typed Pydantic models before becoming the main artifact. Each edge must carry `source_entry_id`, `evidence_text`, `confidence`, `extractor`, and `prompt_version`.
+
+Useful production modes:
+
+```bash
+# Rebuild exports, report, visualization, GraphML, and SQLite from existing raw batches.
+uv run --frozen python scripts/build_dictionary_graph.py \
+  --provider mimo --model mimo-v2.5-pro --letters A,B,C,D,F \
+  --run-name pb_dictionary_abcdf_prod_graph --export-only
+
+# Validate an existing run and fail if coverage/invalid-edge thresholds are not met.
+uv run --frozen python scripts/validate_dictionary_graph.py \
+  --run-dir runs/pb_dictionary_abcdf_prod_graph \
+  --min-entry-coverage 0.98 \
+  --max-invalid-edge-rate 0.03
+
+# Ignore valid cached raw batches and call the provider again.
+uv run --frozen python scripts/build_dictionary_graph.py \
+  --provider mimo --model mimo-v2.5-pro --letters A,B,C,D,F \
+  --run-name pb_dictionary_abcdf_prod_graph --force-reextract
+```
+
+`--quality-pass weak` is the default. It sends weak non-deterministic edges to the selected provider for a critic pass when such edges exist; `--quality-pass all` audits all non-deterministic relation edges, and `--quality-pass none` disables the critic pass. Resume keys include source hashes, prompt version, model, batch size, and raw batch validity, so reruns reuse valid `raw_batches/` unless `--force-reextract` is set. Outputs are written under ignored `runs/`:
+
+To build a unified dictionary from the base files plus the 2021 supplement, use repeatable source sets. Source-set mode namespaces entry ids as `base:B-0001` and `supp2021:B-0001`, preventing collisions while preserving the original local id in source metadata:
+
+```bash
+uv run --frozen python scripts/build_dictionary_graph.py \
+  --provider mimo \
+  --model mimo-v2.5-pro \
+  --source-set "base=data/semi_private/File Từ điển PB_2021|A,B,C,D,Đ,F,G,H,K,L,M,N,O,P,Q,R,S,T,U,V,X,Y" \
+  --source-set "supp2021=data/semi_private/File Từ điển PB_2021/01. Mục từ Bổ sung 2021|B,C,H,K,L,M,N,O,P,R,S,T,V,Đ" \
+  --run-name pb_dictionary_base_supp2021_prod_graph \
+  --batch-size 6 \
+  --quality-pass weak \
+  --max-completion-tokens 8192 \
+  --repair-max-completion-tokens 4096 \
+  --micro-max-completion-tokens 1600
+```
 
 - `entries.jsonl`: extracted DOCX entries with stable ids, `plain_text`, `raw_docx_text`, and rich DOCX blocks when available.
 - `rich_entries.jsonl`: high-fidelity entry export for chat rendering; each run preserves casing, Vietnamese diacritics, bold, italic, underline, strike, subscript/superscript, color, and highlight metadata.
 - `raw_batches/batch_*.json`: provider responses and token metadata for resume/debug.
-- `nodes.jsonl` and `edges.jsonl`: graph artifacts for downstream retrieval experiments.
+- `nodes.jsonl` and `edges.jsonl`: validated graph artifacts for downstream retrieval experiments; node types are `entry`, `concept`, `alias`, `category`, and relation types are fixed by the ontology.
+- `dictionary_graph.sqlite`: runtime/audit store using only Python stdlib SQLite with `entries`, `nodes`, `edges`, `aliases`, `build_batches`, and `validation_errors`.
+- `validation_errors.jsonl`: schema/provenance/orphan-edge errors rejected from the main graph.
+- `graph_quality_report.md`: entry coverage, rich entry coverage, edge coverage, orphan node rate, duplicate concept candidates, invalid edge count, missing evidence count, and confidence distribution.
 - `graph.graphml`: Gephi/Cytoscape-friendly graph export.
-- `graph_visualization.html`: standalone local graph browser.
+- `graph_visualization.html`: standalone local graph browser with filters for category, relation, and minimum confidence plus node evidence details for audit.
 - `manifest.json`: schema version, source hashes, model/provider config, token totals, repair/fallback counts, rich entry count, and partial/failure status.
 
 Long graph builds print plain progress lines to stderr, for example `batch 17/53`, `entries 136/418`, percent complete, elapsed time, and ETA. JSON event lines remain on stdout for debugging or automation. Use `--no-progress` to suppress the human-readable progress output.

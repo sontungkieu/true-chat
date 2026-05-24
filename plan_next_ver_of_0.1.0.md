@@ -269,7 +269,7 @@ Status: implemented in the current working tree; pending final commit.
    - Support provider-backed generation with MiMo OpenAI-compatible API or Groq round-robin keys.
    - Keep raw LLM batch responses under `raw_batches/` for resume and audit.
    - Validate JSON outputs, retry malformed batches with a shorter repair prompt, micro-repair missing entries one-by-one, and mark local fallback entries explicitly.
-   - Export `nodes.jsonl`, `edges.jsonl`, `manifest.json`, `graph_summary.md`, `graph.graphml`, and a standalone `graph_visualization.html`.
+   - Export validated `nodes.jsonl`, `edges.jsonl`, `manifest.json`, `graph_summary.md`, `graph_quality_report.md`, `dictionary_graph.sqlite`, `graph.graphml`, and a standalone `graph_visualization.html`.
    - Print human-readable progress lines with batch count, entry count, percent, elapsed time, and ETA while keeping JSON event logs on stdout.
    - Preserve the existing Groq ABC graph run and create a separate MiMo ABCD graph run.
 
@@ -279,6 +279,18 @@ Status: implemented in the current working tree; pending final commit.
    - Load dictionary artifacts from `runs/pb_dictionary_abcd_mimo_graph` with DOCX fallback from `data/semi_private/File Từ điển PB_2021`.
    - Add `Dictionary` / `Từ điển` UI mode that retrieves dictionary entries, shows the original entry first, and asks the selected model for an explanation.
    - Render rich dictionary source blocks in the document panel without affecting retrieval text normalization.
+
+36. Productionize dictionary knowledge graph artifacts
+   - Status: in progress.
+   - Add `schemas/dictionary_ontology.json` with fixed node types, edge types, categories, confidence range, and required provenance fields.
+   - Add typed Pydantic graph models for nodes, edges, extraction payloads, and manifests.
+   - Validate graph artifacts before export; main `nodes.jsonl` and `edges.jsonl` contain only records that pass schema/provenance checks.
+   - Add deterministic alias/category edges and entity resolution for accent/case concept variants.
+   - Add `--source-set NAME=PATH|LETTERS` for multi-source builds with namespaced ids such as `base:B-0001` and `supp2021:B-0001`.
+   - Add `--force-reextract`, `--validate-only`, `--export-only`, `--quality-pass none|weak|all`, `--ontology-path`, and `--sqlite-path` to the graph builder.
+   - Add `scripts/validate_dictionary_graph.py` for offline validation, threshold checks, quality report regeneration, and SQLite re-export.
+   - Use stdlib SQLite as the v1 runtime/audit store; keep Neo4j deferred until graph query/UI needs justify a service.
+   - Improve standalone graph visualization with category, relation, and confidence filters plus evidence/provenance details.
 
 ## Verification
 
@@ -304,6 +316,8 @@ Status: implemented in the current working tree; pending final commit.
 - Confirm Kaggle startup logs show `uv environment synced`; if `/health` still times out, read the emitted `/kaggle/working/rag-proxy.log` tail.
 - Confirm SciFact can load from the Hugging Face fallback when `ir_datasets`/BEIR direct download fails.
 - Reproduce a dictionary graph build with `uv run --frozen python scripts/build_dictionary_graph.py --provider mimo --model mimo-v2.5-pro --letters A,B,C,D --batch-size 8 --max-completion-tokens 8192`.
+- Reproduce a unified base plus 2021 supplement graph with two `--source-set` values and confirm ids are namespaced.
+- Validate a production dictionary graph run with `uv run --frozen python scripts/validate_dictionary_graph.py --run-dir runs/pb_dictionary_abcdf_prod_graph --min-entry-coverage 0.98 --max-invalid-edge-rate 0.03`.
 
 ## Benchmark Snapshot
 
