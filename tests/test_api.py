@@ -31,6 +31,7 @@ class FakeService:
         self.seen_response_mode = None
         self.seen_image_rewrite = None
         self.seen_language = None
+        self.seen_memory = None
 
     def answer(
         self,
@@ -45,6 +46,7 @@ class FakeService:
         response_mode=None,
         image_rewrite=None,
         language=None,
+        memory=None,
     ):
         self.seen_messages = messages
         self.seen_model = request_model
@@ -56,6 +58,7 @@ class FakeService:
         self.seen_response_mode = response_mode
         self.seen_image_rewrite = image_rewrite
         self.seen_language = language
+        self.seen_memory = memory
         response = {
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -206,6 +209,9 @@ def test_chat_page() -> None:
     assert "Tiếng Việt" in response.text
     assert "devMode" in response.text
     assert "settings.devMode" in response.text
+    assert "memoryMode" in response.text
+    assert "settings.memory" in response.text
+    assert "memory: requestOptions.memory" in response.text
     assert "Đang sửa câu hỏi" in response.text
     assert "message-footer" in response.text
     assert "think-details" in response.text
@@ -258,6 +264,7 @@ def test_chat_completion_non_stream() -> None:
             "response_mode": "text_image",
             "image_rewrite": True,
             "language": "vi",
+            "memory": False,
         },
     )
 
@@ -276,6 +283,7 @@ def test_chat_completion_non_stream() -> None:
     assert service.seen_response_mode == "text_image"
     assert service.seen_image_rewrite is True
     assert service.seen_language == "vi"
+    assert service.seen_memory is False
 
 
 def test_chat_completion_accepts_qwen_model_choice() -> None:

@@ -148,10 +148,13 @@ class RagChatService:
         response_mode: str | None = None,
         image_rewrite: bool | None = None,
         language: str | None = None,
+        memory: bool | None = None,
     ) -> ChatServiceResult:
         response_model, generation_model = self.resolve_request_model(request_model)
         question = last_user_text(messages)
         response_language = _normalize_response_language(language)
+        use_memory = True if memory is None else bool(memory)
+        history_messages = self.config.history_messages if use_memory else 0
         command = parse_chat_command(question)
         mode = _normalize_response_mode(response_mode)
         if command and command[0] == "img":
@@ -185,6 +188,7 @@ class RagChatService:
                 "image_query": image_query,
                 "image_top_k": request_image_top_k,
                 "language": response_language,
+                "memory": use_memory,
                 **rewrite_metadata,
             }
             response = self._build_response(
@@ -217,6 +221,7 @@ class RagChatService:
                 "raw_query": last_user_text(messages),
                 "dictionary_status": self.dictionary_status,
                 "language": response_language,
+                "memory": use_memory,
             }
             if retrieval.hits:
                 prompt_messages = build_dictionary_rag_messages(
@@ -224,7 +229,7 @@ class RagChatService:
                     retrieval.hits,
                     query=question,
                     max_context_chars=self.config.max_context_chars,
-                    history_messages=self.config.history_messages,
+                    history_messages=history_messages,
                     language=response_language,
                 )
                 generation = self.llm.generate(
@@ -283,7 +288,7 @@ class RagChatService:
             messages,
             retrieval.hits,
             max_context_chars=self.config.max_context_chars,
-            history_messages=self.config.history_messages,
+            history_messages=history_messages,
             language=response_language,
         )
         generation = self.llm.generate(
@@ -316,12 +321,14 @@ class RagChatService:
                     "image_query": image_query,
                     "image_retrieval_metadata": image_retrieval.metadata,
                     "language": response_language,
+                    "memory": use_memory,
                     **image_query_metadata,
                 }
             )
         else:
             retrieval_metadata.setdefault("response_mode", "text")
         retrieval_metadata.setdefault("language", response_language)
+        retrieval_metadata.setdefault("memory", use_memory)
 
         response = self._build_response(
             answer=generation.answer,

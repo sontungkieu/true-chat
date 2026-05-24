@@ -2021,6 +2021,11 @@
             <input id="devMode" type="checkbox">
             <span class="toggle-track" aria-hidden="true"></span>
           </label>
+          <label class="toggle-field" for="memoryMode">
+            <span data-i18n="memoryMode">Memory</span>
+            <input id="memoryMode" type="checkbox">
+            <span class="toggle-track" aria-hidden="true"></span>
+          </label>
           <div class="field">
             <label for="themeMode" data-i18n="theme">Theme</label>
             <select id="themeMode">
@@ -2165,6 +2170,7 @@
     const imageTopKInput = document.getElementById("imageTopK");
     const languageModeInput = document.getElementById("languageMode");
     const devModeInput = document.getElementById("devMode");
+    const memoryModeInput = document.getElementById("memoryMode");
     const themeModeInput = document.getElementById("themeMode");
     const fontScaleInput = document.getElementById("fontScale");
     const fontScaleValue = document.getElementById("fontScaleValue");
@@ -2205,6 +2211,8 @@
         imageTopK: "Images",
         language: "Language",
         devMode: "Dev mode",
+        memoryMode: "Memory",
+        memoryOff: "No memory",
         theme: "Theme",
         fontSize: "Font size",
         maxTokens: "Max tokens",
@@ -2258,6 +2266,8 @@
         imageTopK: "Số ảnh",
         language: "Ngôn ngữ",
         devMode: "Chế độ dev",
+        memoryMode: "Ghi nhớ hội thoại",
+        memoryOff: "Không nhớ",
         theme: "Giao diện",
         fontSize: "Cỡ chữ",
         maxTokens: "Token tối đa",
@@ -2353,6 +2363,7 @@
       imageTopKInput,
       languageModeInput,
       devModeInput,
+      memoryModeInput,
       themeModeInput,
       fontScaleInput,
       maxTokensInput,
@@ -2429,6 +2440,7 @@
           imageTopK: Number(parsed.imageTopK || 5),
           language: ["en", "vi"].includes(parsed.language) ? parsed.language : "en",
           devMode: Boolean(parsed.devMode),
+          memory: parsed.memory === undefined ? true : Boolean(parsed.memory),
           responseMode: normalizeResponseMode(parsed.responseMode || (parsed.imageMode ? "image" : "text")),
           imageRewrite: Boolean(parsed.imageRewrite),
           theme: ["light", "colorful", "system"].includes(parsed.theme) ? parsed.theme : "light",
@@ -2444,6 +2456,7 @@
           imageTopK: 5,
           language: "en",
           devMode: false,
+          memory: true,
           responseMode: "text",
           imageRewrite: false,
           theme: "light",
@@ -2461,6 +2474,8 @@
       document.documentElement.lang = settings.language;
       settings.devMode = Boolean(settings.devMode);
       devModeInput.checked = settings.devMode;
+      settings.memory = settings.memory === undefined ? true : Boolean(settings.memory);
+      memoryModeInput.checked = settings.memory;
       settings.responseMode = normalizeResponseMode(settings.responseMode);
       settings.imageRewrite = Boolean(settings.imageRewrite);
       settings.model = normalizeModelChoice(settings.model);
@@ -2486,10 +2501,12 @@
     function saveSettingsFromInputs() {
       const previousLanguage = settings.language;
       const previousDevMode = settings.devMode;
+      const previousMemory = settings.memory;
       settings.apiKey = apiKeyInput.value.trim();
       settings.language = normalizeLanguage(languageModeInput.value);
       document.documentElement.lang = settings.language;
       settings.devMode = Boolean(devModeInput.checked);
+      settings.memory = Boolean(memoryModeInput.checked);
       settings.responseMode = normalizeResponseMode(settings.responseMode);
       settings.imageRewrite = Boolean(settings.imageRewrite);
       settings.model = normalizeModelChoice(modelChoiceInput.value);
@@ -2510,7 +2527,13 @@
       updateModelLabels();
       updateComposerTools();
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-      if (settings.language !== previousLanguage || settings.devMode !== previousDevMode) render();
+      if (
+        settings.language !== previousLanguage ||
+        settings.devMode !== previousDevMode ||
+        settings.memory !== previousMemory
+      ) {
+        render();
+      }
     }
 
     function normalizedModelChoices() {
@@ -2749,7 +2772,8 @@
         image_top_k: usesImageResults ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined,
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
-        language: currentLanguage()
+        language: currentLanguage(),
+        memory: settings.memory !== false
       };
     }
 
@@ -3188,6 +3212,7 @@
         parts.push(shortModelLabel(normalizeModelChoice(request.model || selectedModel())));
       }
       if (request.language) parts.push(languageLabel(request.language));
+      if (request.memory === false) parts.push(t("memoryOff"));
       if ((mode === "image" || mode === "text_image") && request.image_rewrite) parts.push(t("rewrite"));
       return parts.filter(Boolean).join(" | ");
     }
@@ -3900,6 +3925,7 @@
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
           language: requestOptions.language,
+          memory: requestOptions.memory,
           stream: true
         })
       });
@@ -3932,6 +3958,7 @@
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
           language: requestOptions.language,
+          memory: requestOptions.memory,
           stream: false
         })
       });

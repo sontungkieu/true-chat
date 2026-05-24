@@ -274,6 +274,38 @@ def test_rag_chat_service_answers_with_retrieved_context_and_history() -> None:
     assert "What do cats do?" in user_prompt
 
 
+def test_rag_chat_service_can_disable_memory_history() -> None:
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[Document("cat-doc", "Cats purr and chase toys.", "Cats")],
+            qrels={},
+        ),
+        retriever=FakeRetriever(),
+        llm=llm,
+    )
+
+    result = service.answer(
+        [
+            {"role": "user", "content": "Previous question"},
+            {"role": "assistant", "content": "Previous answer"},
+            {"role": "user", "content": "What do cats do?"},
+        ],
+        memory=False,
+    )
+
+    user_prompt = llm.messages[1]["content"]
+    assert result.response["rag"]["retrieval_metadata"]["memory"] is False
+    assert "No prior conversation." in user_prompt
+    assert "Previous question" not in user_prompt
+    assert "Previous answer" not in user_prompt
+    assert "What do cats do?" in user_prompt
+
+
 def test_rag_chat_service_forces_selected_response_language() -> None:
     llm = FakeLLM()
     service = RagChatService(

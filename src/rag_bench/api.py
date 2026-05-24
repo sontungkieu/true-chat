@@ -91,6 +91,10 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                 language=_optional_language(
                     payload.get("language", payload.get("response_language", payload.get("locale"))),
                 ),
+                memory=_optional_bool(
+                    payload.get("memory", payload.get("use_memory", payload.get("chat_memory"))),
+                    "memory",
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
