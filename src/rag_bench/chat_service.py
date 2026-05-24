@@ -394,15 +394,7 @@ class RagChatService:
                 "retrieval_latency_s": retrieval_latency_s,
                 "retrieval_metadata": retrieval_metadata or {},
                 "retrieved": [
-                    {
-                        "doc_id": hit.doc_id,
-                        "rank": hit.rank,
-                        "score": hit.score,
-                        "title": hit.title,
-                        "text": hit.text,
-                        "metadata": hit.metadata,
-                        **_flatten_hit_metadata(hit.metadata),
-                    }
+                    _hit_source_payload(hit)
                     for hit in _filter_retrieved_for_display(hits, answer)
                 ],
                 "key_alias": generation.key_alias,
@@ -414,6 +406,25 @@ class RagChatService:
                 "rate_limited": generation.rate_limited,
                 "key_rate_limits": self.llm.rate_limit_snapshot(),
             },
+        }
+
+    def lookup_dictionary(self, term: str, *, top_k: int | None = None) -> dict[str, Any]:
+        query = str(term or "").strip()
+        if not query:
+            raise ValueError("term must not be empty")
+        retriever = self.resolve_request_retriever("dictionary-graph")
+        request_top_k = _clamp_top_k(top_k, fallback=1)
+        retrieval = retriever.search(Query(query_id="dictionary-lookup", text=query), request_top_k)
+        hits = [hit for hit in retrieval.hits if hit.score > 0]
+        return {
+            "object": "dictionary.lookup",
+            "query": query,
+            "retriever": retriever.name,
+            "top_k": request_top_k,
+            "retrieval_latency_s": retrieval.latency_s,
+            "retrieval_metadata": retrieval.metadata,
+            "dictionary": self.dictionary_status,
+            "retrieved": [_hit_source_payload(hit) for hit in hits],
         }
 
     def available_model_ids(self) -> tuple[str, ...]:
@@ -1036,6 +1047,18 @@ def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "query_highlights",
     }
     return {key: value for key, value in metadata.items() if key in allowed_keys}
+
+
+def _hit_source_payload(hit: RetrievalHit) -> dict[str, Any]:
+    return {
+        "doc_id": hit.doc_id,
+        "rank": hit.rank,
+        "score": hit.score,
+        "title": hit.title,
+        "text": hit.text,
+        "metadata": hit.metadata,
+        **_flatten_hit_metadata(hit.metadata),
+    }
 
 
 def _format_history(messages: list[dict[str, Any]], *, history_messages: int) -> str:

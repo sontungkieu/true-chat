@@ -108,6 +108,20 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
             )
         return result.response
 
+    @app.post("/v1/dictionary/lookup", dependencies=[Depends(_require_bearer)])
+    def dictionary_lookup(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+        active_service: RagChatService = request.app.state.service
+        term = payload.get("term", payload.get("query"))
+        if not isinstance(term, str):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="term must be a string")
+        try:
+            return active_service.lookup_dictionary(
+                term,
+                top_k=_optional_int(payload.get("top_k"), "top_k"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
     return app
 
 

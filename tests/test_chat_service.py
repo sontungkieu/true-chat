@@ -615,6 +615,13 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     assert result.response["rag"]["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
     assert result.response["choices"][0]["message"]["content"].startswith("Mục từ gốc [A-0001]:")
 
+    lookup = service.lookup_dictionary("ĐKZ", top_k=3)
+
+    assert dictionary_retriever.seen_query == "ĐKZ"
+    assert lookup["object"] == "dictionary.lookup"
+    assert lookup["retriever"] == "dictionary-graph"
+    assert lookup["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
+
 
 def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_remain() -> None:
     class LowScoreRetriever(FakeRetriever):

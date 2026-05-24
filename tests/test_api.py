@@ -106,6 +106,26 @@ class FakeService:
     def available_retriever_ids(self) -> tuple[str, ...]:
         return ("bm25", "tfidf")
 
+    def lookup_dictionary(self, term, *, top_k=None):
+        return {
+            "object": "dictionary.lookup",
+            "query": term,
+            "retriever": "dictionary-graph",
+            "top_k": top_k or 1,
+            "retrieved": [
+                {
+                    "doc_id": "base:D-0001",
+                    "rank": 1,
+                    "score": 1.0,
+                    "title": "ĐKZ",
+                    "text": "ĐKZ entry",
+                    "metadata": {"kind": "dictionary", "query_highlights": [term]},
+                    "kind": "dictionary",
+                    "query_highlights": [term],
+                }
+            ],
+        }
+
 
 def test_health_and_models() -> None:
     service = FakeService()
@@ -182,6 +202,16 @@ def test_chat_page() -> None:
     assert "renderDictionaryAnswer" in response.text
     assert "dictionary-inline" in response.text
     assert "dictionary-inline-list" in response.text
+    assert "dictionary-relevance \" + relevance" in response.text
+    assert "dictionaryRelevance" in response.text
+    assert "Khớp" in response.text
+    assert "Liên quan" in response.text
+    assert "dictionaryCrossRef" in response.text
+    assert "/v1/dictionary/lookup" in response.text
+    assert "openDictionaryCrossReference" in response.text
+    assert "clickedDictionaryTerm" in response.text
+    assert "xref-term" in response.text
+    assert "dictionaryCrossRefHint" in response.text
     assert "query-highlight" in response.text
     assert "sourceHighlightTerms" in response.text
     assert "isHighlightBoundary" in response.text
@@ -189,6 +219,8 @@ def test_chat_page() -> None:
     assert "Từ điển PB 2021" in response.text
     assert "Bổ sung 2021" in response.text
     assert "dictionaryInlineSources" in response.text
+    assert "isDictionaryDisplaySource" in response.text
+    assert "dictionaryDisplayText" in response.text
     assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
     assert "dictionaryAnswerParts" in response.text
     assert "positionComposerToolMenu" in response.text
@@ -222,11 +254,23 @@ def test_chat_page() -> None:
     assert "compactSourceForStorage" in response.text
     assert "shouldRenderStreamingDelta" in response.text
     assert "updatePendingAssistant(content, rag)" in response.text
+    assert "exportChatHistory" in response.text
+    assert "importChatHistory" in response.text
+    assert "normalizeImportedHistory" in response.text
+    assert "settingsForExport" in response.text
+    assert "delete exported.apiKey" in response.text
+    assert "editAssistantFeedback" in response.text
+    assert "feedback-note" in response.text
+    assert "feedbackPrompt" in response.text
     assert "Đang sửa câu hỏi" in response.text
     assert "message-footer" in response.text
     assert "think-details" in response.text
     assert "splitThinkContent" in response.text
     assert "renderTextWithCitations" in response.text
+    assert "sourceLookupKeys" in response.text
+    assert "sourceInfo.source_entry_id" in response.text
+    assert 'text.split(":").pop().trim()' in response.text
+    assert "isDictionaryHeaderCitation" in response.text
     assert "renderMarkdownBlocks" in response.text
     assert "markdown-content" in response.text
     assert "citation-ref" in response.text
@@ -355,8 +399,47 @@ def test_chat_completion_rejects_malformed_messages() -> None:
     assert response.json()["detail"] == "messages[0] must be an object"
 
 
+def test_dictionary_lookup_endpoint() -> None:
+    client = TestClient(create_app(FakeService()))
+
+    response = client.post("/v1/dictionary/lookup", json={"term": "ĐKZ", "top_k": 1})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["object"] == "dictionary.lookup"
+    assert data["query"] == "ĐKZ"
+    assert data["retrieved"][0]["title"] == "ĐKZ"
+
+
+def test_dictionary_lookup_rejects_bad_term() -> None:
+    client = TestClient(create_app(FakeService()))
+
+    response = client.post("/v1/dictionary/lookup", json={"term": 123})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "term must be a string"
+
+
 def test_optional_auth() -> None:
     client = TestClient(create_app(FakeService(), api_key="secret"))
 
     assert client.get("/v1/models").status_code == 401
     assert client.get("/v1/models", headers={"Authorization": "Bearer secret"}).status_code == 200
+    assert client.post("/v1/dictionary/lookup", json={"term": "ĐKZ"}).status_code == 401
+    assert (
+        client.post(
+            "/v1/dictionary/lookup",
+            headers={"Authorization": "Bearer secret"},
+            json={"term": "ĐKZ"},
+        ).status_code
+        == 200
+    )
+    assert client.post("/v1/dictionary/lookup", json={"term": "ĐKZ"}).status_code == 401
+    assert (
+        client.post(
+            "/v1/dictionary/lookup",
+            headers={"Authorization": "Bearer secret"},
+            json={"term": "ĐKZ"},
+        ).status_code
+        == 200
+    )
