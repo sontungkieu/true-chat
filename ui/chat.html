@@ -480,6 +480,29 @@
       gap: 7px;
     }
 
+    .settings-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+
+    .settings-action {
+      min-height: 34px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.74);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 560;
+      padding: 7px 10px;
+      transition: background 0.13s ease, border-color 0.13s ease;
+    }
+
+    .settings-action:hover {
+      background: var(--surface-soft);
+      border-color: var(--border-strong);
+    }
+
     .field-label-row {
       display: flex;
       align-items: center;
@@ -500,6 +523,21 @@
       background: transparent;
       padding: 0 8px;
       accent-color: var(--accent);
+    }
+
+    .feedback-note {
+      max-width: min(780px, 100%);
+      color: var(--muted-strong);
+      font-size: 12px;
+      line-height: 1.45;
+      padding: 0 2px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .feedback-note strong {
+      color: var(--text);
+      font-weight: 650;
     }
 
     .toggle-field {
@@ -2063,6 +2101,11 @@
               <input id="temperature" type="number" min="0" max="2" step="0.1" value="0">
             </div>
           </div>
+          <div class="settings-actions">
+            <button class="settings-action" id="exportChats" type="button" data-i18n="exportChats">Export chats</button>
+            <button class="settings-action" id="importChats" type="button" data-i18n="importChats">Import chats</button>
+          </div>
+          <input id="importChatsFile" type="file" accept="application/json,.json" hidden>
         </div>
       </details>
     </aside>
@@ -2188,6 +2231,9 @@
     const fontScaleValue = document.getElementById("fontScaleValue");
     const maxTokensInput = document.getElementById("maxTokens");
     const temperatureInput = document.getElementById("temperature");
+    const exportChatsButton = document.getElementById("exportChats");
+    const importChatsButton = document.getElementById("importChats");
+    const importChatsFileInput = document.getElementById("importChatsFile");
     const docTitle = document.getElementById("docTitle");
     const docSubtitle = document.getElementById("docSubtitle");
     const docMeta = document.getElementById("docMeta");
@@ -2206,6 +2252,7 @@
     const ICONS = {
       copy: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
       edit: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>',
+      feedback: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path><path d="M8 9h8"></path><path d="M8 13h5"></path></svg>',
       retry: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>',
       send: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path></svg>',
       stop: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg>',
@@ -2229,6 +2276,10 @@
         fontSize: "Font size",
         maxTokens: "Max tokens",
         temperature: "Temp",
+        exportChats: "Export chats",
+        importChats: "Import chats",
+        importChatsDone: "Imported chat history.",
+        importChatsInvalid: "Could not import this chat history file.",
         optional: "Optional",
         sendMessage: "Send a message",
         proxyReady: "Proxy ready",
@@ -2244,6 +2295,9 @@
         assistant: "Assistant",
         copy: "Copy",
         edit: "Edit",
+        feedback: "Feedback",
+        feedbackPrompt: "Add feedback note for this answer",
+        feedbackLabel: "Feedback",
         rewrite: "Rewrite",
         rename: "Rename",
         renameChat: "Rename chat",
@@ -2284,6 +2338,10 @@
         fontSize: "Cỡ chữ",
         maxTokens: "Token tối đa",
         temperature: "Nhiệt độ",
+        exportChats: "Xuất lịch sử",
+        importChats: "Nhập lịch sử",
+        importChatsDone: "Đã nhập lịch sử chat.",
+        importChatsInvalid: "Không thể nhập file lịch sử chat này.",
         optional: "Không bắt buộc",
         sendMessage: "Nhập tin nhắn",
         proxyReady: "Proxy sẵn sàng",
@@ -2299,6 +2357,9 @@
         assistant: "Trợ lý",
         copy: "Sao chép",
         edit: "Sửa",
+        feedback: "Ghi chú",
+        feedbackPrompt: "Thêm ghi chú đánh giá cho câu trả lời này",
+        feedbackLabel: "Ghi chú",
         rewrite: "Viết lại",
         rename: "Đổi tên",
         renameChat: "Đổi tên đoạn chat",
@@ -2343,6 +2404,9 @@
       render();
       promptInput.focus();
     });
+    exportChatsButton.addEventListener("click", exportChatHistory);
+    importChatsButton.addEventListener("click", () => importChatsFileInput.click());
+    importChatsFileInput.addEventListener("change", importChatHistory);
     document.getElementById("openSidebar").addEventListener("click", toggleSidebar);
     document.getElementById("closeSidebar").addEventListener("click", closeSidebar);
     document.getElementById("sidebarBackdrop").addEventListener("click", closeSidebar);
@@ -2927,6 +2991,114 @@
       return compact;
     }
 
+    function exportChatHistory() {
+      const payload = {
+        type: "rag-chat-history",
+        schema_version: 1,
+        exported_at: new Date().toISOString(),
+        app: {
+          model_id: MODEL_ID,
+          available_models: MODEL_CHOICES,
+          available_retrievers: RETRIEVER_CHOICES,
+          storage_key: STORAGE_KEY
+        },
+        settings: settingsForExport(),
+        state: JSON.parse(JSON.stringify(state))
+      };
+      downloadJson(payload, "true-chat-history-" + timestampForFilename() + ".json");
+    }
+
+    function settingsForExport() {
+      const exported = { ...settings };
+      delete exported.apiKey;
+      return exported;
+    }
+
+    function downloadJson(payload, filename) {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function timestampForFilename() {
+      return new Date().toISOString().replace(/[:.]/g, "-");
+    }
+
+    async function importChatHistory(event) {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) return;
+      try {
+        const imported = normalizeImportedHistory(JSON.parse(await file.text()));
+        mergeImportedHistory(imported);
+        saveState();
+        closeDocPanel();
+        clearEditMode();
+        render();
+        showNotice(t("importChatsDone"));
+      } catch (error) {
+        console.warn("Could not import chat history.", error);
+        showNotice(t("importChatsInvalid"));
+      }
+    }
+
+    function normalizeImportedHistory(payload) {
+      const importedState = payload?.state && typeof payload.state === "object" ? payload.state : payload;
+      const conversations = Array.isArray(importedState?.conversations) ? importedState.conversations : [];
+      const normalized = conversations.map(normalizeImportedConversation).filter(Boolean);
+      if (!normalized.length) throw new Error("No conversations in import file.");
+      const activeId = normalized.some((conversation) => conversation.id === importedState.activeId)
+        ? importedState.activeId
+        : normalized[0].id;
+      return { conversations: normalized, activeId };
+    }
+
+    function normalizeImportedConversation(conversation) {
+      if (!conversation || typeof conversation !== "object") return null;
+      const messages = Array.isArray(conversation.messages)
+        ? conversation.messages.map(normalizeImportedMessage).filter(Boolean)
+        : [];
+      return {
+        id: String(conversation.id || ("import-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8))),
+        title: String(conversation.title || "").slice(0, 120),
+        createdAt: Number(conversation.createdAt) || Date.now(),
+        updatedAt: Number(conversation.updatedAt) || Date.now(),
+        messages
+      };
+    }
+
+    function normalizeImportedMessage(message) {
+      if (!message || typeof message !== "object") return null;
+      const role = message.role === "assistant" ? "assistant" : message.role === "user" ? "user" : null;
+      if (!role) return null;
+      const normalized = {
+        ...message,
+        role,
+        content: String(message.content || ""),
+        pending: false
+      };
+      if (Array.isArray(message.sources)) normalized.sources = message.sources;
+      if (message.request && typeof message.request === "object") normalized.request = message.request;
+      if (message.meta && typeof message.meta === "object") normalized.meta = message.meta;
+      if (message.feedback && typeof message.feedback === "object") normalized.feedback = message.feedback;
+      return normalized;
+    }
+
+    function mergeImportedHistory(imported) {
+      const importedIds = new Set(imported.conversations.map((conversation) => conversation.id));
+      state.conversations = [
+        ...imported.conversations,
+        ...state.conversations.filter((conversation) => !importedIds.has(conversation.id))
+      ].sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+      state.activeId = imported.activeId;
+    }
+
     function ensureConversation() {
       if (!state.conversations.length) {
         createConversation();
@@ -3234,10 +3406,14 @@
         actions.appendChild(actionButton("edit", () => editUserMessage(index)));
       }
       if (message.role === "assistant") {
+        actions.appendChild(actionButton("feedback", () => editAssistantFeedback(index)));
         actions.appendChild(actionButton("retry", () => retryFrom(index)));
       }
       footer.appendChild(actions);
       body.appendChild(footer);
+      if (message.role === "assistant" && message.feedback?.note) {
+        body.appendChild(renderFeedbackNote(message.feedback));
+      }
 
       if (documentSources.length) {
         body.appendChild(renderRagDetails(documentSources, ragDetailsKey(index)));
@@ -3245,6 +3421,15 @@
 
       turn.append(avatar, body);
       return turn;
+    }
+
+    function renderFeedbackNote(feedback) {
+      const note = document.createElement("div");
+      note.className = "feedback-note";
+      const label = document.createElement("strong");
+      label.textContent = t("feedbackLabel") + ": ";
+      note.append(label, document.createTextNode(String(feedback?.note || "")));
+      return note;
     }
 
     function renderUserRequestMeta(request) {
@@ -3358,10 +3543,34 @@
     function sourceLookup(sources) {
       const lookup = new Map();
       for (const source of sources || []) {
-        if (source.doc_id) lookup.set(String(source.doc_id), source);
-        if (source.rank !== undefined && source.rank !== null) lookup.set(String(source.rank), source);
+        for (const key of sourceLookupKeys(source)) {
+          if (!lookup.has(key)) lookup.set(key, source);
+        }
       }
       return lookup;
+    }
+
+    function sourceLookupKeys(source) {
+      const keys = [];
+      const add = (value) => {
+        const text = String(value || "").trim();
+        if (!text) return;
+        keys.push(text);
+        if (text.includes(":")) {
+          const suffix = text.split(":").pop().trim();
+          if (suffix) keys.push(suffix);
+        }
+      };
+      const sourceInfo = dictionarySourceInfo(source);
+      add(source?.doc_id);
+      add(source?.rank);
+      add(source?.source_entry_id);
+      add(source?.metadata?.source_entry_id);
+      add(sourceInfo.source_entry_id);
+      if (sourceInfo.source_set && sourceInfo.source_entry_id) {
+        add(String(sourceInfo.source_set) + ":" + String(sourceInfo.source_entry_id));
+      }
+      return Array.from(new Set(keys));
     }
 
     function renderMarkdownBlocks(container, text, sourceByDocId) {
@@ -3427,6 +3636,7 @@
       while ((match = sourcePattern.exec(text)) !== null) {
         const source = sourceByDocId.get(match[1].trim());
         if (!source) continue;
+        if (isDictionaryHeaderCitation(text, match.index, match.index + match[0].length)) continue;
         if (match.index > cursor) {
           appendMarkdownInline(container, text.slice(cursor, match.index), Boolean(options.markdown));
         }
@@ -3436,6 +3646,16 @@
       if (cursor < text.length) {
         appendMarkdownInline(container, text.slice(cursor), Boolean(options.markdown));
       }
+    }
+
+    function isDictionaryHeaderCitation(text, start, end) {
+      const source = String(text || "");
+      const lineStart = source.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+      const nextLine = source.indexOf("\n", end);
+      const lineEnd = nextLine === -1 ? source.length : nextLine;
+      const before = source.slice(lineStart, start).trim();
+      const after = source.slice(end, lineEnd).trim();
+      return /^(Mục từ gốc|Original entry)$/i.test(before) && after.startsWith(":");
     }
 
     function appendMarkdownInline(container, text, markdown) {
@@ -3518,13 +3738,18 @@
       head.append(title, open);
       const body = document.createElement("div");
       body.className = "dictionary-inline-body";
-      renderRichBlocks(body, richBlocks(source), sourceHighlightTerms(source));
+      const blocks = richBlocks(source);
+      if (blocks.length) {
+        renderRichBlocks(body, blocks, sourceHighlightTerms(source));
+      } else {
+        appendHighlightedText(body, dictionaryDisplayText(source) || t("noDocumentText"), sourceHighlightTerms(source));
+      }
       card.append(head, body);
       return card;
     }
 
     function dictionaryInlineSources(answer, sources) {
-      const dictionarySources = (sources || []).filter((source) => isDictionarySource(source) && richBlocks(source).length);
+      const dictionarySources = (sources || []).filter(isDictionaryDisplaySource);
       if (!dictionarySources.length) return [];
       const cited = citedSources(answer, dictionarySources);
       const citedKeys = new Set(cited.map(sourceKey));
@@ -3567,6 +3792,20 @@
 
     function isDictionarySource(source) {
       return source?.kind === "dictionary" || source?.metadata?.kind === "dictionary" || richBlocks(source).length > 0;
+    }
+
+    function isDictionaryDisplaySource(source) {
+      return isDictionarySource(source) && (richBlocks(source).length > 0 || Boolean(dictionaryDisplayText(source)));
+    }
+
+    function dictionaryDisplayText(source) {
+      return String(
+        source?.raw_docx_text ||
+        source?.metadata?.raw_docx_text ||
+        source?.text ||
+        source?.metadata?.text ||
+        ""
+      ).trim();
     }
 
     function dictionarySourceLabel(source) {
@@ -4005,6 +4244,28 @@
       closeDocPanel();
       resizePrompt();
       promptInput.focus();
+    }
+
+    function editAssistantFeedback(index) {
+      const conversation = activeConversation();
+      const message = conversation.messages[index];
+      if (!message || message.role !== "assistant") return;
+      const current = String(message.feedback?.note || "");
+      const next = window.prompt(t("feedbackPrompt"), current);
+      if (next === null) return;
+      const note = next.trim();
+      if (!note) {
+        delete message.feedback;
+      } else {
+        message.feedback = {
+          note,
+          createdAt: message.feedback?.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+      }
+      conversation.updatedAt = Date.now();
+      saveState();
+      render();
     }
 
     function clearEditMode() {

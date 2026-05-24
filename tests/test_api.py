@@ -189,6 +189,8 @@ def test_chat_page() -> None:
     assert "Từ điển PB 2021" in response.text
     assert "Bổ sung 2021" in response.text
     assert "dictionaryInlineSources" in response.text
+    assert "isDictionaryDisplaySource" in response.text
+    assert "dictionaryDisplayText" in response.text
     assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
     assert "dictionaryAnswerParts" in response.text
     assert "positionComposerToolMenu" in response.text
@@ -222,11 +224,23 @@ def test_chat_page() -> None:
     assert "compactSourceForStorage" in response.text
     assert "shouldRenderStreamingDelta" in response.text
     assert "updatePendingAssistant(content, rag)" in response.text
+    assert "exportChatHistory" in response.text
+    assert "importChatHistory" in response.text
+    assert "normalizeImportedHistory" in response.text
+    assert "settingsForExport" in response.text
+    assert "delete exported.apiKey" in response.text
+    assert "editAssistantFeedback" in response.text
+    assert "feedback-note" in response.text
+    assert "feedbackPrompt" in response.text
     assert "Đang sửa câu hỏi" in response.text
     assert "message-footer" in response.text
     assert "think-details" in response.text
     assert "splitThinkContent" in response.text
     assert "renderTextWithCitations" in response.text
+    assert "sourceLookupKeys" in response.text
+    assert "sourceInfo.source_entry_id" in response.text
+    assert 'text.split(":").pop().trim()' in response.text
+    assert "isDictionaryHeaderCitation" in response.text
     assert "renderMarkdownBlocks" in response.text
     assert "markdown-content" in response.text
     assert "citation-ref" in response.text
