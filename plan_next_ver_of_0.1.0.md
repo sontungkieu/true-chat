@@ -292,6 +292,7 @@ Status: implemented in the current working tree; pending final commit.
    - Replace the generic dictionary card `Open document` label with source-location labels such as `Từ điển PB 2021 · Bổ sung 2021 · P-0001`.
    - Add dictionary source relevance pills: green `Khớp` / `Match` for direct highlighted matches and yellow `Liên quan` / `Related` for broader related entries.
    - Add a lightweight dictionary cross-reference lookup endpoint and let the side document panel open a clicked highlighted/selected dictionary term in place when the off-by-default local experimental toggle is enabled.
+   - Make dictionary card text, source-panel rich text, and dictionary match/related pills scale with the global UI font-size slider.
    - Expand `semantic_corner_cases.md` with concrete examples and failure modes so the cases can be reused for prompt/eval tuning.
    - Add optional MiMo chat completion routing behind `--enable-mimo`, using `MIMO_API_KEY` from `.secrets/.env` and exposing `mimo-v2.5-pro` / `mimo-v2.5` in the model selector.
    - Send the selected English/Vietnamese UI language with every chat request and force generated answers, dictionary explanations, and local image result messages into that response language.

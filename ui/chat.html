@@ -1275,7 +1275,7 @@
     .dictionary-relevance {
       display: inline-flex;
       align-items: center;
-      min-height: 19px;
+      min-height: calc(19px * var(--font-scale));
       border-radius: 999px;
       padding: 0 7px;
       font-size: 11px;
@@ -1298,7 +1298,7 @@
       display: inline-flex;
       align-items: center;
       flex: 0 0 auto;
-      min-height: 28px;
+      min-height: calc(28px * var(--font-scale));
       border: 1px solid var(--border);
       border-radius: 999px;
       background: var(--surface);
@@ -1985,6 +1985,21 @@
     .content,
     .composer-input {
       font-size: var(--font-15);
+    }
+
+    .dictionary-inline-title strong,
+    .dictionary-inline-body {
+      font-size: var(--font-15);
+    }
+
+    .dictionary-open,
+    .dictionary-explanation-label {
+      font-size: var(--font-12);
+    }
+
+    .dictionary-inline-meta-text,
+    .dictionary-relevance {
+      font-size: var(--font-11);
     }
 
     .welcome h1 {
