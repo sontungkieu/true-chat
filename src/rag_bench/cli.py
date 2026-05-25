@@ -129,7 +129,17 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--max-completion-tokens", type=int, default=128)
     serve_parser.add_argument("--temperature", type=float, default=0.0)
     serve_parser.add_argument("--max-context-chars", type=int, default=2500)
+    serve_parser.add_argument("--disable-web-search", action="store_true", help="Disable built-in web search mode.")
+    serve_parser.add_argument("--web-search-top-k", type=int, default=5, help="Default number of web search results.")
+    serve_parser.add_argument(
+        "--web-search-timeout",
+        type=float,
+        default=8.0,
+        help="Timeout in seconds for the DuckDuckGo web search request.",
+    )
+    serve_parser.add_argument("--enable-image", action="store_true", help="Enable the local /img image demo mode.")
     serve_parser.add_argument("--image-top-k", type=int, default=5, help="Default number of image results for /img.")
+    serve_parser.add_argument("--enable-dictionary", action="store_true", help="Enable local PB dictionary mode.")
     serve_parser.add_argument(
         "--dictionary-artifact",
         type=Path,
@@ -254,6 +264,12 @@ def _serve(args: argparse.Namespace) -> int:
     if args.max_context_chars <= 0:
         print("--max-context-chars must be positive.", file=sys.stderr)
         return 2
+    if args.web_search_top_k <= 0:
+        print("--web-search-top-k must be positive.", file=sys.stderr)
+        return 2
+    if args.web_search_timeout <= 0:
+        print("--web-search-timeout must be positive.", file=sys.stderr)
+        return 2
     if args.image_top_k <= 0:
         print("--image-top-k must be positive.", file=sys.stderr)
         return 2
@@ -321,7 +337,12 @@ def _serve(args: argparse.Namespace) -> int:
         max_completion_tokens=args.max_completion_tokens,
         temperature=args.temperature,
         max_context_chars=args.max_context_chars,
+        web_search_enabled=not args.disable_web_search,
+        web_search_top_k=args.web_search_top_k,
+        web_search_timeout_s=args.web_search_timeout,
+        image_enabled=args.enable_image,
         image_top_k=args.image_top_k,
+        dictionary_enabled=args.enable_dictionary,
         dictionary_artifact=args.dictionary_artifact,
         dictionary_source_dir=args.dictionary_source_dir,
         dictionary_letters=dictionary_letters,

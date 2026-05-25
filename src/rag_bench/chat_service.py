@@ -22,6 +22,7 @@ from rag_bench.retriever_registry import create_retriever, get_retriever_spec, n
 from rag_bench.retrievers import Retriever
 from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
+from rag_bench.web_search import DuckDuckGoLiteSearchClient, WebSearchClient, WebSearchResult
 
 
 DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
@@ -34,9 +35,8 @@ DEFAULT_CHAT_RETRIEVERS = (
     "keyword-match",
     "multi-query",
     "graph-bm25",
-    "dictionary-graph",
-    "image-digits",
 )
+WEB_SEARCH_RETRIEVER_NAME = "web-search"
 
 
 class ChatGenerationClient(Protocol):
@@ -81,7 +81,12 @@ class ChatProxyConfig:
     key_requests_per_minute: int = 30
     rate_limit_scope: str = "per-key"
     history_messages: int = 6
+    web_search_enabled: bool = True
+    web_search_top_k: int = 5
+    web_search_timeout_s: float = 8.0
+    image_enabled: bool = False
     image_top_k: int = 5
+    dictionary_enabled: bool = False
     dictionary_artifact: Path | None = DEFAULT_DICTIONARY_ARTIFACT
     dictionary_source_dir: Path | None = DEFAULT_DICTIONARY_SOURCE_DIR
     dictionary_letters: tuple[str, ...] = DEFAULT_DICTIONARY_LETTERS
@@ -107,10 +112,13 @@ class RagChatService:
     started_at_s: float = field(default_factory=time.time)
     retrievers: dict[str, Retriever] = field(default_factory=dict)
     dictionary_status: dict[str, Any] = field(default_factory=dict)
+    web_search_client: WebSearchClient | None = None
 
     def __post_init__(self) -> None:
         if not self.retrievers:
             self.retrievers = {self.retriever.name: self.retriever}
+        if self.web_search_client is None and self.config.web_search_enabled:
+            self.web_search_client = DuckDuckGoLiteSearchClient(timeout_s=self.config.web_search_timeout_s)
 
     @classmethod
     def from_config(
@@ -123,7 +131,7 @@ class RagChatService:
         keys = load_groq_keys(config.groq_keys_path)
         benchmark = benchmark_loader(config.bench, limit=None, allow_large=config.allow_large_bench)
         llm = llm_factory(keys) if llm_factory is not None else _build_llm(config, keys)
-        dictionary = _load_dictionary(config)
+        dictionary = _load_dictionary(config) if _config_uses_dictionary(config) else _disabled_dictionary_result()
         retrievers = _build_retrievers(config, benchmark, llm=llm, dictionary=dictionary)
         retriever = _default_retriever(config, retrievers)
         return cls(
@@ -133,6 +141,11 @@ class RagChatService:
             llm=llm,
             retrievers=retrievers,
             dictionary_status=dictionary.status,
+            web_search_client=(
+                DuckDuckGoLiteSearchClient(timeout_s=config.web_search_timeout_s)
+                if config.web_search_enabled
+                else None
+            ),
         )
 
     def answer(
@@ -157,14 +170,73 @@ class RagChatService:
         history_messages = self.config.history_messages if use_memory else 0
         command = parse_chat_command(question)
         mode = _normalize_response_mode(response_mode)
-        if command and command[0] == "img":
+        if command and command[0] == "web":
+            mode = "web"
+            question = command[1] or question
+        elif command and command[0] == "img":
             mode = "image"
             question = command[1] or "digit image"
         elif command and command[0] == "dict":
             mode = "dictionary"
             question = command[1] or question
 
+        if mode == "web":
+            if not self.config.web_search_enabled or self.web_search_client is None:
+                raise ValueError("Web search mode is disabled.")
+            request_top_k = _clamp_top_k(top_k, fallback=self.config.web_search_top_k)
+            web_started = time.perf_counter()
+            web_results = self.web_search_client.search(question, limit=request_top_k)
+            web_latency_s = time.perf_counter() - web_started
+            hits = _web_results_to_hits(web_results)
+            prompt_messages = build_web_rag_messages(
+                messages,
+                hits,
+                query=question,
+                max_context_chars=self.config.max_context_chars,
+                history_messages=history_messages,
+                language=response_language,
+            )
+            generation = self.llm.generate(
+                prompt_messages,
+                model=generation_model,
+                temperature=self.config.temperature if temperature is None else temperature,
+                max_completion_tokens=self.config.max_completion_tokens if max_tokens is None else max_tokens,
+            )
+            if generation.error:
+                raise RuntimeError(generation.error)
+            retrieval_metadata = {
+                "kind": "web",
+                "command": "/web" if command and command[0] == "web" else None,
+                "response_mode": "web",
+                "raw_query": last_user_text(messages),
+                "web_query": question,
+                "web_top_k": request_top_k,
+                "web_result_count": len(hits),
+                "language": response_language,
+                "memory": use_memory,
+            }
+            response = self._build_response(
+                answer=generation.answer,
+                generation=generation,
+                hits=hits,
+                retrieval_latency_s=web_latency_s,
+                retrieval_metadata=retrieval_metadata,
+                retriever=_virtual_retriever(WEB_SEARCH_RETRIEVER_NAME),
+                top_k=request_top_k,
+                response_model=response_model,
+                generation_model=generation_model,
+            )
+            return ChatServiceResult(
+                response=response,
+                generation=generation,
+                hits=hits,
+                retrieval_latency_s=web_latency_s,
+                retrieval_metadata=retrieval_metadata,
+            )
+
         if mode == "image":
+            if not self.config.image_enabled:
+                raise ValueError("Image mode is disabled.")
             image_query, rewrite_metadata = self._image_query(question, generation_model, image_rewrite=image_rewrite)
             retriever = self.resolve_request_retriever("image-digits")
             request_image_top_k = _clamp_top_k(image_top_k if image_top_k is not None else top_k, fallback=self.config.image_top_k)
@@ -211,6 +283,8 @@ class RagChatService:
             )
 
         if mode == "dictionary":
+            if not self.config.dictionary_enabled:
+                raise ValueError("Dictionary mode is disabled.")
             retriever = self.resolve_request_retriever("dictionary-graph")
             request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
             retrieval = retriever.search(Query(query_id="chat-dict", text=question), request_top_k)
@@ -409,6 +483,8 @@ class RagChatService:
         }
 
     def lookup_dictionary(self, term: str, *, top_k: int | None = None) -> dict[str, Any]:
+        if not self.config.dictionary_enabled:
+            raise ValueError("Dictionary lookup is disabled.")
         query = str(term or "").strip()
         if not query:
             raise ValueError("term must not be empty")
@@ -758,6 +834,10 @@ def _build_retrievers(
     retrievers: dict[str, Retriever] = {}
     for name in _dedupe_normalized_retriever_ids((config.retriever, *config.available_retrievers)):
         spec = get_retriever_spec(name)
+        if spec.category == "image" and not config.image_enabled:
+            continue
+        if spec.category == "dictionary" and not config.dictionary_enabled:
+            continue
         retriever = create_retriever(
             name,
             vector_model=config.vector_model,
@@ -768,6 +848,28 @@ def _build_retrievers(
         retriever.build(documents)
         retrievers[retriever.name] = retriever
     return retrievers
+
+
+def _config_uses_dictionary(config: ChatProxyConfig) -> bool:
+    if not config.dictionary_enabled:
+        return False
+    for name in _dedupe_normalized_retriever_ids((config.retriever, *config.available_retrievers)):
+        if get_retriever_spec(name).category == "dictionary":
+            return True
+    return False
+
+
+def _disabled_dictionary_result() -> DictionaryLoadResult:
+    return DictionaryLoadResult(
+        entries=[],
+        documents=[],
+        status={
+            "enabled": False,
+            "source": "disabled",
+            "entry_count": 0,
+            "warnings": [],
+        },
+    )
 
 
 def _load_dictionary(config: ChatProxyConfig) -> DictionaryLoadResult:
@@ -874,6 +976,38 @@ def build_dictionary_rag_messages(
     ]
 
 
+def build_web_rag_messages(
+    messages: list[dict[str, Any]],
+    hits: list[RetrievalHit],
+    *,
+    query: str,
+    max_context_chars: int,
+    history_messages: int,
+    language: str | None = None,
+) -> list[dict[str, str]]:
+    context = _format_context(hits, max_context_chars=max_context_chars)
+    history = _format_history(messages[:-1], history_messages=history_messages)
+    language_instruction = _language_instruction(language)
+    user_prompt = (
+        f"Recent conversation:\n{history}\n\n"
+        f"Web search question:\n{query}\n\n"
+        f"Web search results:\n{context}\n\n"
+        "Answer using the web search results. Cite sources with their ids in square brackets, "
+        "for example [web-1]. If the results do not support an answer, say so clearly."
+    )
+    return [
+        {
+            "role": "system",
+            "content": _join_prompt_parts(
+                "You are a careful web-search RAG assistant. Prefer recent web evidence when it is present. "
+                "Do not invent URLs, dates, or claims that are not supported by the provided results.",
+                language_instruction,
+            ),
+        },
+        {"role": "user", "content": user_prompt},
+    ]
+
+
 def last_user_text(messages: list[dict[str, Any]]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
@@ -890,6 +1024,8 @@ def parse_chat_command(text: str) -> tuple[str, str] | None:
         return None
     command, _, remainder = stripped.partition(" ")
     normalized = command.lower()
+    if normalized in {"/web", "/search", "/web-search"}:
+        return "web", remainder.strip()
     if normalized in {"/img", "/image"}:
         return "img", remainder.strip()
     if normalized in {"/dict", "/dictionary", "/tu-dien", "/từ-điển"}:
@@ -905,13 +1041,15 @@ def _normalize_response_mode(value: str | None) -> str:
     normalized = value.strip().lower().replace("+", "_").replace("-", "_")
     if normalized in {"text", "rag", "chat"}:
         return "text"
+    if normalized in {"web", "web_search", "search_web", "internet"}:
+        return "web"
     if normalized in {"image", "images", "img"}:
         return "image"
     if normalized in {"text_image", "text_images", "text_and_image", "text_and_images", "mixed"}:
         return "text_image"
     if normalized in {"dictionary", "dict", "tu_dien", "từ_điển"}:
         return "dictionary"
-    raise ValueError("response_mode must be one of: text, image, text_image, dictionary")
+    raise ValueError("response_mode must be one of: text, web, image, text_image, dictionary")
 
 
 def _normalize_response_language(value: str | None) -> str:
@@ -948,7 +1086,7 @@ def _join_prompt_parts(*parts: str) -> str:
 
 def _strip_command_prefix(text: str) -> str:
     command = parse_chat_command(text)
-    if command and command[0] in {"img", "dict"}:
+    if command and command[0] in {"img", "dict", "web"}:
         return command[1].strip()
     return text.strip()
 
@@ -1030,9 +1168,40 @@ def _localized_no_dictionary_answer(query: str, language: str | None) -> str:
     return f"No matching dictionary entry was found for: {query}"
 
 
+def _web_results_to_hits(results: list[WebSearchResult]) -> list[RetrievalHit]:
+    hits: list[RetrievalHit] = []
+    for rank, result in enumerate(results, 1):
+        text_parts = []
+        if result.snippet:
+            text_parts.append(result.snippet)
+        if result.url:
+            text_parts.append(f"URL: {result.url}")
+        hits.append(
+            RetrievalHit(
+                doc_id=f"web-{rank}",
+                score=1.0 / rank,
+                rank=rank,
+                title=result.title,
+                text="\n".join(text_parts).strip(),
+                metadata={"kind": "web", "url": result.url},
+            )
+        )
+    return hits
+
+
+@dataclass(frozen=True)
+class _VirtualRetriever:
+    name: str
+
+
+def _virtual_retriever(name: str) -> _VirtualRetriever:
+    return _VirtualRetriever(name=name)
+
+
 def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     allowed_keys = {
         "kind",
+        "url",
         "image_data_url",
         "image_url",
         "label",

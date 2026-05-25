@@ -76,8 +76,14 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "4",
             "--max-context-chars",
             "2000",
+            "--web-search-top-k",
+            "8",
+            "--web-search-timeout",
+            "4.5",
+            "--enable-image",
             "--image-top-k",
             "7",
+            "--enable-dictionary",
             "--dictionary-artifact",
             "runs/dict",
             "--dictionary-source-dir",
@@ -120,7 +126,12 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.available_retrievers == ("bm25", "keyword-match", "multi-query")
     assert seen["config"].chat.top_k == 4
     assert seen["config"].chat.max_context_chars == 2000
+    assert seen["config"].chat.web_search_enabled is True
+    assert seen["config"].chat.web_search_top_k == 8
+    assert seen["config"].chat.web_search_timeout_s == 4.5
+    assert seen["config"].chat.image_enabled is True
     assert seen["config"].chat.image_top_k == 7
+    assert seen["config"].chat.dictionary_enabled is True
     assert seen["config"].chat.dictionary_artifact == Path("runs/dict")
     assert seen["config"].chat.dictionary_source_dir == Path("data/dict")
     assert seen["config"].chat.dictionary_letters == ("A", "B")

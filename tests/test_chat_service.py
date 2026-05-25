@@ -11,6 +11,7 @@ from rag_bench.chat_service import (
 )
 from rag_bench.groq_client import GenerationResult
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
+from rag_bench.web_search import WebSearchResult
 
 
 @dataclass
@@ -232,6 +233,23 @@ class FakeKeywordLLM(FakeLLM):
         )
 
 
+class FakeWebSearchClient:
+    def __init__(self) -> None:
+        self.query: str | None = None
+        self.limit: int | None = None
+
+    def search(self, query: str, *, limit: int) -> list[WebSearchResult]:
+        self.query = query
+        self.limit = limit
+        return [
+            WebSearchResult(
+                title="True Chat release notes",
+                url="https://example.test/true-chat",
+                snippet="True Chat added web search for internship demos.",
+            )
+        ]
+
+
 def test_rag_chat_service_answers_with_retrieved_context_and_history() -> None:
     llm = FakeLLM()
     service = RagChatService(
@@ -409,7 +427,7 @@ def test_text_mode_ignores_image_retriever_request() -> None:
     text_retriever = FakeRetriever()
     image_retriever = FakeImageRetriever()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_enabled=True),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -433,12 +451,73 @@ def test_text_mode_ignores_image_retriever_request() -> None:
     assert image_retriever.seen_top_k is None
 
 
+def test_web_command_uses_web_search_results_as_rag_context() -> None:
+    llm = FakeLLM()
+    web = FakeWebSearchClient()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, web_search_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=FakeRetriever(),
+        llm=llm,
+        web_search_client=web,
+    )
+
+    result = service.answer([{"role": "user", "content": "/web true chat internship"}], language="vi")
+
+    assert web.query == "true chat internship"
+    assert web.limit == 3
+    assert result.response["rag"]["retriever"] == "web-search"
+    assert result.response["rag"]["retrieval_metadata"]["response_mode"] == "web"
+    assert result.response["rag"]["retrieval_metadata"]["web_result_count"] == 1
+    assert result.response["rag"]["retrieved"][0]["doc_id"] == "web-1"
+    assert result.response["rag"]["retrieved"][0]["url"] == "https://example.test/true-chat"
+    assert "Web search results" in llm.messages[1]["content"]
+    assert "True Chat added web search" in llm.messages[1]["content"]
+    assert "Required response language: Vietnamese" in llm.messages[0]["content"]
+
+
+def test_image_and_dictionary_modes_are_disabled_by_default() -> None:
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=FakeRetriever(),
+        llm=FakeLLM(),
+        retrievers={"bm25": FakeRetriever()},
+    )
+
+    try:
+        service.answer([{"role": "user", "content": "/img digit 7"}])
+    except ValueError as exc:
+        assert "Image mode is disabled" in str(exc)
+    else:
+        raise AssertionError("image mode should be disabled by default")
+
+    try:
+        service.answer([{"role": "user", "content": "/dict AMONIT"}])
+    except ValueError as exc:
+        assert "Dictionary mode is disabled" in str(exc)
+    else:
+        raise AssertionError("dictionary mode should be disabled by default")
+
+
 def test_img_command_routes_to_image_retriever_without_llm_generation() -> None:
     llm = FakeLLM()
     text_retriever = FakeRetriever()
     image_retriever = FakeImageRetriever()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_enabled=True),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -467,7 +546,7 @@ def test_img_command_accepts_request_top_k_override() -> None:
     text_retriever = FakeRetriever()
     image_retriever = FakeImageRetriever()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_top_k=5),
+        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_enabled=True, image_top_k=5),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -491,7 +570,7 @@ def test_image_mode_can_rewrite_query_with_selected_model() -> None:
     image_retriever = FakeImageRetriever()
     llm = FakeImageRewriteLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_top_k=5),
+        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_enabled=True, image_top_k=5),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -523,7 +602,7 @@ def test_text_image_mode_appends_image_results_after_text_retrieval() -> None:
     image_retriever = FakeImageRetriever()
     llm = FakeImageRewriteLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_top_k=5),
+        config=ChatProxyConfig(top_k=2, model_id="rag-test", image_enabled=True, image_top_k=5),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -590,7 +669,7 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     dictionary_retriever = FakeDictionaryRetriever()
     llm = FakeLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        config=ChatProxyConfig(top_k=2, dictionary_enabled=True, dictionary_top_k=3, model_id="rag-test"),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -673,6 +752,8 @@ def test_last_user_text_supports_openai_text_parts() -> None:
 
 
 def test_parse_chat_command_supports_img_alias() -> None:
+    assert parse_chat_command("/web latest RAG news") == ("web", "latest RAG news")
+    assert parse_chat_command("/search latest RAG news") == ("web", "latest RAG news")
     assert parse_chat_command("/img digit 3") == ("img", "digit 3")
     assert parse_chat_command("/image cats") == ("img", "cats")
     assert parse_chat_command("/dict AMONIT") == ("dict", "AMONIT")

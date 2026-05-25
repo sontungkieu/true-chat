@@ -1,0 +1,1027 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>True Chat RAG Benchmark - Algorithm and Bench Report</title>
+  <style>
+    :root {
+      --bg: #f7f8f4;
+      --ink: #1b1d1f;
+      --muted: #5b6168;
+      --line: #d8ddd2;
+      --panel: #ffffff;
+      --teal: #0f766e;
+      --teal-soft: #d6eeea;
+      --orange: #d86f35;
+      --orange-soft: #f7dfd0;
+      --violet: #6d5bd0;
+      --violet-soft: #e7e2fb;
+      --green: #557a3d;
+      --green-soft: #e5eedf;
+      --shadow: 0 16px 50px rgba(27, 29, 31, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #e8ebe4;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    .deck {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .slide {
+      display: none;
+      width: min(1500px, calc(100vw - 48px));
+      aspect-ratio: 16 / 9;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      padding: 44px 54px 36px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .slide.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 10px;
+      background: linear-gradient(90deg, var(--teal), var(--orange), var(--violet), var(--green));
+    }
+
+    .eyebrow {
+      color: var(--teal);
+      font-size: clamp(14px, 1.1vw, 18px);
+      font-weight: 760;
+      text-transform: uppercase;
+      margin: 0 0 12px;
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+      line-height: 1.03;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: clamp(48px, 5.2vw, 86px);
+      max-width: 1120px;
+    }
+
+    h2 {
+      font-size: clamp(34px, 3.7vw, 60px);
+      max-width: 1180px;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: clamp(20px, 1.8vw, 28px);
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      font-size: clamp(19px, 1.65vw, 27px);
+      line-height: 1.32;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 1.1em;
+      font-size: clamp(19px, 1.55vw, 25px);
+      line-height: 1.34;
+    }
+
+    li + li {
+      margin-top: 10px;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: rgba(15, 118, 110, 0.1);
+      border: 1px solid rgba(15, 118, 110, 0.18);
+      padding: 0.05em 0.28em;
+      border-radius: 4px;
+      font-size: 0.88em;
+    }
+
+    .lead {
+      max-width: 1080px;
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: clamp(22px, 2vw, 32px);
+    }
+
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      gap: 24px;
+      padding-top: 10px;
+    }
+
+    .two-col,
+    .three-col {
+      display: grid;
+      gap: 22px;
+      align-items: stretch;
+    }
+
+    .two-col {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .three-col {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      min-width: 0;
+    }
+
+    .panel.teal {
+      border-color: #a9d7d0;
+      background: linear-gradient(0deg, var(--teal-soft), #ffffff 76%);
+    }
+
+    .panel.orange {
+      border-color: #efc1a6;
+      background: linear-gradient(0deg, var(--orange-soft), #ffffff 76%);
+    }
+
+    .panel.violet {
+      border-color: #c8bef5;
+      background: linear-gradient(0deg, var(--violet-soft), #ffffff 76%);
+    }
+
+    .panel.green {
+      border-color: #c7d9b7;
+      background: linear-gradient(0deg, var(--green-soft), #ffffff 76%);
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+    }
+
+    .metric {
+      padding: 18px 18px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .metric .value {
+      display: block;
+      font-size: clamp(36px, 3.6vw, 58px);
+      line-height: 1;
+      font-weight: 820;
+      color: var(--teal);
+    }
+
+    .metric .label {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: clamp(15px, 1.2vw, 18px);
+      line-height: 1.25;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      align-items: center;
+    }
+
+    .step {
+      min-height: 118px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 8px;
+      padding: 18px;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid var(--line);
+      position: relative;
+    }
+
+    .step:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: -13px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--orange);
+      font-weight: 900;
+      z-index: 2;
+    }
+
+    .step strong {
+      font-size: clamp(18px, 1.45vw, 23px);
+      line-height: 1.12;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: clamp(14px, 1.05vw, 18px);
+      line-height: 1.25;
+    }
+
+    .pseudo {
+      background: #18201f;
+      color: #eef8ef;
+      border-radius: 8px;
+      padding: 20px 22px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: clamp(15px, 1.18vw, 20px);
+      line-height: 1.48;
+      white-space: pre-wrap;
+    }
+
+    .bar-chart {
+      display: grid;
+      gap: 12px;
+      padding: 6px 0;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 170px 1fr 72px;
+      gap: 14px;
+      align-items: center;
+      min-height: 34px;
+      font-size: clamp(15px, 1.18vw, 19px);
+    }
+
+    .bar-label {
+      font-weight: 720;
+      overflow-wrap: anywhere;
+    }
+
+    .bar-track {
+      height: 18px;
+      border-radius: 999px;
+      background: #e1e6dd;
+      overflow: hidden;
+      border: 1px solid #d0d7ca;
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: var(--w);
+      border-radius: 999px;
+      background: var(--bar, var(--teal));
+    }
+
+    .bar-value {
+      font-weight: 760;
+      text-align: right;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: clamp(15px, 1.15vw, 19px);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .table th,
+    .table td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .table th {
+      background: #eef2ea;
+      color: #31363a;
+      font-size: 0.92em;
+    }
+
+    .table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      font-size: clamp(14px, 1.05vw, 18px);
+      font-weight: 700;
+    }
+
+    .callout {
+      border-left: 6px solid var(--orange);
+      background: #fff7f0;
+      padding: 18px 20px;
+      border-radius: 0 8px 8px 0;
+      font-size: clamp(18px, 1.45vw, 24px);
+      line-height: 1.32;
+    }
+
+    .script {
+      margin-top: auto;
+      padding: 15px 18px 14px;
+      border: 1px solid #ccd6cc;
+      background: rgba(255, 255, 255, 0.88);
+      border-radius: 8px;
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 14px;
+      align-items: start;
+      min-height: 88px;
+    }
+
+    .script strong {
+      color: var(--green);
+      font-size: clamp(14px, 1.02vw, 17px);
+      text-transform: uppercase;
+    }
+
+    .script p {
+      color: #303433;
+      font-size: clamp(15px, 1.12vw, 19px);
+      line-height: 1.38;
+    }
+
+    .footer {
+      position: absolute;
+      left: 54px;
+      right: 54px;
+      bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      color: #7a8179;
+      font-size: 12px;
+    }
+
+    .controls {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      display: flex;
+      gap: 8px;
+      z-index: 20;
+    }
+
+    .controls button {
+      width: 42px;
+      height: 38px;
+      border: 1px solid #b9c0b5;
+      background: #fff;
+      color: var(--ink);
+      border-radius: 6px;
+      font-size: 18px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    @media (max-width: 900px) {
+      .deck {
+        padding: 10px;
+      }
+
+      .slide {
+        width: calc(100vw - 20px);
+        min-height: calc(100vh - 20px);
+        aspect-ratio: auto;
+        padding: 32px 22px 30px;
+        overflow-y: auto;
+      }
+
+      .two-col,
+      .three-col,
+      .metric-grid,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .step::after {
+        display: none;
+      }
+
+      .script {
+        grid-template-columns: 1fr;
+      }
+
+      .footer {
+        left: 22px;
+        right: 22px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .deck {
+        display: block;
+        padding: 0;
+      }
+
+      .slide,
+      .slide.active {
+        display: flex;
+        width: 100vw;
+        height: 100vh;
+        aspect-ratio: auto;
+        box-shadow: none;
+        border: 0;
+        page-break-after: always;
+      }
+
+      .controls {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slide active">
+      <div class="content">
+        <p class="eyebrow">Course Project Report</p>
+        <h1>True Chat RAG Benchmark</h1>
+        <p class="lead">Core algorithms, retrieval strategies, and benchmark findings from the local project.</p>
+        <div class="metric-grid">
+          <div class="metric">
+            <span class="value">12</span>
+            <span class="label">registered retrieval strategies</span>
+          </div>
+          <div class="metric">
+            <span class="value">2</span>
+            <span class="label">main BEIR benchmark datasets analyzed</span>
+          </div>
+          <div class="metric">
+            <span class="value">0.86</span>
+            <span class="label">best SciFact hit@3</span>
+          </div>
+          <div class="metric">
+            <span class="value">0.68</span>
+            <span class="label">best NFCorpus hit@3</span>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>True Chat RAG Benchmark</span><span>1 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Project Goal</p>
+        <h2>Make RAG retrieval measurable, comparable, and usable in chat</h2>
+        <div class="three-col">
+          <div class="panel teal">
+            <h3>Benchmark first</h3>
+            <ul>
+              <li>Load BEIR-style datasets.</li>
+              <li>Run the same queries across multiple retrievers.</li>
+              <li>Save per-query and aggregate metrics.</li>
+            </ul>
+          </div>
+          <div class="panel orange">
+            <h3>Pluggable retrieval</h3>
+            <ul>
+              <li>Central strategy registry.</li>
+              <li>Consistent interfaces for sparse, dense, graph, and LLM-assisted search.</li>
+              <li>Aliases make CLI and chat mode share the same behavior.</li>
+            </ul>
+          </div>
+          <div class="panel violet">
+            <h3>Chat integration</h3>
+            <ul>
+              <li>OpenAI-compatible proxy response.</li>
+              <li>Retriever metadata returned with each answer.</li>
+              <li>Groq and optional MiMo model routing.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Problem framing</span><span>2 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">System Architecture</p>
+        <h2>One pipeline connects datasets, retrievers, generation, and reports</h2>
+        <div class="flow">
+          <div class="step">
+            <strong>Benchmark loader</strong>
+            <span>BEIR datasets: SciFact, NFCorpus, HotpotQA with safe large-dataset guard.</span>
+          </div>
+          <div class="step">
+            <strong>Retriever registry</strong>
+            <span>Creates strategy objects from ids such as <code>bm25</code> and <code>hybrid-rrf</code>.</span>
+          </div>
+          <div class="step">
+            <strong>Retrieval loop</strong>
+            <span>Build index once, search each query, keep top-k hits and metadata.</span>
+          </div>
+          <div class="step">
+            <strong>Optional LLM answer</strong>
+            <span>Prompt builder sends retrieved context to Groq or routed model.</span>
+          </div>
+          <div class="step">
+            <strong>Artifacts</strong>
+            <span>JSONL, JSON, CSV, RAGAS summary, and markdown benchmark report.</span>
+          </div>
+        </div>
+        <div class="callout">The same retriever registry is used by the CLI benchmark, the chat proxy, and the built-in UI.</div>
+      </div>
+      <div class="footer"><span>Architecture</span><span>3 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Benchmark Algorithm</p>
+        <h2>The evaluation loop isolates retrieval quality from generation quality</h2>
+        <div class="two-col">
+          <div class="pseudo">for retriever in selected_retrievers:
+    retriever.build(documents)
+
+    for query in benchmark_queries:
+        hits = retriever.search(query, top_k)
+        retrieval_metrics = compare(hits, qrels)
+
+        if generation_enabled:
+            answer = llm.generate(query, hits)
+            answer_metrics = compare(answer, references)
+
+    aggregate_metrics()
+    write_jsonl_json_csv()</div>
+          <div class="panel green">
+            <h3>Measured retrieval metrics</h3>
+            <ul>
+              <li><code>hit@k</code>: at least one relevant document appears.</li>
+              <li><code>mrr@k</code>: rewards earlier first relevant hits.</li>
+              <li><code>ndcg@k</code>: rank-aware graded relevance.</li>
+              <li><code>precision@k</code> and <code>recall@k</code>: quality and coverage.</li>
+              <li><code>retrieval_latency_s</code>: per-query retrieval time.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Algorithm loop</span><span>4 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Retriever Families</p>
+        <h2>The project compares sparse, dense, fusion, graph, LLM-assisted, and domain retrievers</h2>
+        <div class="tag-row">
+          <span class="tag">BM25</span>
+          <span class="tag">TF-IDF</span>
+          <span class="tag">Keyword Match</span>
+          <span class="tag">Multi-query</span>
+          <span class="tag">Graph BM25</span>
+          <span class="tag">LLM Query Rewrite</span>
+          <span class="tag">LLM Multi-query</span>
+          <span class="tag">Vector</span>
+          <span class="tag">Hybrid RRF</span>
+          <span class="tag">Vector Rerank</span>
+          <span class="tag">Dictionary Graph</span>
+          <span class="tag">Image Digits</span>
+        </div>
+        <div class="three-col">
+          <div class="panel teal">
+            <h3>Sparse retrieval</h3>
+            <p>Fast lexical matching with BM25, TF-IDF, and exact keyword scoring.</p>
+          </div>
+          <div class="panel orange">
+            <h3>Combination retrieval</h3>
+            <p>Query variants, graph expansion, dense embeddings, and reciprocal-rank fusion.</p>
+          </div>
+          <div class="panel violet">
+            <h3>Task-specific retrieval</h3>
+            <p>Dictionary graph lookup and image demo search expose non-standard retrieval modes.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Strategy registry</span><span>5 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Sparse Baselines</p>
+        <h2>BM25 remains the core lexical baseline</h2>
+        <div class="three-col">
+          <div class="panel teal">
+            <h3>BM25</h3>
+            <ul>
+              <li>Tokenizes document title and text.</li>
+              <li>Builds <code>BM25Okapi</code> over tokenized documents.</li>
+              <li>Ranks by BM25 score and deterministic doc index tie-break.</li>
+            </ul>
+          </div>
+          <div class="panel orange">
+            <h3>TF-IDF</h3>
+            <ul>
+              <li>Uses scikit-learn <code>TfidfVectorizer</code>.</li>
+              <li>Scores by sparse dot product against the query vector.</li>
+              <li>Very low query latency.</li>
+            </ul>
+          </div>
+          <div class="panel green">
+            <h3>Keyword Match</h3>
+            <ul>
+              <li>Counts matched query terms and frequency.</li>
+              <li>Adds phrase bonus for exact query substring.</li>
+              <li>In chat mode, an LLM extracts keyword variants first.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Lexical retrieval</span><span>6 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Expansion and Fusion</p>
+        <h2>Query expansion improves coverage, but fusion decides the final rank</h2>
+        <div class="two-col">
+          <div class="panel teal">
+            <h3>Deterministic multi-query</h3>
+            <ul>
+              <li>Starts from the original query.</li>
+              <li>Removes common instruction stopwords.</li>
+              <li>Adds keyword-only and split-query variants.</li>
+              <li>Merges BM25 results with reciprocal-rank fusion.</li>
+            </ul>
+          </div>
+          <div class="panel orange">
+            <h3>Reciprocal-rank fusion</h3>
+            <p><code>score(doc) = sum(1 / (rrf_k + rank))</code></p>
+            <ul>
+              <li>Documents found by several query variants rise in rank.</li>
+              <li>Uses rank rather than raw scores, so heterogeneous retrievers can be merged.</li>
+              <li>The project uses <code>rrf_k = 60</code>.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout">Fusion is the bridge between lexical BM25, dense vector search, graph expansion, and direct dictionary matching.</div>
+      </div>
+      <div class="footer"><span>RRF and expansion</span><span>7 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Graph BM25</p>
+        <h2>A lightweight document-term graph expands BM25 candidates</h2>
+        <div class="flow">
+          <div class="step">
+            <strong>Seed</strong>
+            <span>Run BM25 and keep seed documents.</span>
+          </div>
+          <div class="step">
+            <strong>Terms</strong>
+            <span>Select graph terms with useful document frequency.</span>
+          </div>
+          <div class="step">
+            <strong>Expand</strong>
+            <span>Add query terms and high-IDF terms from top seeds.</span>
+          </div>
+          <div class="step">
+            <strong>Score graph</strong>
+            <span>Propagate term evidence to neighboring documents.</span>
+          </div>
+          <div class="step">
+            <strong>Rerank</strong>
+            <span>Combine normalized BM25 and graph scores.</span>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="panel">
+            <h3>Implementation weights</h3>
+            <p>Final score uses <code>0.65 * lexical + 0.35 * graph</code>.</p>
+          </div>
+          <div class="panel">
+            <h3>Why it matters</h3>
+            <p>It tries to recover related documents that share discriminative terms with strong BM25 seeds.</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Graph expansion</span><span>8 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Dense and Hybrid Retrieval</p>
+        <h2>Vector search helps semantic datasets, but lexical signal still matters</h2>
+        <div class="three-col">
+          <div class="panel violet">
+            <h3>Vector</h3>
+            <ul>
+              <li>Encodes documents with SentenceTransformers.</li>
+              <li>L2-normalizes embeddings.</li>
+              <li>Uses FAISS inner-product search when available.</li>
+            </ul>
+          </div>
+          <div class="panel teal">
+            <h3>Hybrid RRF</h3>
+            <ul>
+              <li>Runs BM25 and vector retrieval.</li>
+              <li>Merges ranked lists with RRF.</li>
+              <li>Best SciFact hit@3 in the reported run.</li>
+            </ul>
+          </div>
+          <div class="panel orange">
+            <h3>Vector Rerank</h3>
+            <ul>
+              <li>Starts from vector candidates.</li>
+              <li>Adds normalized BM25 score.</li>
+              <li>Uses <code>0.7 * lexical + 0.3 * vector</code>.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Dense retrieval</span><span>9 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Dictionary Graph Pipeline</p>
+        <h2>Domain documents become a validated graph-backed retriever</h2>
+        <div class="two-col">
+          <div class="panel green">
+            <h3>Build-time pipeline</h3>
+            <ul>
+              <li>Parse DOCX entries into stable entry ids.</li>
+              <li>Use provider extraction for aliases, concepts, categories, and relations.</li>
+              <li>Validate nodes and edges with Pydantic and ontology constraints.</li>
+              <li>Export JSONL, SQLite, GraphML, HTML visualization, and quality report.</li>
+            </ul>
+          </div>
+          <div class="panel teal">
+            <h3>Runtime retrieval</h3>
+            <ul>
+              <li>Direct accent-insensitive headword, alias, concept, abbreviation, and phrase matching.</li>
+              <li>BM25 lexical search over entries.</li>
+              <li>Graph BM25 expansion.</li>
+              <li>Weighted dictionary merge: direct hits get the strongest boost.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout">This is the domain-specific part of the project: it preserves rich Vietnamese dictionary formatting while exposing normal RAG retrieval hits.</div>
+      </div>
+      <div class="footer"><span>Domain retrieval</span><span>10 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Operational Design</p>
+        <h2>LLM calls are treated as measurable operations, not hidden magic</h2>
+        <div class="three-col">
+          <div class="panel teal">
+            <h3>Key rotation</h3>
+            <p>Groq keys are loaded as aliases only. The system tracks usage without exposing secret values.</p>
+          </div>
+          <div class="panel orange">
+            <h3>Rate scheduling</h3>
+            <p>Per-key or shared 60-second token/request buckets reduce avoidable rate-limit failures.</p>
+          </div>
+          <div class="panel violet">
+            <h3>Retrieval LLM accounting</h3>
+            <p>LLM-assisted retrievers report calls, latency, token usage, retry count, and errors separately from answer generation.</p>
+          </div>
+        </div>
+        <div class="callout">This makes it possible to compare quality gain against latency and token cost.</div>
+      </div>
+      <div class="footer"><span>Runtime robustness</span><span>11 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Benchmark Setup</p>
+        <h2>Reported retrieval-only benchmarks use top-k = 3 and 50 queries</h2>
+        <div class="two-col">
+          <div class="panel teal">
+            <h3>SciFact</h3>
+            <ul>
+              <li>Scientific claim verification style retrieval.</li>
+              <li>Exact terms and concise evidence are important.</li>
+              <li>Reported with <code>limit=50</code>, <code>top_k=3</code>.</li>
+            </ul>
+          </div>
+          <div class="panel orange">
+            <h3>NFCorpus</h3>
+            <ul>
+              <li>Medical and nutrition information retrieval.</li>
+              <li>Semantic matching has more room to help.</li>
+              <li>Reported with <code>limit=50</code>, <code>top_k=3</code>.</li>
+            </ul>
+          </div>
+        </div>
+        <table class="table">
+          <tr>
+            <th>Mode</th>
+            <th>Generation</th>
+            <th>Why this setup is useful</th>
+          </tr>
+          <tr>
+            <td>Retrieval-only</td>
+            <td>Skipped</td>
+            <td>Measures retriever quality directly against qrels.</td>
+          </tr>
+          <tr>
+            <td>RAGAS sample</td>
+            <td>Enabled</td>
+            <td>Checks answer relevancy, context precision/recall, and faithfulness on a small sample.</td>
+          </tr>
+        </table>
+      </div>
+      <div class="footer"><span>Evaluation setup</span><span>12 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">SciFact Results</p>
+        <h2>Hybrid RRF gives the best hit@3; vector-rerank gives the best nDCG@3</h2>
+        <div class="two-col">
+          <div class="panel">
+            <h3>hit@3</h3>
+            <div class="bar-chart">
+              <div class="bar-row"><span class="bar-label">hybrid-rrf</span><span class="bar-track"><span class="bar-fill" style="--w:86%; --bar: var(--teal);"></span></span><span class="bar-value">0.86</span></div>
+              <div class="bar-row"><span class="bar-label">vector-rerank</span><span class="bar-track"><span class="bar-fill" style="--w:84%; --bar: var(--orange);"></span></span><span class="bar-value">0.84</span></div>
+              <div class="bar-row"><span class="bar-label">bm25</span><span class="bar-track"><span class="bar-fill" style="--w:82%; --bar: var(--green);"></span></span><span class="bar-value">0.82</span></div>
+              <div class="bar-row"><span class="bar-label">vector</span><span class="bar-track"><span class="bar-fill" style="--w:82%; --bar: var(--violet);"></span></span><span class="bar-value">0.82</span></div>
+              <div class="bar-row"><span class="bar-label">multi-query</span><span class="bar-track"><span class="bar-fill" style="--w:82%; --bar: #7c8a31;"></span></span><span class="bar-value">0.82</span></div>
+              <div class="bar-row"><span class="bar-label">tfidf</span><span class="bar-track"><span class="bar-fill" style="--w:74%; --bar: #8d6b49;"></span></span><span class="bar-value">0.74</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>nDCG@3 and latency</h3>
+            <table class="table">
+              <tr><th>Retriever</th><th>nDCG@3</th><th>Latency/query</th><th>Build</th></tr>
+              <tr><td>vector-rerank</td><td>0.8011</td><td>0.0277s</td><td>33.34s</td></tr>
+              <tr><td>hybrid-rrf</td><td>0.7988</td><td>0.0311s</td><td>33.67s</td></tr>
+              <tr><td>bm25</td><td>0.7619</td><td>0.0214s</td><td>1.32s</td></tr>
+              <tr><td>vector</td><td>0.7096</td><td>0.0167s</td><td>53.66s</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>SciFact benchmark</span><span>13 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">NFCorpus Results</p>
+        <h2>Dense retrieval performs best on hit@3; hybrid RRF slightly wins nDCG@3</h2>
+        <div class="two-col">
+          <div class="panel">
+            <h3>hit@3</h3>
+            <div class="bar-chart">
+              <div class="bar-row"><span class="bar-label">vector</span><span class="bar-track"><span class="bar-fill" style="--w:68%; --bar: var(--violet);"></span></span><span class="bar-value">0.68</span></div>
+              <div class="bar-row"><span class="bar-label">hybrid-rrf</span><span class="bar-track"><span class="bar-fill" style="--w:66%; --bar: var(--teal);"></span></span><span class="bar-value">0.66</span></div>
+              <div class="bar-row"><span class="bar-label">vector-rerank</span><span class="bar-track"><span class="bar-fill" style="--w:66%; --bar: var(--orange);"></span></span><span class="bar-value">0.66</span></div>
+              <div class="bar-row"><span class="bar-label">tfidf</span><span class="bar-track"><span class="bar-fill" style="--w:60%; --bar: #8d6b49;"></span></span><span class="bar-value">0.60</span></div>
+              <div class="bar-row"><span class="bar-label">bm25</span><span class="bar-track"><span class="bar-fill" style="--w:56%; --bar: var(--green);"></span></span><span class="bar-value">0.56</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h3>nDCG@3 and recall@3</h3>
+            <table class="table">
+              <tr><th>Retriever</th><th>nDCG@3</th><th>Recall@3</th><th>Latency/query</th></tr>
+              <tr><td>hybrid-rrf</td><td>0.3874</td><td>0.0939</td><td>0.0188s</td></tr>
+              <tr><td>vector-rerank</td><td>0.3847</td><td>0.0991</td><td>0.0209s</td></tr>
+              <tr><td>vector</td><td>0.3796</td><td>0.0897</td><td>0.0147s</td></tr>
+              <tr><td>bm25</td><td>0.3151</td><td>0.0729</td><td>0.0076s</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>NFCorpus benchmark</span><span>14 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">LLM-Assisted Retrieval</p>
+        <h2>Query LLMs add latency and tokens; they did not beat BM25 in these SciFact runs</h2>
+        <table class="table">
+          <tr>
+            <th>Model</th>
+            <th>Retriever</th>
+            <th>hit@3</th>
+            <th>nDCG@3</th>
+            <th>Latency/query</th>
+            <th>Retrieval LLM tokens/query</th>
+          </tr>
+          <tr><td>llama-3.1-8b-instant</td><td>BM25</td><td>0.82</td><td>0.7619</td><td>0.0208s</td><td>0</td></tr>
+          <tr><td>llama-3.1-8b-instant</td><td>LLM query rewrite</td><td>0.80</td><td>0.7525</td><td>1.4211s</td><td>94.48</td></tr>
+          <tr><td>llama-3.1-8b-instant</td><td>LLM multi-query</td><td>0.78</td><td>0.7160</td><td>2.4422s</td><td>134.44</td></tr>
+          <tr><td>qwen/qwen3-32b</td><td>BM25</td><td>0.82</td><td>0.7619</td><td>0.0309s</td><td>0</td></tr>
+          <tr><td>qwen/qwen3-32b</td><td>LLM query rewrite</td><td>0.64</td><td>0.3615</td><td>1.4964s</td><td>152.56</td></tr>
+          <tr><td>qwen/qwen3-32b</td><td>LLM multi-query</td><td>0.78</td><td>0.6894</td><td>2.4363s</td><td>219.56</td></tr>
+        </table>
+        <div class="callout">Main interpretation: LLM rewriting is not automatically better; exact scientific terms can be damaged by rewriting.</div>
+      </div>
+      <div class="footer"><span>LLM retrieval cost</span><span>15 / 16</span></div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <p class="eyebrow">Conclusions</p>
+        <h2>Best choices depend on dataset semantics, latency budget, and operational cost</h2>
+        <div class="three-col">
+          <div class="panel teal">
+            <h3>For exact scientific claims</h3>
+            <p>BM25 is a strong baseline. Hybrid RRF and vector-rerank improve top-k quality, but need vector build cost.</p>
+          </div>
+          <div class="panel orange">
+            <h3>For semantic medical retrieval</h3>
+            <p>Dense vector search and hybrid fusion beat pure BM25 on NFCorpus hit@3 and nDCG@3.</p>
+          </div>
+          <div class="panel violet">
+            <h3>For production chat</h3>
+            <p>Expose retriever metadata, track token/latency costs, and choose LLM-assisted query expansion only when it proves value.</p>
+          </div>
+        </div>
+        <table class="table">
+          <tr><th>Next improvement</th><th>Reason</th></tr>
+          <tr><td>Larger benchmark limits</td><td>More stable metrics and confidence in ranking differences.</td></tr>
+          <tr><td>Domain-specific vector model</td><td>Could improve scientific and Vietnamese dictionary retrieval.</td></tr>
+          <tr><td>Evaluate dictionary graph retrieval</td><td>Current benchmark table focuses on BEIR; the domain graph needs its own gold set.</td></tr>
+        </table>
+      </div>
+      <div class="footer"><span>Summary</span><span>16 / 16</span></div>
+    </section>
+  </main>
+
+  <nav class="controls" aria-label="Slide controls">
+    <button type="button" id="prev" aria-label="Previous slide">&lt;</button>
+    <button type="button" id="next" aria-label="Next slide">&gt;</button>
+  </nav>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    let current = 0;
+
+    function showSlide(index) {
+      current = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((slide, slideIndex) => {
+        slide.classList.toggle("active", slideIndex === current);
+      });
+    }
+
+    document.getElementById("prev").addEventListener("click", () => showSlide(current - 1));
+    document.getElementById("next").addEventListener("click", () => showSlide(current + 1));
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+        event.preventDefault();
+        showSlide(current + 1);
+      }
+      if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        showSlide(current - 1);
+      }
+      if (event.key === "Home") {
+        showSlide(0);
+      }
+      if (event.key === "End") {
+        showSlide(slides.length - 1);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -2110,7 +2110,7 @@
             <label for="searchChoice" data-i18n="searchAlgorithm">Search</label>
             <select id="searchChoice"></select>
           </div>
-          <div class="field">
+          <div class="field" hidden>
             <label for="imageTopK" data-i18n="imageTopK">Images</label>
             <input id="imageTopK" type="number" min="1" max="20" step="1" value="5">
           </div>
@@ -2131,7 +2131,7 @@
             <input id="memoryMode" type="checkbox">
             <span class="toggle-track" aria-hidden="true"></span>
           </label>
-          <label class="toggle-field" for="dictionaryCrossRef">
+          <label class="toggle-field" for="dictionaryCrossRef" hidden>
             <span data-i18n="dictionaryCrossRef">Dictionary cross-reference</span>
             <input id="dictionaryCrossRef" type="checkbox">
             <span class="toggle-track" aria-hidden="true"></span>
@@ -2206,7 +2206,7 @@
                     <span class="chip-divider" aria-hidden="true"></span>
                     <span class="chip-caret" aria-hidden="true"><svg class="svg-icon" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span>
                   </button>
-                  <button class="tool-chip" id="imageRewriteTool" type="button" aria-pressed="false" title="Rewrite image query">
+                  <button class="tool-chip" id="imageRewriteTool" type="button" aria-pressed="false" title="Rewrite image query" hidden>
                     <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10"></path><path d="M4 12h16"></path><path d="M4 17h8"></path><path d="m17 7 3 3-3 3"></path></svg>
                     <span data-i18n="rewrite">Rewrite</span>
                   </button>
@@ -2328,6 +2328,7 @@
         proxyApiKey: "Proxy API key",
         model: "Model",
         searchAlgorithm: "Search",
+        webSearch: "Web search",
         imageTopK: "Images",
         language: "Language",
         devMode: "Dev mode",
@@ -2346,7 +2347,7 @@
         sendMessage: "Send a message",
         proxyReady: "Proxy ready",
         welcomeTitle: "How can I help you today?",
-        welcomeCopy: "RAG over SciFact with Groq generation and local key scheduling.",
+        welcomeCopy: "RAG over SciFact or live web search with Groq generation and local key scheduling.",
         quickPrompts: [
           ["Scientific claim", "What evidence supports vitamin D effects on respiratory infections?"],
           ["Paper lookup", "Find evidence about cancer mutations and clinical outcomes."],
@@ -2396,6 +2397,7 @@
         proxyApiKey: "Proxy API key",
         model: "Mô hình",
         searchAlgorithm: "Tìm kiếm",
+        webSearch: "Tìm web",
         imageTopK: "Số ảnh",
         language: "Ngôn ngữ",
         devMode: "Chế độ dev",
@@ -2414,7 +2416,7 @@
         sendMessage: "Nhập tin nhắn",
         proxyReady: "Proxy sẵn sàng",
         welcomeTitle: "Tôi có thể giúp gì cho bạn?",
-        welcomeCopy: "RAG trên SciFact với Groq và bộ lập lịch key local.",
+        welcomeCopy: "RAG trên SciFact hoặc tìm kiếm web trực tiếp với Groq và bộ lập lịch key local.",
         quickPrompts: [
           ["Luận điểm khoa học", "Có bằng chứng nào về tác động của vitamin D lên nhiễm trùng hô hấp?"],
           ["Tìm bài báo", "Tìm bằng chứng về đột biến ung thư và kết quả lâm sàng."],
@@ -2850,17 +2852,16 @@
     function responseModeChoices() {
       return [
         { value: "text", label: currentLanguage() === "vi" ? "Chỉ text" : "Text only" },
-        { value: "text_image", label: currentLanguage() === "vi" ? "Text + ảnh" : "Text + images" },
-        { value: "image", label: currentLanguage() === "vi" ? "Chỉ ảnh" : "Images only" },
-        { value: "dictionary", label: t("dictionary") }
+        { value: "web", label: t("webSearch") }
       ];
     }
 
     function normalizeResponseMode(value) {
       const normalized = String(value || "text").trim().toLowerCase().replace("+", "_").replace("-", "_");
-      if (["image", "images", "img"].includes(normalized)) return "image";
-      if (["text_image", "text_images", "text_and_image", "text_and_images", "mixed"].includes(normalized)) return "text_image";
-      if (["dictionary", "dict", "tu_dien", "từ_điển"].includes(normalized)) return "dictionary";
+      if (["web", "web_search", "search_web", "internet"].includes(normalized)) return "web";
+      if (["image", "images", "img"].includes(normalized)) return "text";
+      if (["text_image", "text_images", "text_and_image", "text_and_images", "mixed"].includes(normalized)) return "text";
+      if (["dictionary", "dict", "tu_dien", "từ_điển"].includes(normalized)) return "text";
       return "text";
     }
 
@@ -2888,15 +2889,15 @@
 
     function updateComposerTools() {
       const mode = selectedResponseMode();
-      const usesImages = mode === "image" || mode === "text_image";
-      const usesTextRetrieval = mode !== "image" && mode !== "dictionary";
-      const showsModel = mode !== "image" || settings.imageRewrite;
-      responseModeButton.classList.toggle("active", usesImages || mode === "dictionary");
+      const usesImages = false;
+      const usesTextRetrieval = mode === "text";
+      const showsModel = true;
+      responseModeButton.classList.toggle("active", mode === "web");
       responseModeButton.setAttribute("aria-expanded", activeComposerMenu === "mode" && !composerToolMenu.hidden ? "true" : "false");
       responseModeButton.title = responseModeLabel(mode);
-      imageRewriteButton.hidden = !usesImages;
-      imageRewriteButton.classList.toggle("active", usesImages && settings.imageRewrite);
-      imageRewriteButton.setAttribute("aria-pressed", usesImages && settings.imageRewrite ? "true" : "false");
+      imageRewriteButton.hidden = true;
+      imageRewriteButton.classList.remove("active");
+      imageRewriteButton.setAttribute("aria-pressed", "false");
       searchToolButton.hidden = !usesTextRetrieval;
       modelToolButton.hidden = !showsModel;
       if (toolMode) toolMode.textContent = responseModeLabel(mode);
@@ -2919,16 +2920,21 @@
       return /^\s*\/(dict|dictionary|tu-dien|từ-điển)(\s|$)/i.test(text);
     }
 
+    function isWebCommand(text) {
+      return /^\s*\/(web|search|web-search)(\s|$)/i.test(text);
+    }
+
     function captureRequestOptions(text) {
       const explicitImageCommand = isImageCommand(text);
       const explicitDictionaryCommand = isDictionaryCommand(text);
-      const responseMode = explicitImageCommand ? "image" : explicitDictionaryCommand ? "dictionary" : selectedResponseMode();
-      const usesImageResults = responseMode === "image" || responseMode === "text_image" || explicitImageCommand;
+      const explicitWebCommand = isWebCommand(text);
+      const responseMode = explicitWebCommand ? "web" : explicitImageCommand || explicitDictionaryCommand ? "text" : selectedResponseMode();
+      const usesImageResults = false;
       return {
         response_mode: responseMode,
-        retriever: responseMode === "image" ? "image-digits" : responseMode === "dictionary" ? "dictionary-graph" : selectedRetriever(),
+        retriever: responseMode === "text" ? selectedRetriever() : undefined,
         model: selectedModel(),
-        image_rewrite: responseMode === "image" || responseMode === "text_image" ? Boolean(settings.imageRewrite) : false,
+        image_rewrite: false,
         image_top_k: usesImageResults ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined,
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
@@ -2960,6 +2966,7 @@
       if (retriever === "keyword-match") return "Keyword";
       if (retriever === "multi-query") return "Multi-query";
       if (retriever === "graph-bm25") return "Graph BM25";
+      if (retriever === "web-search") return t("webSearch");
       if (retriever === "dictionary-graph") return currentLanguage() === "vi" ? "Từ điển" : "Dictionary";
       if (retriever === "llm-query-rewrite") return "LLM rewrite";
       if (retriever === "llm-multi-query") return "LLM multi-query";
@@ -3526,20 +3533,15 @@
     function formatUserRequestMeta(request) {
       const mode = normalizeResponseMode(request.response_mode);
       const parts = [responseModeLabel(mode)];
-      if (mode === "image") {
-        parts.push(retrieverLabel("image-digits"));
-      } else if (mode === "dictionary") {
-        parts.push(retrieverLabel("dictionary-graph"));
+      if (mode === "web") {
+        parts.push(t("webSearch"));
       } else {
         const retriever = normalizeSearchChoice(request.retriever || selectedRetriever());
         parts.push(retrieverLabel(retriever));
       }
-      if (mode !== "image" || request.image_rewrite) {
-        parts.push(shortModelLabel(normalizeModelChoice(request.model || selectedModel())));
-      }
+      parts.push(shortModelLabel(normalizeModelChoice(request.model || selectedModel())));
       if (request.language) parts.push(languageLabel(request.language));
       if (request.memory === false) parts.push(t("memoryOff"));
-      if ((mode === "image" || mode === "text_image") && request.image_rewrite) parts.push(t("rewrite"));
       return parts.filter(Boolean).join(" | ");
     }
 

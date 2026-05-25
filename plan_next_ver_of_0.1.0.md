@@ -312,6 +312,15 @@ Status: implemented in the current working tree; pending final commit.
    - Use stdlib SQLite as the v1 runtime/audit store; keep Neo4j deferred until graph query/UI needs justify a service.
    - Improve standalone graph visualization with category, relation, and confidence filters plus evidence/provenance details.
 
+37. Create internship branch web-search profile
+   - Status: done.
+   - Keep the presentation artifacts under the `internship` branch scope.
+   - Add chat-only web search mode with `/web`, `/search`, and `response_mode=web`.
+   - Fetch DuckDuckGo HTML results with Python stdlib, convert title/snippet/URL rows into cited `web-*` RAG sources, and use the selected generation model for the final answer.
+   - Disable image and dictionary modes by default in `ChatProxyConfig` and the built-in UI.
+   - Keep explicit `--enable-image` and `--enable-dictionary` flags for legacy demos.
+   - Update README and focused tests for the internship web-search profile.
+
 ## Verification
 
 - `uv lock --check`
@@ -326,8 +335,9 @@ Status: implemented in the current working tree; pending final commit.
   - mobile width layout remains usable,
   - phone safe-area layout keeps the menu button visible and the composer inside the screen.
 - Confirm `rag-bench run --retrievers bm25,tfidf,vector` and `rag-bench serve --retriever bm25` still use registry-backed strategy ids.
-- Confirm `/img digit 7` returns image results with thumbnails and no live Groq generation call.
-- Confirm Images-only mode returns a thumbnail grid, click-to-enlarge lightbox works, and Text+images appends related images below the text answer.
+- Confirm `/web latest RAG benchmark news` returns cited `web-*` sources when web search is enabled.
+- Confirm `/img digit 7` and `/dict AMONIT` are disabled by default on the internship branch.
+- When legacy flags are enabled, confirm `/img digit 7` returns image results with thumbnails and no live Groq generation call.
 - Benchmark SciFact retrieval-only across baseline, deterministic, vector, and LLM-query strategies and record the run paths/results.
 - Regenerate benchmark report with `python3 scripts/summarize_benchmarks.py ... --output benchmark_results/retrieval_strategy_bench_2026-05-12.md`.
 - Reproduce RAGAS judge run with `bash scripts/run_ragas_benchmarks.sh`; increase `LIMIT` and `RAGAS_LIMIT` only when time/quota allow.

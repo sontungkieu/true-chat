@@ -144,6 +144,7 @@ def test_health_and_models() -> None:
     health = client.get("/health").json()
     assert health["available_generation_models"] == ["llama-3.1-8b-instant", "qwen/qwen3-32b"]
     assert health["available_retrievers"] == ["bm25", "tfidf"]
+    assert health["web_search"] == {"enabled": True, "top_k": 5}
 
 
 def test_chat_page() -> None:
@@ -176,6 +177,7 @@ def test_chat_page() -> None:
     assert "modelChoice" in response.text
     assert "searchChoice" in response.text
     assert "Search" in response.text
+    assert "Web search" in response.text
     assert "TF-IDF" in response.text
     assert "Graph BM25" in response.text
     assert "Qwen3 32B" in response.text
@@ -187,6 +189,8 @@ def test_chat_page() -> None:
     assert "toggleModelMenu" not in response.text
     assert "responseModeTool" in response.text
     assert "imageRewriteTool" in response.text
+    assert "{ value: \"web\", label: t(\"webSearch\") }" in response.text
+    assert "isWebCommand" in response.text
     assert "menu-chip" in response.text
     assert "chip-divider" in response.text
     assert "chip-caret" in response.text
@@ -231,7 +235,7 @@ def test_chat_page() -> None:
     assert "user-request-meta" in response.text
     assert "captureRequestOptions" in response.text
     assert "formatUserRequestMeta" in response.text
-    assert '(mode === "image" || mode === "text_image") && request.image_rewrite' in response.text
+    assert 'if (mode === "web")' in response.text
     assert "image_top_k: requestOptions.image_top_k" in response.text
     assert "composerToolMenu" in response.text
     assert "imageSource" in response.text
@@ -425,15 +429,6 @@ def test_optional_auth() -> None:
 
     assert client.get("/v1/models").status_code == 401
     assert client.get("/v1/models", headers={"Authorization": "Bearer secret"}).status_code == 200
-    assert client.post("/v1/dictionary/lookup", json={"term": "ĐKZ"}).status_code == 401
-    assert (
-        client.post(
-            "/v1/dictionary/lookup",
-            headers={"Authorization": "Bearer secret"},
-            json={"term": "ĐKZ"},
-        ).status_code
-        == 200
-    )
     assert client.post("/v1/dictionary/lookup", json={"term": "ĐKZ"}).status_code == 401
     assert (
         client.post(
