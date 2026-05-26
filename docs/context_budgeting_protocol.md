@@ -22,6 +22,6 @@ Policies:
 - `per-doc-budget`: trims each document before applying the global budget.
 - `score-density`: sorts by retrieval score per estimated token.
 - `sentence-trim`: keeps rank order and trims final text at simple sentence boundaries when possible.
-- `evidence-aware`: scores sentence-like spans by query overlap, retrieval score, and title overlap.
+- `evidence-aware`: keeps the backward-compatible CLI name, but its current implementation subtype is `lexical-query-aware`. It scores sentence-like spans before answer generation using query overlap, retrieval score, and title overlap.
 
 Token counts use `ceil(chars / 4)`. These are estimates for comparison and scheduling, not provider-tokenizer counts.

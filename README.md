@@ -176,6 +176,8 @@ uv run rag-bench run --bench scifact --retrievers bm25 --top-k 3 --limit 20 --ma
 
 BudgetRAG adds a context-budgeting layer between retrieval and generation in the benchmark CLI. It compares fixed and evidence-aware context policies under character, estimated token, latency, compression, and analytical KV-cache budgets. The default policy is `legacy`, which preserves the previous rank-ordered `--max-context-chars` truncation behavior.
 
+The current `evidence-aware` policy is a lightweight lexical/query-aware evidence retention policy. It scores candidate spans before answer generation using query overlap, retrieval score, and title overlap. It is not answer-aware verification and does not perform semantic entailment checking.
+
 This phase does not modify runtime KV-cache internals. KV-cache savings are analytical estimates from reduced estimated context length, not measured VRAM savings and not runtime KV pruning.
 
 Retrieval-only BudgetRAG smoke run:
@@ -200,7 +202,8 @@ uv run python scripts/run_budgetrag_matrix.py \
   --retrievers bm25 \
   --context-policies legacy,char-budget,evidence-aware \
   --context-budgets 1000,2000,4000 \
-  --skip-generation
+  --skip-generation \
+  --run-name phase1b_smoke
 ```
 
 Summarize local matrix outputs:
