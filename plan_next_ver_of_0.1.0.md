@@ -2,9 +2,9 @@
 
 ## Goal
 
-Implement BudgetRAG Phase 1B for the benchmark CLI: context budgeting, context compression policies, evidence-aware retention, context/KV estimate metrics, and reproducible policy matrix tooling.
+Implement BudgetRAG Phase 1B.1 for the benchmark CLI: schema hardening, robust summary tooling, lexical/query-aware evidence policy naming, traceable matrix runs, and a small curated smoke result snapshot.
 
-Status: implemented and validated on `feature/budgetrag-phase1b`; pending final review/merge.
+Status: implemented and validated on `feature/budgetrag-phase1b1`; pending final review/merge.
 
 ## Constraints
 
@@ -12,46 +12,40 @@ Status: implemented and validated on `feature/budgetrag-phase1b`; pending final 
 - Keep `--max-context-chars` supported and use it as the default context budget.
 - Do not implement runtime KV-cache pruning in this phase.
 - Do not expose BudgetRAG controls in the built-in chat UI yet.
+- Do not implement adaptive, bandit, RL, or runtime KV-cache pruning policies.
 - Preserve web search, MiMo routing, dictionary mode, image mode, and all existing retrievers.
 - Do not commit benchmark outputs, datasets, caches, local reports, or secrets.
 
 ## Implementation Plan
 
-1. Add BudgetRAG context data structures and policies
+1. Clarify evidence-aware policy naming
    - Status: done.
-   - Add context item/budget/result dataclasses.
-   - Add `legacy`, `char-budget`, `per-doc-budget`, `score-density`, `sentence-trim`, and `evidence-aware`.
-   - Keep token counts as documented `ceil(chars / 4)` estimates.
+   - Keep the CLI policy name `evidence-aware`.
+   - Record implementation subtype `lexical-query-aware`.
+   - Document that this is not answer-aware verification.
 
-2. Integrate BudgetRAG into benchmark runner
+2. Add explicit experiment metadata
    - Status: done.
-   - Apply context policy after retrieval and before prompt construction.
-   - Compute budget metrics even when `--skip-generation` is used.
-   - Keep prompt construction through a dedicated context-based helper.
+   - Add run metadata to top-level metrics, aggregate rows, and per-query rows.
+   - Include benchmark, retriever, policy, budget, generation mode, and KV profile.
 
-3. Add analytical KV-cache estimates
+3. Harden summary script
    - Status: done.
-   - Estimate KV memory from reduced context token estimates.
-   - Document that estimates are analytical and not measured runtime pruning.
+   - Summarize every aggregate record.
+   - Preserve run metadata in CSV rows.
+   - Handle older metrics files with missing experiment metadata.
 
-4. Expose CLI flags
+4. Improve matrix traceability
    - Status: done.
-   - Add context policy/budget flags.
-   - Add KV profile and disable flags.
-   - Validate positive budgets and known enum values.
+   - Add `--run-name`, `--dry-run`, and `--continue-on-error`.
+   - Write a manifest for real matrix runs.
 
-5. Add matrix and summary scripts
+5. Add curated result snapshot
    - Status: done.
-   - Add compact policy/budget matrix runner.
-   - Add JSON/CSV/Markdown summary helper for local result directories.
+   - Run a small SciFact retrieval-only matrix.
+   - Commit only `docs/reports/phase1b_smoke_results.md`.
 
-6. Update docs
-   - Status: done.
-   - Add BudgetRAG docs under `docs/`.
-   - Update README with usage examples and limitations.
-   - Keep `pdf/` as N/A because this repo currently has no PDF source tree.
-
-7. Validate and commit
+6. Validate and commit
    - Status: done.
    - Run focused tests, full tests, and smoke commands.
-   - Create small Conventional Commits.
+   - Create medium Conventional Commits.

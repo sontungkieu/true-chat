@@ -16,3 +16,13 @@ Status: implemented and validated on `feature/budgetrag-phase1b`; pending final 
 - Version bump: N/A. This repo currently has no `VERSION` or `versioning.py`.
 - PDF rebuild: N/A. This repo currently has no `pdf/` source directory.
 - Mindmap update: N/A. No `*.xmind`, `*.drawio`, or `*.mm` files are tracked in this repo.
+
+## BudgetRAG Phase 1B.1
+
+Status: implemented and validated on `feature/budgetrag-phase1b1`; pending final review/merge.
+
+- Harden benchmark outputs with explicit experiment metadata.
+- Clarify that `evidence-aware` currently means lexical/query-aware span retention.
+- Make BudgetRAG summary generation cover all aggregate records.
+- Add traceable matrix runs with run names, dry-run mode, continue-on-error mode, and manifests.
+- Add a small committed smoke result report under `docs/reports/` while keeping raw matrix outputs ignored.
