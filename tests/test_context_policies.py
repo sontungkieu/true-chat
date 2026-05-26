@@ -75,6 +75,7 @@ def test_evidence_aware_preserves_doc_id_and_prefers_query_overlap() -> None:
     )
 
     assert budgeted.policy_name == "evidence-aware"
+    assert budgeted.metadata["policy_impl"] == "lexical-query-aware"
     assert "[doc-2]" in budgeted.text
     assert "Alpha particles appear in this evidence." in budgeted.text
     assert "Bananas are yellow" not in budgeted.text
