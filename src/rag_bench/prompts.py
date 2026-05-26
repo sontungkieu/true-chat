@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from rag_bench.context_budget import ContextBudget, apply_context_budget
 from rag_bench.types import Query, RetrievalHit
 
 
@@ -15,22 +16,17 @@ def build_rag_messages(
     *,
     max_context_chars: int,
 ) -> list[dict[str, str]]:
-    context_blocks: list[str] = []
-    used_chars = 0
-    for hit in hits:
-        title = f"{hit.title}\n" if hit.title else ""
-        block = f"[{hit.doc_id}]\n{title}{hit.text}".strip()
-        if not block:
-            continue
-        remaining = max_context_chars - used_chars
-        if remaining <= 0:
-            break
-        if len(block) > remaining:
-            block = block[:remaining].rstrip()
-        context_blocks.append(block)
-        used_chars += len(block)
+    budgeted = apply_context_budget(
+        hits,
+        ContextBudget(policy="legacy", max_chars=max_context_chars, query=query.text),
+    )
+    return build_rag_messages_from_context(query, budgeted.text)
 
-    context = "\n\n---\n\n".join(context_blocks) if context_blocks else "No retrieved context."
+
+def build_rag_messages_from_context(
+    query: Query,
+    context: str,
+) -> list[dict[str, str]]:
     user_prompt = f"Question:\n{query.text}\n\nContexts:\n{context}\n\nAnswer:"
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
