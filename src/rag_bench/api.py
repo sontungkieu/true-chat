@@ -51,6 +51,7 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
             "web_search": {
                 "enabled": service.config.web_search_enabled,
                 "top_k": service.config.web_search_top_k,
+                "privilege_key_configured": bool(service.config.web_search_privilege_key),
             },
             "dictionary": getattr(service, "dictionary_status", {}),
         }
@@ -91,6 +92,10 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                 image_rewrite=_optional_bool(
                     payload.get("image_rewrite", payload.get("rewrite_image_query")),
                     "image_rewrite",
+                ),
+                web_search_key=_optional_string(
+                    payload.get("web_search_key", payload.get("search_privilege_key")),
+                    "web_search_key",
                 ),
                 language=_optional_language(
                     payload.get("language", payload.get("response_language", payload.get("locale"))),
@@ -178,6 +183,14 @@ def _optional_bool(value: Any, name: str) -> bool | None:
         if normalized in {"0", "false", "no", "off"}:
             return False
     raise ValueError(f"{name} must be a boolean")
+
+
+def _optional_string(value: Any, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    return value
 
 
 def _optional_language(value: Any) -> str | None:

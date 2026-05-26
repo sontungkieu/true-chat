@@ -455,7 +455,12 @@ def test_web_command_uses_web_search_results_as_rag_context() -> None:
     llm = FakeLLM()
     web = FakeWebSearchClient()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, web_search_top_k=3, model_id="rag-test"),
+        config=ChatProxyConfig(
+            top_k=2,
+            web_search_top_k=3,
+            web_search_privilege_key="search-secret",
+            model_id="rag-test",
+        ),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -468,7 +473,11 @@ def test_web_command_uses_web_search_results_as_rag_context() -> None:
         web_search_client=web,
     )
 
-    result = service.answer([{"role": "user", "content": "/web true chat internship"}], language="vi")
+    result = service.answer(
+        [{"role": "user", "content": "/web true chat internship"}],
+        web_search_key="search-secret",
+        language="vi",
+    )
 
     assert web.query == "true chat internship"
     assert web.limit == 3
@@ -480,6 +489,57 @@ def test_web_command_uses_web_search_results_as_rag_context() -> None:
     assert "Web search results" in llm.messages[1]["content"]
     assert "True Chat added web search" in llm.messages[1]["content"]
     assert "Required response language: Vietnamese" in llm.messages[0]["content"]
+
+
+def test_web_search_requires_privilege_key() -> None:
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            web_search_top_k=3,
+            web_search_privilege_key="search-secret",
+            model_id="rag-test",
+        ),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=FakeRetriever(),
+        llm=FakeLLM(),
+        web_search_client=FakeWebSearchClient(),
+    )
+
+    try:
+        service.answer([{"role": "user", "content": "/web true chat internship"}], web_search_key="wrong")
+    except ValueError as exc:
+        assert "Invalid web search privilege key" in str(exc)
+    else:
+        raise AssertionError("web search should reject an invalid privilege key")
+
+
+def test_web_search_requires_configured_privilege_key() -> None:
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, web_search_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=FakeRetriever(),
+        llm=FakeLLM(),
+        web_search_client=FakeWebSearchClient(),
+    )
+
+    try:
+        service.answer([{"role": "user", "content": "/web true chat internship"}], web_search_key="search-secret")
+    except ValueError as exc:
+        assert "Web search privilege key is not configured" in str(exc)
+    else:
+        raise AssertionError("web search should require a configured server-side key")
 
 
 def test_image_and_dictionary_modes_are_disabled_by_default() -> None:

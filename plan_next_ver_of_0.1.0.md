@@ -317,6 +317,8 @@ Status: implemented in the current working tree; pending final commit.
    - Keep the presentation artifacts under the `internship` branch scope.
    - Add chat-only web search mode with `/web`, `/search`, and `response_mode=web`.
    - Fetch DuckDuckGo HTML results with Python stdlib, convert title/snippet/URL rows into cited `web-*` RAG sources, and use the selected generation model for the final answer.
+   - Require a server-configured web search privilege key before any live web search request.
+   - Add a local UI field where the user pastes the web search key; do not export that key with chat history.
    - Disable image and dictionary modes by default in `ChatProxyConfig` and the built-in UI.
    - Keep explicit `--enable-image` and `--enable-dictionary` flags for legacy demos.
    - Update README and focused tests for the internship web-search profile.
@@ -335,7 +337,7 @@ Status: implemented in the current working tree; pending final commit.
   - mobile width layout remains usable,
   - phone safe-area layout keeps the menu button visible and the composer inside the screen.
 - Confirm `rag-bench run --retrievers bm25,tfidf,vector` and `rag-bench serve --retriever bm25` still use registry-backed strategy ids.
-- Confirm `/web latest RAG benchmark news` returns cited `web-*` sources when web search is enabled.
+- Confirm `/web latest RAG benchmark news` rejects missing/invalid web search privilege keys and returns cited `web-*` sources only after the correct key is provided.
 - Confirm `/img digit 7` and `/dict AMONIT` are disabled by default on the internship branch.
 - When legacy flags are enabled, confirm `/img digit 7` returns image results with thumbnails and no live Groq generation call.
 - Benchmark SciFact retrieval-only across baseline, deterministic, vector, and LLM-query strategies and record the run paths/results.

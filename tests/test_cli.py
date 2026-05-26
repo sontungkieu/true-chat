@@ -80,6 +80,8 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "8",
             "--web-search-timeout",
             "4.5",
+            "--web-search-privilege-key",
+            "search-secret",
             "--enable-image",
             "--image-top-k",
             "7",
@@ -129,6 +131,7 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.web_search_enabled is True
     assert seen["config"].chat.web_search_top_k == 8
     assert seen["config"].chat.web_search_timeout_s == 4.5
+    assert seen["config"].chat.web_search_privilege_key == "search-secret"
     assert seen["config"].chat.image_enabled is True
     assert seen["config"].chat.image_top_k == 7
     assert seen["config"].chat.dictionary_enabled is True

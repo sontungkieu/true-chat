@@ -4,6 +4,7 @@ import json
 import re
 import time
 import uuid
+import hmac
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -84,6 +85,7 @@ class ChatProxyConfig:
     web_search_enabled: bool = True
     web_search_top_k: int = 5
     web_search_timeout_s: float = 8.0
+    web_search_privilege_key: str = ""
     image_enabled: bool = False
     image_top_k: int = 5
     dictionary_enabled: bool = False
@@ -160,6 +162,7 @@ class RagChatService:
         image_top_k: int | None = None,
         response_mode: str | None = None,
         image_rewrite: bool | None = None,
+        web_search_key: str | None = None,
         language: str | None = None,
         memory: bool | None = None,
     ) -> ChatServiceResult:
@@ -183,6 +186,7 @@ class RagChatService:
         if mode == "web":
             if not self.config.web_search_enabled or self.web_search_client is None:
                 raise ValueError("Web search mode is disabled.")
+            _validate_web_search_privilege_key(self.config, web_search_key)
             request_top_k = _clamp_top_k(top_k, fallback=self.config.web_search_top_k)
             web_started = time.perf_counter()
             web_results = self.web_search_client.search(question, limit=request_top_k)
@@ -857,6 +861,15 @@ def _config_uses_dictionary(config: ChatProxyConfig) -> bool:
         if get_retriever_spec(name).category == "dictionary":
             return True
     return False
+
+
+def _validate_web_search_privilege_key(config: ChatProxyConfig, provided_key: str | None) -> None:
+    expected = str(config.web_search_privilege_key or "").strip()
+    if not expected:
+        raise ValueError("Web search privilege key is not configured.")
+    provided = str(provided_key or "").strip()
+    if not provided or not hmac.compare_digest(provided, expected):
+        raise ValueError("Invalid web search privilege key.")
 
 
 def _disabled_dictionary_result() -> DictionaryLoadResult:

@@ -137,6 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=8.0,
         help="Timeout in seconds for the DuckDuckGo web search request.",
     )
+    serve_parser.add_argument(
+        "--web-search-privilege-key",
+        default=None,
+        help="Privilege key required in chat requests for web search. Defaults to RAG_WEB_SEARCH_PRIVILEGE_KEY.",
+    )
     serve_parser.add_argument("--enable-image", action="store_true", help="Enable the local /img image demo mode.")
     serve_parser.add_argument("--image-top-k", type=int, default=5, help="Default number of image results for /img.")
     serve_parser.add_argument("--enable-dictionary", action="store_true", help="Enable local PB dictionary mode.")
@@ -340,6 +345,7 @@ def _serve(args: argparse.Namespace) -> int:
         web_search_enabled=not args.disable_web_search,
         web_search_top_k=args.web_search_top_k,
         web_search_timeout_s=args.web_search_timeout,
+        web_search_privilege_key=args.web_search_privilege_key or os.getenv("RAG_WEB_SEARCH_PRIVILEGE_KEY", ""),
         image_enabled=args.enable_image,
         image_top_k=args.image_top_k,
         dictionary_enabled=args.enable_dictionary,

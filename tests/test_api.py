@@ -30,6 +30,7 @@ class FakeService:
         self.seen_image_top_k = None
         self.seen_response_mode = None
         self.seen_image_rewrite = None
+        self.seen_web_search_key = None
         self.seen_language = None
         self.seen_memory = None
 
@@ -45,6 +46,7 @@ class FakeService:
         image_top_k=None,
         response_mode=None,
         image_rewrite=None,
+        web_search_key=None,
         language=None,
         memory=None,
     ):
@@ -57,6 +59,7 @@ class FakeService:
         self.seen_image_top_k = image_top_k
         self.seen_response_mode = response_mode
         self.seen_image_rewrite = image_rewrite
+        self.seen_web_search_key = web_search_key
         self.seen_language = language
         self.seen_memory = memory
         response = {
@@ -144,7 +147,7 @@ def test_health_and_models() -> None:
     health = client.get("/health").json()
     assert health["available_generation_models"] == ["llama-3.1-8b-instant", "qwen/qwen3-32b"]
     assert health["available_retrievers"] == ["bm25", "tfidf"]
-    assert health["web_search"] == {"enabled": True, "top_k": 5}
+    assert health["web_search"] == {"enabled": True, "top_k": 5, "privilege_key_configured": False}
 
 
 def test_chat_page() -> None:
@@ -178,6 +181,9 @@ def test_chat_page() -> None:
     assert "searchChoice" in response.text
     assert "Search" in response.text
     assert "Web search" in response.text
+    assert "webSearchKey" in response.text
+    assert "Web search key" in response.text
+    assert "webSearchKeyMissing" in response.text
     assert "TF-IDF" in response.text
     assert "Graph BM25" in response.text
     assert "Qwen3 32B" in response.text
@@ -263,6 +269,8 @@ def test_chat_page() -> None:
     assert "normalizeImportedHistory" in response.text
     assert "settingsForExport" in response.text
     assert "delete exported.apiKey" in response.text
+    assert "delete exported.webSearchKey" in response.text
+    assert "delete compact.request.web_search_key" in response.text
     assert "editAssistantFeedback" in response.text
     assert "feedback-note" in response.text
     assert "feedbackPrompt" in response.text
@@ -321,6 +329,7 @@ def test_chat_completion_non_stream() -> None:
             "image_top_k": 4,
             "response_mode": "text_image",
             "image_rewrite": True,
+            "web_search_key": "search-secret",
             "language": "vi",
             "memory": False,
         },
@@ -340,6 +349,7 @@ def test_chat_completion_non_stream() -> None:
     assert service.seen_image_top_k == 4
     assert service.seen_response_mode == "text_image"
     assert service.seen_image_rewrite is True
+    assert service.seen_web_search_key == "search-secret"
     assert service.seen_language == "vi"
     assert service.seen_memory is False
 

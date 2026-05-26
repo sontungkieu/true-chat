@@ -2103,6 +2103,10 @@
             <input id="apiKey" type="password" autocomplete="off" placeholder="Optional">
           </div>
           <div class="field">
+            <label for="webSearchKey" data-i18n="webSearchPrivilegeKey">Web search key</label>
+            <input id="webSearchKey" type="password" autocomplete="off" placeholder="Required for web search">
+          </div>
+          <div class="field">
             <label for="modelChoice" data-i18n="model">Model</label>
             <select id="modelChoice"></select>
           </div>
@@ -2280,6 +2284,7 @@
     const toolSearch = document.getElementById("toolSearch");
     const toolModel = document.getElementById("toolModel");
     const apiKeyInput = document.getElementById("apiKey");
+    const webSearchKeyInput = document.getElementById("webSearchKey");
     const modelChoiceInput = document.getElementById("modelChoice");
     const searchChoiceInput = document.getElementById("searchChoice");
     const imageTopKInput = document.getElementById("imageTopK");
@@ -2329,6 +2334,8 @@
         model: "Model",
         searchAlgorithm: "Search",
         webSearch: "Web search",
+        webSearchPrivilegeKey: "Web search key",
+        webSearchKeyMissing: "Paste the web search key in Local settings before using Web search.",
         imageTopK: "Images",
         language: "Language",
         devMode: "Dev mode",
@@ -2398,6 +2405,8 @@
         model: "Mô hình",
         searchAlgorithm: "Tìm kiếm",
         webSearch: "Tìm web",
+        webSearchPrivilegeKey: "Key tìm web",
+        webSearchKeyMissing: "Hãy paste key tìm web trong Cài đặt local trước khi dùng Tìm web.",
         imageTopK: "Số ảnh",
         language: "Ngôn ngữ",
         devMode: "Chế độ dev",
@@ -2511,6 +2520,7 @@
 
     for (const input of [
       apiKeyInput,
+      webSearchKeyInput,
       modelChoiceInput,
       searchChoiceInput,
       imageTopKInput,
@@ -2589,6 +2599,7 @@
         const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
         return {
           apiKey: String(parsed.apiKey || ""),
+          webSearchKey: String(parsed.webSearchKey || ""),
           model: String(parsed.model || defaultModelChoice()),
           search: String(parsed.search || parsed.retriever || DEFAULT_RETRIEVER),
           imageTopK: Number(parsed.imageTopK || 5),
@@ -2606,6 +2617,7 @@
       } catch (_) {
         return {
           apiKey: "",
+          webSearchKey: "",
           model: defaultModelChoice(),
           search: DEFAULT_RETRIEVER,
           imageTopK: 5,
@@ -2625,6 +2637,7 @@
 
     function applySettings() {
       apiKeyInput.value = settings.apiKey || "";
+      webSearchKeyInput.value = settings.webSearchKey || "";
       settings.language = normalizeLanguage(settings.language);
       languageModeInput.value = settings.language;
       document.documentElement.lang = settings.language;
@@ -2662,6 +2675,7 @@
       const previousMemory = settings.memory;
       const previousDictionaryCrossRef = settings.dictionaryCrossRef;
       settings.apiKey = apiKeyInput.value.trim();
+      settings.webSearchKey = webSearchKeyInput.value.trim();
       settings.language = normalizeLanguage(languageModeInput.value);
       document.documentElement.lang = settings.language;
       settings.devMode = Boolean(devModeInput.checked);
@@ -2993,6 +3007,7 @@
         element.textContent = t(element.dataset.i18n);
       });
       apiKeyInput.placeholder = t("optional");
+      webSearchKeyInput.placeholder = t("webSearchPrivilegeKey");
       promptInput.placeholder = t("sendMessage");
       const statusLabel = document.querySelector(".status-pill span:last-child");
       if (statusLabel) statusLabel.textContent = t("proxyReady");
@@ -3061,6 +3076,11 @@
 
     function compactMessageForStorage(message, options = {}) {
       const compact = { ...message };
+      if (compact.request && typeof compact.request === "object") {
+        compact.request = { ...compact.request };
+        delete compact.request.web_search_key;
+        delete compact.request.search_privilege_key;
+      }
       if (Array.isArray(compact.sources)) {
         compact.sources = options.dropSources ? [] : compact.sources.map(compactSourceForStorage);
       }
@@ -3094,7 +3114,7 @@
           storage_key: STORAGE_KEY
         },
         settings: settingsForExport(),
-        state: JSON.parse(JSON.stringify(state))
+        state: compactStateForStorage(state)
       };
       downloadJson(payload, "true-chat-history-" + timestampForFilename() + ".json");
     }
@@ -3102,6 +3122,7 @@
     function settingsForExport() {
       const exported = { ...settings };
       delete exported.apiKey;
+      delete exported.webSearchKey;
       return exported;
     }
 
@@ -4514,6 +4535,12 @@
       const userMessage = conversation.messages[userIndex];
       const requestOptions = userMessage?.request || captureRequestOptions(userMessage?.content || "");
       if (userMessage && userMessage.role === "user") userMessage.request = requestOptions;
+      if (requestOptions.response_mode === "web" && !String(settings.webSearchKey || "").trim()) {
+        showNotice(t("webSearchKeyMissing"));
+        saveState();
+        render();
+        return;
+      }
       const assistant = { role: "assistant", content: "", pending: true, sources: [], meta: null };
       conversation.messages.push(assistant);
       conversation.updatedAt = Date.now();
@@ -4564,6 +4591,7 @@
           image_top_k: requestOptions.image_top_k,
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
+          web_search_key: requestOptions.response_mode === "web" ? String(settings.webSearchKey || "").trim() : undefined,
           language: requestOptions.language,
           memory: requestOptions.memory,
           stream: true
@@ -4595,6 +4623,7 @@
           image_top_k: requestOptions.image_top_k,
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
+          web_search_key: requestOptions.response_mode === "web" ? String(settings.webSearchKey || "").trim() : undefined,
           language: requestOptions.language,
           memory: requestOptions.memory,
           stream: false
