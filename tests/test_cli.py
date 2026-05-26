@@ -32,6 +32,14 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
             "10",
             "--output-dir",
             str(tmp_path / "runs"),
+            "--context-policy",
+            "evidence-aware",
+            "--context-budget-chars",
+            "1000",
+            "--per-doc-budget-chars",
+            "250",
+            "--kv-profile",
+            "qwen2.5-14b",
         ]
     )
 
@@ -47,6 +55,20 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
     assert seen["config"].key_tokens_per_minute == 6000
     assert seen["config"].key_requests_per_minute == 30
     assert seen["config"].rate_limit_scope == "per-key"
+    assert seen["config"].context_policy == "evidence-aware"
+    assert seen["config"].context_budget_chars == 1000
+    assert seen["config"].per_doc_budget_chars == 250
+    assert seen["config"].record_context_metrics is True
+    assert seen["config"].kv_profile == "qwen2.5-14b"
+    assert seen["config"].disable_kv_estimate is False
+
+
+def test_cli_run_rejects_invalid_context_budget(capsys) -> None:
+    exit_code = cli.main(["run", "--context-budget-chars", "0"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--context-budget-chars must be positive" in captured.err
 
 
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:

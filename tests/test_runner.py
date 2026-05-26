@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -213,7 +214,17 @@ def test_run_benchmark_can_skip_generation_without_groq_keys(tmp_path: Path) -> 
     assert summary["key_rate_limits"] == {}
     assert summary["aggregates"][0]["retriever"] == "bm25"
     assert summary["aggregates"][0]["query_count"] == 1
+    assert summary["aggregates"][0]["context_budget"]["context_policy"] == "legacy"
+    assert summary["aggregates"][0]["kv_estimate"]["kv_profile"] == "generic-small"
     assert summary["aggregates"][0]["generation"] == {"skipped": True, "generation_count": 0}
+    rows = [
+        json.loads(line)
+        for line in (Path(summary["output_dir"]) / "query_results.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[0]["context_budget"]["policy"] == "legacy"
+    assert rows[0]["context_budget"]["retrieved_docs"] == 1
+    assert rows[0]["kv_estimate"]["profile"] == "generic-small"
+    assert rows[0]["estimated_prompt_tokens_saved_by_budget"] >= 0
 
 
 def test_run_benchmark_uses_groq_for_llm_retriever_when_generation_is_skipped(tmp_path: Path) -> None:
