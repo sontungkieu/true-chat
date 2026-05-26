@@ -30,7 +30,7 @@ uv run python scripts/summarize_budgetrag_results.py \
 ## Summary
 
 | retriever | policy | budget | queries | kept chars | compression | token savings | KV savings | quality |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | bm25 | char-budget | 1000 | 10 | 999.7 | 0.2161 | 961 | 900.9 |  |
 | bm25 | char-budget | 2000 | 10 | 2000 | 0.4324 | 711 | 666.6 |  |
 | bm25 | char-budget | 4000 | 10 | 3906 | 0.838 | 234.2 | 219.6 |  |
