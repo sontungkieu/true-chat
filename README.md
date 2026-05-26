@@ -172,6 +172,45 @@ If Groq reports one shared organization quota, switch the scheduler scope:
 uv run rag-bench run --bench scifact --retrievers bm25 --top-k 3 --limit 20 --max-context-chars 2500 --max-completion-tokens 128 --key-tpm 6000 --key-rpm 30 --rate-limit-scope shared --max-consecutive-errors 2
 ```
 
+## BudgetRAG Phase 1B: Context-Budgeted RAG
+
+BudgetRAG adds a context-budgeting layer between retrieval and generation in the benchmark CLI. It compares fixed and evidence-aware context policies under character, estimated token, latency, compression, and analytical KV-cache budgets. The default policy is `legacy`, which preserves the previous rank-ordered `--max-context-chars` truncation behavior.
+
+This phase does not modify runtime KV-cache internals. KV-cache savings are analytical estimates from reduced estimated context length, not measured VRAM savings and not runtime KV pruning.
+
+Retrieval-only BudgetRAG smoke run:
+
+```bash
+uv run rag-bench run \
+  --bench scifact \
+  --retrievers bm25 \
+  --top-k 5 \
+  --limit 10 \
+  --skip-generation \
+  --context-policy evidence-aware \
+  --context-budget-chars 2000
+```
+
+Compact matrix run:
+
+```bash
+uv run python scripts/run_budgetrag_matrix.py \
+  --bench scifact \
+  --limit 20 \
+  --retrievers bm25 \
+  --context-policies legacy,char-budget,evidence-aware \
+  --context-budgets 1000,2000,4000 \
+  --skip-generation
+```
+
+Summarize local matrix outputs:
+
+```bash
+uv run python scripts/summarize_budgetrag_results.py benchmark_results/budgetrag
+```
+
+Use `--kv-profile generic-small` or `--kv-profile qwen2.5-14b` to choose the analytical KV profile, and `--disable-kv-estimate` when those fields are not needed. If `--context-budget-chars` is omitted, the runner uses `--max-context-chars` as the BudgetRAG budget. When both are provided, `--context-budget-chars` controls the context policy and `--max-context-chars` remains a prompt safety ceiling.
+
 ## Built-In Chat UI And OpenAI Proxy
 
 Start the lightweight built-in RAG chat UI and OpenAI-compatible proxy:
