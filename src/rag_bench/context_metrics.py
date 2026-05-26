@@ -15,6 +15,7 @@ def context_budget_metrics(
     kept_docs = int(budgeted.metadata.get("kept_doc_count", len({item.id for item in budgeted.items})))
     return {
         "policy": budgeted.policy_name,
+        "policy_impl": budgeted.metadata.get("policy_impl"),
         "budget_chars": budget.max_chars,
         "per_doc_budget_chars": budget.per_doc_max_chars,
         "retrieved_docs": retrieved_docs,
@@ -37,6 +38,7 @@ def aggregate_context_budget_metrics(rows: list[dict[str, Any]]) -> dict[str, An
     first = rows[0]
     output: dict[str, Any] = {
         "context_policy": first.get("policy"),
+        "context_policy_impl": first.get("policy_impl"),
         "context_budget_chars": first.get("budget_chars"),
         "per_doc_budget_chars": first.get("per_doc_budget_chars"),
         "query_count": len(rows),

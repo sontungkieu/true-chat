@@ -80,6 +80,7 @@ def run_benchmark(
     aggregate_rows: list[dict[str, Any]] = []
     consecutive_generation_errors = 0
     stop_reason: str | None = None
+    created_at = datetime.now(timezone.utc).isoformat()
 
     for retriever_name in config.retrievers:
         if stop_reason is not None:
@@ -148,6 +149,13 @@ def run_benchmark(
             answer_em = exact_match(answer, query.reference_answers)
             answer_f1 = token_f1(answer, query.reference_answers)
             row = {
+                "experiment": _experiment_metadata(
+                    config,
+                    data=data,
+                    run_id=run_id,
+                    created_at=created_at,
+                    retriever=retriever.name,
+                ),
                 "run_id": run_id,
                 "benchmark": data.name,
                 "dataset_id": data.dataset_id,
@@ -221,6 +229,13 @@ def run_benchmark(
                 time.sleep(config.sleep_between_queries_s)
 
         aggregate = {
+            "experiment": _experiment_metadata(
+                config,
+                data=data,
+                run_id=run_id,
+                created_at=created_at,
+                retriever=retriever.name,
+            ),
             "run_id": run_id,
             "benchmark": data.name,
             "dataset_id": data.dataset_id,
@@ -258,7 +273,14 @@ def run_benchmark(
 
     summary = {
         "run_id": run_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at,
+        "experiment": _experiment_metadata(
+            config,
+            data=data,
+            run_id=run_id,
+            created_at=created_at,
+            retriever=None,
+        ),
         "config": _serializable_config(config),
         "benchmark": {
             "name": data.name,
@@ -305,6 +327,43 @@ def _serializable_config(config: RunConfig) -> dict[str, Any]:
     output["groq_keys_path"] = str(config.groq_keys_path)
     output["retrievers"] = list(config.retrievers)
     return output
+
+
+def _experiment_metadata(
+    config: RunConfig,
+    *,
+    data: BenchmarkData,
+    run_id: str,
+    created_at: str,
+    retriever: str | None,
+) -> dict[str, Any]:
+    context_budget_chars = config.context_budget_chars or config.max_context_chars
+    generation_model = None if config.skip_generation else config.model
+    generation_provider = None if config.skip_generation else "groq"
+    return {
+        "run_id": run_id,
+        "created_at": created_at,
+        "bench": config.bench,
+        "benchmark": data.name,
+        "dataset_id": data.dataset_id,
+        "retriever": retriever,
+        "retrievers": list(config.retrievers),
+        "top_k": config.top_k,
+        "context_policy": config.context_policy,
+        "context_policy_impl": _context_policy_impl_name(config.context_policy),
+        "context_budget_chars": context_budget_chars,
+        "per_doc_budget_chars": config.per_doc_budget_chars,
+        "skip_generation": config.skip_generation,
+        "generation_provider": generation_provider,
+        "generation_model": generation_model,
+        "kv_profile": None if config.disable_kv_estimate else config.kv_profile,
+    }
+
+
+def _context_policy_impl_name(policy: str) -> str:
+    from rag_bench.context_policies import context_policy_impl_name
+
+    return context_policy_impl_name(policy)
 
 
 def _effective_context_budget(config: RunConfig, *, query_text: str) -> ContextBudget:

@@ -28,6 +28,15 @@ CONTEXT_POLICY_NAMES = (
     "evidence-aware",
 )
 
+CONTEXT_POLICY_IMPLS = {
+    "legacy": "legacy-sequential-truncation",
+    "char-budget": "ranked-char-budget",
+    "per-doc-budget": "ranked-per-doc-char-budget",
+    "score-density": "score-per-estimated-token",
+    "sentence-trim": "ranked-sentence-boundary-trim",
+    "evidence-aware": "lexical-query-aware",
+}
+
 _WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？;；:])\s+|\n+")
 _STOPWORDS = {
@@ -92,6 +101,10 @@ def apply_context_policy(items: list[ContextItem], budget: ContextBudget) -> Bud
     return _evidence_aware(items, budget)
 
 
+def context_policy_impl_name(policy: str) -> str:
+    return CONTEXT_POLICY_IMPLS.get(policy, "unknown")
+
+
 def _legacy(items: list[ContextItem], budget: ContextBudget) -> BudgetedContext:
     started = time.perf_counter()
     ranked_items = _limit_docs(_nonempty_items(items), budget.max_docs)
@@ -119,7 +132,10 @@ def _legacy(items: list[ContextItem], budget: ContextBudget) -> BudgetedContext:
         text=text,
         policy_name="legacy",
         latency_s=time.perf_counter() - started,
-        metadata={"legacy_separator_accounting": "separators are not counted, matching the original prompt builder"},
+        metadata={
+            "policy_impl": context_policy_impl_name("legacy"),
+            "legacy_separator_accounting": "separators are not counted, matching the original prompt builder",
+        },
     )
 
 
@@ -133,6 +149,7 @@ def _char_budget(items: list[ContextItem], budget: ContextBudget) -> BudgetedCon
         text=text,
         policy_name="char-budget",
         latency_s=time.perf_counter() - started,
+        metadata={"policy_impl": context_policy_impl_name("char-budget")},
     )
 
 
@@ -148,7 +165,7 @@ def _per_doc_budget(items: list[ContextItem], budget: ContextBudget) -> Budgeted
         text=text,
         policy_name="per-doc-budget",
         latency_s=time.perf_counter() - started,
-        metadata={"per_doc_max_chars": per_doc_max_chars},
+        metadata={"policy_impl": context_policy_impl_name("per-doc-budget"), "per_doc_max_chars": per_doc_max_chars},
     )
 
 
@@ -170,7 +187,7 @@ def _score_density(items: list[ContextItem], budget: ContextBudget) -> BudgetedC
         text=text,
         policy_name="score-density",
         latency_s=time.perf_counter() - started,
-        metadata={"sort": "retrieval_score_per_estimated_token"},
+        metadata={"policy_impl": context_policy_impl_name("score-density"), "sort": "retrieval_score_per_estimated_token"},
     )
 
 
@@ -184,6 +201,7 @@ def _sentence_trim(items: list[ContextItem], budget: ContextBudget) -> BudgetedC
         text=text,
         policy_name="sentence-trim",
         latency_s=time.perf_counter() - started,
+        metadata={"policy_impl": context_policy_impl_name("sentence-trim")},
     )
 
 
@@ -220,7 +238,12 @@ def _evidence_aware(items: list[ContextItem], budget: ContextBudget) -> Budgeted
     if not candidates or useful_overlap == 0:
         fallback = _char_budget(items, budget)
         fallback.policy_name = "evidence-aware"
-        fallback.metadata = {**fallback.metadata, "fallback_policy": "char-budget", "fallback_reason": "no_query_overlap"}
+        fallback.metadata = {
+            **fallback.metadata,
+            "policy_impl": context_policy_impl_name("evidence-aware"),
+            "fallback_policy": "char-budget",
+            "fallback_reason": "no_query_overlap",
+        }
         return fallback
 
     sorted_items = [candidate[3] for candidate in sorted(candidates, key=lambda item: item[:3], reverse=True)]
@@ -231,7 +254,11 @@ def _evidence_aware(items: list[ContextItem], budget: ContextBudget) -> Budgeted
         text=text,
         policy_name="evidence-aware",
         latency_s=time.perf_counter() - started,
-        metadata={"candidate_span_count": len(candidates), "scoring": "query_overlap_plus_retrieval_score_and_title_overlap"},
+        metadata={
+            "policy_impl": context_policy_impl_name("evidence-aware"),
+            "candidate_span_count": len(candidates),
+            "scoring": "query_overlap_plus_retrieval_score_and_title_overlap",
+        },
     )
 
 
