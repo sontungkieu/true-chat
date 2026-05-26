@@ -1,9 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class MatrixJob:
+    retriever: str
+    policy: str
+    budget: int
+    output_dir: Path
+    command: list[str]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,11 +30,51 @@ def main(argv: list[str] | None = None) -> int:
     if not budgets or any(value <= 0 for value in budgets):
         raise SystemExit("--context-budgets must include positive integers")
 
-    output_dir = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
+    matrix_dir = args.output_dir / args.run_name if args.run_name else args.output_dir
+    jobs = build_matrix_jobs(args, retrievers=retrievers, policies=policies, budgets=budgets, matrix_dir=matrix_dir)
+    manifest = _manifest(args, retrievers=retrievers, policies=policies, budgets=budgets, jobs=jobs)
+    if args.dry_run:
+        for job in jobs:
+            print(" ".join(job.command), flush=True)
+        print(json.dumps(manifest, indent=2), flush=True)
+        return 0
+
+    matrix_dir.mkdir(parents=True, exist_ok=True)
+    failures: list[dict[str, object]] = []
+    for job in jobs:
+        job.output_dir.mkdir(parents=True, exist_ok=True)
+        print(" ".join(job.command), flush=True)
+        completed = subprocess.run(job.command, check=False)
+        if completed.returncode:
+            failure = {
+                "retriever": job.retriever,
+                "policy": job.policy,
+                "budget": job.budget,
+                "returncode": completed.returncode,
+            }
+            failures.append(failure)
+            if not args.continue_on_error:
+                manifest["failures"] = failures
+                (matrix_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+                raise SystemExit(completed.returncode)
+    manifest["failures"] = failures
+    (matrix_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return 1 if failures and not args.continue_on_error else 0
+
+
+def build_matrix_jobs(
+    args: argparse.Namespace,
+    *,
+    retrievers: list[str],
+    policies: list[str],
+    budgets: list[int],
+    matrix_dir: Path,
+) -> list[MatrixJob]:
+    jobs: list[MatrixJob] = []
     for retriever in retrievers:
         for policy in policies:
             for budget in budgets:
+                output_dir = matrix_dir / _job_slug(args.bench, retriever, policy, budget)
                 command = [
                     sys.executable,
                     "-m",
@@ -63,9 +115,8 @@ def main(argv: list[str] | None = None) -> int:
                     command.append("--disable-kv-estimate")
                 if args.allow_large_bench:
                     command.append("--allow-large-bench")
-                print(" ".join(command), flush=True)
-                subprocess.run(command, check=True)
-    return 0
+                jobs.append(MatrixJob(retriever=retriever, policy=policy, budget=budget, output_dir=output_dir, command=command))
+    return jobs
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -77,6 +128,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context-budgets", default="1000,2000,4000")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--output-dir", type=Path, default=Path("benchmark_results/budgetrag"))
+    parser.add_argument("--run-name", default=None, help="Optional matrix run name used as a subdirectory.")
+    parser.add_argument("--dry-run", action="store_true", help="Print commands and manifest without running benchmarks.")
+    parser.add_argument("--continue-on-error", action="store_true", help="Continue running the matrix after a failed job.")
     parser.add_argument("--skip-generation", action="store_true")
     parser.add_argument("--max-context-chars", type=int, default=12_000)
     parser.add_argument("--per-doc-budget-chars", type=int, default=None)
@@ -88,6 +142,43 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-kv-estimate", action="store_true")
     parser.add_argument("--allow-large-bench", action="store_true")
     return parser
+
+
+def _manifest(
+    args: argparse.Namespace,
+    *,
+    retrievers: list[str],
+    policies: list[str],
+    budgets: list[int],
+    jobs: list[MatrixJob],
+) -> dict[str, object]:
+    return {
+        "bench": args.bench,
+        "limit": args.limit,
+        "retrievers": retrievers,
+        "context_policies": policies,
+        "context_budgets": budgets,
+        "top_k": args.top_k,
+        "skip_generation": args.skip_generation,
+        "kv_profile": args.kv_profile,
+        "run_name": args.run_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "commands": [
+            {
+                "retriever": job.retriever,
+                "context_policy": job.policy,
+                "context_budget_chars": job.budget,
+                "output_dir": str(job.output_dir),
+                "command": job.command,
+            }
+            for job in jobs
+        ],
+    }
+
+
+def _job_slug(bench: str, retriever: str, policy: str, budget: int) -> str:
+    raw = f"{bench}__{retriever}__{policy}__{budget}"
+    return "".join(char if char.isalnum() or char in "._-" else "-" for char in raw)
 
 
 def _split_csv(value: str) -> list[str]:
