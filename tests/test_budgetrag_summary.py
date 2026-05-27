@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -83,7 +85,7 @@ def test_summary_main_writes_csv_and_markdown(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "bm25" in out_csv.read_text(encoding="utf-8")
-    assert "| retriever | policy | budget |" in out_md.read_text(encoding="utf-8")
+    assert "| retriever | policy | profile | budget |" in out_md.read_text(encoding="utf-8")
 
 
 def test_summary_includes_adaptive_budget_columns(tmp_path: Path) -> None:
@@ -96,12 +98,19 @@ def test_summary_includes_adaptive_budget_columns(tmp_path: Path) -> None:
     aggregate["context_budget"]["context_policy_impl"] = "deterministic-adaptive-heuristic"
     aggregate["context_budget"]["adaptive_budget"] = {
         "enabled": True,
+        "adaptive_profile": "balanced",
+        "adaptive_calibration_version": "phase1c2-v1",
         "adaptive_selected_policy_counts": {"score-density": 2},
         "adaptive_selected_budget_counts": {"1000": 2},
         "adaptive_reason_counts": {"high-confidence-retrieval": 2},
         "avg_adaptive_query_est_tokens": 8,
         "avg_adaptive_score_gap": 1.25,
         "avg_adaptive_score_entropy": 0.42,
+        "avg_adaptive_normalized_score_gap": 0.25,
+        "min_adaptive_normalized_score_gap": 0.2,
+        "max_adaptive_normalized_score_gap": 0.3,
+        "avg_adaptive_normalized_score_entropy": 0.7,
+        "avg_adaptive_score_confidence": 0.075,
     }
     metrics_path = tmp_path / "metrics.json"
     metrics_path.write_text(json.dumps(metrics, ensure_ascii=False), encoding="utf-8")
@@ -110,8 +119,11 @@ def test_summary_includes_adaptive_budget_columns(tmp_path: Path) -> None:
 
     assert rows[0]["context_policy"] == "adaptive-heuristic"
     assert rows[0]["adaptive_enabled"] is True
+    assert rows[0]["adaptive_profile"] == "balanced"
+    assert rows[0]["adaptive_calibration_version"] == "phase1c2-v1"
     assert rows[0]["adaptive_selected_policy_counts"] == {"score-density": 2}
     assert rows[0]["avg_adaptive_score_gap"] == 1.25
+    assert rows[0]["avg_adaptive_normalized_score_gap"] == 0.25
 
 
 def test_matrix_dry_run_prints_commands_without_creating_output(tmp_path: Path, capsys) -> None:
@@ -129,6 +141,8 @@ def test_matrix_dry_run_prints_commands_without_creating_output(tmp_path: Path, 
             "legacy,evidence-aware,adaptive-heuristic",
             "--context-budgets",
             "1000",
+            "--adaptive-profiles",
+            "balanced",
             "--top-k",
             "3",
             "--skip-generation",
@@ -146,8 +160,27 @@ def test_matrix_dry_run_prints_commands_without_creating_output(tmp_path: Path, 
     assert "--context-policy evidence-aware" in captured.out
     assert "--context-policy adaptive-heuristic" in captured.out
     assert "--adaptive-medium-budget 1000" in captured.out
+    assert "--adaptive-profile balanced" in captured.out
+    assert captured.out.count("--adaptive-profile balanced") == 1
     assert "phase1b_dry_run" in captured.out
     assert not output_dir.exists()
+
+
+def test_matrix_rejects_unknown_adaptive_profile(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as exc:
+        matrix_script.main(
+            [
+                "--output-dir",
+                str(tmp_path / "matrix"),
+                "--context-policies",
+                "adaptive-heuristic",
+                "--adaptive-profiles",
+                "unknown",
+                "--dry-run",
+            ]
+        )
+
+    assert exc.value.code
 
 
 def _metrics(retrievers: list[str]) -> dict:
