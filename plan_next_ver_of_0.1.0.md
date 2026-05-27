@@ -2,46 +2,43 @@
 
 ## Goal
 
-Implement BudgetRAG Phase 1C for the benchmark CLI: deterministic adaptive context budgeting that chooses among existing fixed policies and budget sizes after retrieval, while preserving all Phase 1B default behavior.
+Complete BudgetRAG Phase 1C.1: merge Phase 1C into local `internship`, validate adaptive heuristic behavior on a larger retrieval-only SciFact slice, and document decision distributions before any Phase 1D bandit/RL-lite work.
 
-Status: implemented and validated on `feature/budgetrag-phase1c`.
+Status: implemented and validated locally on `feature/budgetrag-phase1c1`.
 
 ## Constraints
 
-- Keep `legacy` as the default context policy.
-- Implement `adaptive-heuristic` as a deterministic rule-based wrapper over existing fixed policies.
-- Do not implement RL, bandits, learned policy training, runtime KV-cache pruning, or measured VRAM accounting.
-- Keep built-in chat UI, web search, MiMo routing, dictionary mode, image mode, and existing retrievers functionally unchanged.
-- Commit only curated documentation/reports; keep raw benchmark outputs under ignored output directories.
+- Do not implement RL, bandits, runtime KV-cache pruning, new retrievers, or new providers.
+- Preserve default `legacy` behavior and existing chat/web search/MiMo/dictionary/image routes.
+- Keep raw benchmark outputs ignored under `benchmark_results/budgetrag/`.
+- Commit only curated documentation and small diagnostic/docs updates.
 
 ## Implementation Plan
 
-1. Merge Phase 1B.1 baseline
+1. Merge Phase 1C
    - Status: done locally.
-   - Merge `feature/budgetrag-phase1b1` into local `internship`.
+   - Merged local `feature/budgetrag-phase1c` into local `internship`.
    - Push is blocked in this environment by missing GitHub HTTPS credentials.
 
-2. Add adaptive feature extraction
+2. Validate merged baseline
    - Status: done.
-   - Compute query length, estimated query tokens, candidate counts, document length stats, score gap, score dispersion, score entropy, and missing score count.
+   - `uv sync --frozen --group dev` passed.
+   - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest` passed.
+   - Plain `uv run pytest` remains blocked by external ROS `launch_testing` missing `lark`.
+   - Legacy, fixed BudgetRAG, and adaptive retrieval-only smoke commands passed.
 
-3. Add deterministic adaptive policy selection
+3. Run Phase 1C.1 matrix
    - Status: done.
-   - Add `adaptive-heuristic` as a CLI policy.
-   - Select among `char-budget`, `score-density`, `evidence-aware`, and `per-doc-budget`.
-   - Use configurable small, medium, and large budgets.
+   - Ran SciFact BM25 retrieval-only matrix with `limit 50`, `top-k 5`, four policies, and budgets `1000,2000,4000`.
+   - Summarized ignored raw outputs with `scripts/summarize_budgetrag_results.py`.
 
-4. Record adaptive metrics
+4. Document findings
    - Status: done.
-   - Add per-query `adaptive_budget` metadata.
-   - Aggregate selected policy counts, selected budget counts, reason counts, average query tokens, average score gap, and average score entropy.
+   - Added `docs/reports/phase1c1_adaptive_validation.md`.
+   - Updated README with a short Phase 1C.1 validation note.
+   - Updated adaptive budgeting docs with the observed conservative BM25 behavior.
 
-5. Update matrix and summary tooling
-   - Status: done.
-   - Pass matrix budget values as adaptive medium budgets for `adaptive-heuristic`.
-   - Add adaptive summary columns to CSV/Markdown outputs.
-
-6. Validate and document
-   - Status: done.
-   - Run focused tests, full test suite, retrieval smoke, adaptive smoke, and compact adaptive matrix smoke.
-   - Add curated `docs/reports/phase1c_adaptive_smoke_results.md`.
+5. Next decision
+   - Status: pending future work.
+   - If adaptive remains conservative across retrievers, do Phase 1C.2 threshold calibration.
+   - If action distributions become stable and diverse enough, proceed to Phase 1D offline bandit/RL-lite.
