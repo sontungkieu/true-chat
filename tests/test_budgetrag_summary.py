@@ -37,6 +37,7 @@ def test_summary_reads_one_aggregate_with_experiment_metadata(tmp_path: Path) ->
     assert rows[0]["skip_generation"] is True
     assert rows[0]["generation_model"] == ""
     assert rows[0]["kv_profile"] == "qwen2.5-14b"
+    assert rows[0]["adaptive_enabled"] is False
 
 
 def test_summary_emits_one_row_per_aggregate(tmp_path: Path) -> None:
@@ -85,6 +86,34 @@ def test_summary_main_writes_csv_and_markdown(tmp_path: Path) -> None:
     assert "| retriever | policy | budget |" in out_md.read_text(encoding="utf-8")
 
 
+def test_summary_includes_adaptive_budget_columns(tmp_path: Path) -> None:
+    metrics = _metrics(["bm25"])
+    metrics["experiment"]["context_policy"] = "adaptive-heuristic"
+    aggregate = metrics["aggregates"][0]
+    aggregate["experiment"]["context_policy"] = "adaptive-heuristic"
+    aggregate["experiment"]["context_policy_impl"] = "deterministic-adaptive-heuristic"
+    aggregate["context_budget"]["context_policy"] = "adaptive-heuristic"
+    aggregate["context_budget"]["context_policy_impl"] = "deterministic-adaptive-heuristic"
+    aggregate["context_budget"]["adaptive_budget"] = {
+        "enabled": True,
+        "adaptive_selected_policy_counts": {"score-density": 2},
+        "adaptive_selected_budget_counts": {"1000": 2},
+        "adaptive_reason_counts": {"high-confidence-retrieval": 2},
+        "avg_adaptive_query_est_tokens": 8,
+        "avg_adaptive_score_gap": 1.25,
+        "avg_adaptive_score_entropy": 0.42,
+    }
+    metrics_path = tmp_path / "metrics.json"
+    metrics_path.write_text(json.dumps(metrics, ensure_ascii=False), encoding="utf-8")
+
+    rows = summary_script.summarize_metrics_file(metrics_path)
+
+    assert rows[0]["context_policy"] == "adaptive-heuristic"
+    assert rows[0]["adaptive_enabled"] is True
+    assert rows[0]["adaptive_selected_policy_counts"] == {"score-density": 2}
+    assert rows[0]["avg_adaptive_score_gap"] == 1.25
+
+
 def test_matrix_dry_run_prints_commands_without_creating_output(tmp_path: Path, capsys) -> None:
     output_dir = tmp_path / "budgetrag"
 
@@ -97,7 +126,7 @@ def test_matrix_dry_run_prints_commands_without_creating_output(tmp_path: Path, 
             "--retrievers",
             "bm25",
             "--context-policies",
-            "legacy,evidence-aware",
+            "legacy,evidence-aware,adaptive-heuristic",
             "--context-budgets",
             "1000",
             "--top-k",
@@ -115,6 +144,8 @@ def test_matrix_dry_run_prints_commands_without_creating_output(tmp_path: Path, 
     assert exit_code == 0
     assert "--context-policy legacy" in captured.out
     assert "--context-policy evidence-aware" in captured.out
+    assert "--context-policy adaptive-heuristic" in captured.out
+    assert "--adaptive-medium-budget 1000" in captured.out
     assert "phase1b_dry_run" in captured.out
     assert not output_dir.exists()
 
