@@ -25,20 +25,20 @@ uv run python scripts/run_budgetrag_matrix.py \
 
 ## Summary
 
-| retriever | policy | budget | queries | kept chars | compression | token savings | KV savings | quality | adaptive | adaptive policies | adaptive budgets | adaptive reasons |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- |
-| bm25 | adaptive-heuristic | 1000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 | | True | {"evidence-aware": 10} | {"4000": 10} | {"flat-retrieval-scores": 9, "long-query-and-flat-retrieval-scores": 1} |
-| bm25 | adaptive-heuristic | 2000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 | | True | {"evidence-aware": 10} | {"4000": 10} | {"flat-retrieval-scores": 9, "long-query-and-flat-retrieval-scores": 1} |
-| bm25 | adaptive-heuristic | 4000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 | | True | {"evidence-aware": 10} | {"4000": 10} | {"flat-retrieval-scores": 9, "long-query-and-flat-retrieval-scores": 1} |
-| bm25 | char-budget | 1000 | 10 | 999.7 | 0.2161 | 961 | 900.9 | | False | | | |
-| bm25 | char-budget | 2000 | 10 | 2000 | 0.4324 | 711 | 666.6 | | False | | | |
-| bm25 | char-budget | 4000 | 10 | 3906 | 0.838 | 234.2 | 219.6 | | False | | | |
-| bm25 | evidence-aware | 1000 | 10 | 999.7 | 0.2162 | 961 | 900.9 | | False | | | |
-| bm25 | evidence-aware | 2000 | 10 | 2000 | 0.4324 | 711 | 666.6 | | False | | | |
-| bm25 | evidence-aware | 4000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 | | False | | | |
-| bm25 | legacy | 1000 | 10 | 1002 | 0.2167 | 960.4 | 900.4 | | False | | | |
-| bm25 | legacy | 2000 | 10 | 2005 | 0.4336 | 709.6 | 665.2 | | False | | | |
-| bm25 | legacy | 4000 | 10 | 3914 | 0.8396 | 232 | 217.5 | | False | | | |
+| retriever | policy | budget | queries | kept chars | compression | token savings | KV savings |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| bm25 | adaptive-heuristic | 1000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 |
+| bm25 | adaptive-heuristic | 2000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 |
+| bm25 | adaptive-heuristic | 4000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 |
+| bm25 | char-budget | 1000 | 10 | 999.7 | 0.2161 | 961 | 900.9 |
+| bm25 | char-budget | 2000 | 10 | 2000 | 0.4324 | 711 | 666.6 |
+| bm25 | char-budget | 4000 | 10 | 3906 | 0.838 | 234.2 | 219.6 |
+| bm25 | evidence-aware | 1000 | 10 | 999.7 | 0.2162 | 961 | 900.9 |
+| bm25 | evidence-aware | 2000 | 10 | 2000 | 0.4324 | 711 | 666.6 |
+| bm25 | evidence-aware | 4000 | 10 | 3999 | 0.8647 | 234.3 | 219.7 |
+| bm25 | legacy | 1000 | 10 | 1002 | 0.2167 | 960.4 | 900.4 |
+| bm25 | legacy | 2000 | 10 | 2005 | 0.4336 | 709.6 | 665.2 |
+| bm25 | legacy | 4000 | 10 | 3914 | 0.8396 | 232 | 217.5 |
 
 ## Adaptive Aggregate
 
