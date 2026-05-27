@@ -184,6 +184,8 @@ Phase 1C adds `adaptive-heuristic`, a deterministic rule-based wrapper that runs
 
 Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuristic` and documents selected policy, selected budget, and reason distributions. Detailed results live under `docs/reports/`; raw matrix outputs remain ignored.
 
+Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggressive`) and normalized score diagnostics for threshold calibration. These profiles are deterministic heuristics, not learned policies.
+
 Retrieval-only BudgetRAG smoke run:
 
 ```bash
@@ -220,6 +222,7 @@ uv run rag-bench run \
   --limit 10 \
   --skip-generation \
   --context-policy adaptive-heuristic \
+  --adaptive-profile balanced \
   --adaptive-small-budget 1000 \
   --adaptive-medium-budget 2000 \
   --adaptive-large-budget 4000 \
@@ -235,11 +238,12 @@ uv run python scripts/run_budgetrag_matrix.py \
   --retrievers bm25 \
   --context-policies legacy,char-budget,evidence-aware,adaptive-heuristic \
   --context-budgets 1000,2000,4000 \
+  --adaptive-profiles conservative,balanced,aggressive \
   --skip-generation \
   --run-name phase1c_adaptive_smoke
 ```
 
-For `adaptive-heuristic` matrix jobs, each `--context-budgets` value is passed as `--adaptive-medium-budget`; the small and large adaptive candidates keep their CLI defaults unless a direct `rag-bench run` command overrides them.
+For `adaptive-heuristic` matrix jobs, each `--context-budgets` value is passed as `--adaptive-medium-budget` for each requested adaptive profile. Non-adaptive policies ignore `--adaptive-profiles`.
 
 Summarize local matrix outputs:
 

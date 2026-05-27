@@ -58,6 +58,7 @@ class RunConfig:
     adaptive_small_budget: int = 1000
     adaptive_medium_budget: int = 2000
     adaptive_large_budget: int = 4000
+    adaptive_profile: str = "conservative"
 
 
 def run_benchmark(
@@ -360,6 +361,7 @@ def _experiment_metadata(
         "adaptive_small_budget": config.adaptive_small_budget,
         "adaptive_medium_budget": config.adaptive_medium_budget,
         "adaptive_large_budget": config.adaptive_large_budget,
+        "adaptive_profile": config.adaptive_profile,
         "skip_generation": config.skip_generation,
         "generation_provider": generation_provider,
         "generation_model": generation_model,
@@ -382,6 +384,7 @@ def _effective_context_budget(config: RunConfig, *, query_text: str) -> ContextB
         adaptive_small_budget=config.adaptive_small_budget,
         adaptive_medium_budget=config.adaptive_medium_budget,
         adaptive_large_budget=config.adaptive_large_budget,
+        adaptive_profile=config.adaptive_profile,
     )
 
 

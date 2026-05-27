@@ -96,6 +96,8 @@ def aggregate_adaptive_budget_metadata(rows: list[dict[str, Any]]) -> dict[str, 
     output: dict[str, Any] = {
         "enabled": True,
         "selector_impl": adaptive_rows[0].get("selector_impl"),
+        "adaptive_profile": adaptive_rows[0].get("profile"),
+        "adaptive_calibration_version": adaptive_rows[0].get("calibration_version"),
         "query_count": len(adaptive_rows),
         "adaptive_selected_policy_counts": dict(Counter(row.get("selected_policy") for row in adaptive_rows)),
         "adaptive_selected_budget_counts": dict(
@@ -107,6 +109,9 @@ def aggregate_adaptive_budget_metadata(rows: list[dict[str, Any]]) -> dict[str, 
         "query_est_tokens": "avg_adaptive_query_est_tokens",
         "score_gap": "avg_adaptive_score_gap",
         "score_entropy": "avg_adaptive_score_entropy",
+        "normalized_score_gap": "avg_adaptive_normalized_score_gap",
+        "normalized_score_entropy": "avg_adaptive_normalized_score_entropy",
+        "score_confidence": "avg_adaptive_score_confidence",
     }
     for source_key, output_key in feature_numeric_map.items():
         values = [
@@ -116,6 +121,10 @@ def aggregate_adaptive_budget_metadata(rows: list[dict[str, Any]]) -> dict[str, 
         ]
         if values:
             output[output_key] = mean(float(value) for value in values)
+            if source_key in {"normalized_score_gap", "normalized_score_entropy", "score_confidence"}:
+                metric_suffix = output_key.removeprefix("avg_")
+                output[f"min_{metric_suffix}"] = min(float(value) for value in values)
+                output[f"max_{metric_suffix}"] = max(float(value) for value in values)
     return output
 
 

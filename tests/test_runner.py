@@ -329,6 +329,7 @@ def test_run_benchmark_records_adaptive_budget_metadata(tmp_path: Path) -> None:
         adaptive_small_budget=80,
         adaptive_medium_budget=120,
         adaptive_large_budget=200,
+        adaptive_profile="balanced",
     )
 
     summary = run_benchmark(config, benchmark_loader=fake_loader)
@@ -340,7 +341,11 @@ def test_run_benchmark_records_adaptive_budget_metadata(tmp_path: Path) -> None:
 
     assert summary["experiment"]["context_policy"] == "adaptive-heuristic"
     assert summary["experiment"]["context_policy_impl"] == "deterministic-adaptive-heuristic"
+    assert summary["experiment"]["adaptive_profile"] == "balanced"
     assert rows[0]["adaptive_budget"]["enabled"] is True
+    assert rows[0]["adaptive_budget"]["profile"] == "balanced"
+    assert rows[0]["adaptive_budget"]["calibration_version"] == "phase1c2-v1"
+    assert "normalized_score_gap" in rows[0]["adaptive_budget"]["features"]
     assert rows[0]["adaptive_budget"]["selected_policy"] in {
         "char-budget",
         "per-doc-budget",
@@ -350,6 +355,8 @@ def test_run_benchmark_records_adaptive_budget_metadata(tmp_path: Path) -> None:
     assert rows[0]["context_budget"]["requested_policy"] == "adaptive-heuristic"
     assert aggregate_context["context_policy"] == "adaptive-heuristic"
     assert aggregate_context["adaptive_budget"]["enabled"] is True
+    assert aggregate_context["adaptive_budget"]["adaptive_profile"] == "balanced"
+    assert aggregate_context["adaptive_budget"]["adaptive_calibration_version"] == "phase1c2-v1"
     assert sum(aggregate_context["adaptive_budget"]["adaptive_selected_policy_counts"].values()) == 1
 
 

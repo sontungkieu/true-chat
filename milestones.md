@@ -46,3 +46,13 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c1`; pendi
 - Document adaptive selected policy, selected budget, and reason distributions.
 - Record that the BM25 validation remains conservative: all adaptive rows selected the 4000-character budget.
 - Leave Phase 1D offline bandit/RL-lite for a later phase.
+
+## BudgetRAG Phase 1C.2
+
+Status: implemented and validated locally on `feature/budgetrag-phase1c2`; pending final review/merge.
+
+- Add deterministic adaptive profiles: `conservative`, `balanced`, and `aggressive`.
+- Preserve Phase 1C behavior through the default conservative profile.
+- Add normalized score gap, normalized score entropy, and score confidence diagnostics.
+- Extend matrix and summary tooling for adaptive profile comparisons.
+- Run SciFact BM25 profile calibration matrix with 50 queries and document the threshold calibration results.

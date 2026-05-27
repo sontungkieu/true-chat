@@ -7,6 +7,7 @@
 - `evidence-aware` may miss paraphrases, mishandle negation, and prefer lexical overlap even when a sentence is not citation-faithful evidence for the final answer.
 - Future evidence policies may add BM25 sentence scoring, embedding sentence scoring, cross-encoder reranking, or answer-aware verification.
 - `adaptive-heuristic` is deterministic rule-based policy selection, not RL, not a bandit, and not a learned budget optimizer.
+- Adaptive profiles (`conservative`, `balanced`, `aggressive`) are deterministic heuristic calibrations, not learned policies.
 - `adaptive-heuristic` only selects existing fixed context policies and budgets after retrieval; it does not inspect generated answers.
 - Sentence splitting uses lightweight regex and punctuation heuristics, not an NLP parser.
 - Chat UI BudgetRAG controls are intentionally deferred; benchmark CLI support is the priority.

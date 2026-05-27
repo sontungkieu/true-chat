@@ -46,6 +46,8 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
             "1600",
             "--adaptive-large-budget",
             "3200",
+            "--adaptive-profile",
+            "balanced",
         ]
     )
 
@@ -70,6 +72,7 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
     assert seen["config"].adaptive_small_budget == 800
     assert seen["config"].adaptive_medium_budget == 1600
     assert seen["config"].adaptive_large_budget == 3200
+    assert seen["config"].adaptive_profile == "balanced"
 
 
 def test_cli_run_rejects_invalid_context_budget(capsys) -> None:
@@ -86,6 +89,14 @@ def test_cli_run_rejects_invalid_adaptive_budget(capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "--adaptive-medium-budget must be positive" in captured.err
+
+
+def test_cli_run_rejects_invalid_adaptive_profile(capsys) -> None:
+    exit_code = cli.main(["run", "--context-policy", "adaptive-heuristic", "--adaptive-profile", "unknown"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "invalid choice" in captured.err
 
 
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:

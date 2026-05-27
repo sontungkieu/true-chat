@@ -9,6 +9,17 @@ from rag_bench.context_policies import apply_context_policy
 
 ADAPTIVE_POLICY_NAME = "adaptive-heuristic"
 ADAPTIVE_POLICY_IMPL = "deterministic-rule-v1"
+ADAPTIVE_CALIBRATION_VERSION = "phase1c2-v1"
+ADAPTIVE_PROFILES = ("conservative", "balanced", "aggressive")
+
+
+@dataclass(frozen=True)
+class AdaptiveBudgetConfig:
+    profile: str = "conservative"
+    small_budget: int = 1000
+    medium_budget: int = 2000
+    large_budget: int = 4000
+    per_doc_budget_chars: int = 800
 
 
 @dataclass(frozen=True)
@@ -24,12 +35,14 @@ class AdaptiveBudgetAction:
 
 def apply_adaptive_context_budget(items: list[ContextItem], budget: ContextBudget) -> BudgetedContext:
     features = extract_adaptive_budget_features(budget.query, items)
-    action = select_adaptive_budget_action(
-        features,
+    config = AdaptiveBudgetConfig(
+        profile=budget.adaptive_profile,
         small_budget=budget.adaptive_small_budget,
         medium_budget=budget.adaptive_medium_budget,
         large_budget=budget.adaptive_large_budget,
+        per_doc_budget_chars=budget.adaptive_per_doc_budget_chars,
     )
+    action = select_adaptive_budget_action(features, config=config)
     selected_budget = replace(
         budget,
         policy=action.policy,
@@ -42,7 +55,10 @@ def apply_adaptive_context_budget(items: list[ContextItem], budget: ContextBudge
         "adaptive_budget": {
             "enabled": True,
             "selector_impl": ADAPTIVE_POLICY_IMPL,
+            "calibration_version": ADAPTIVE_CALIBRATION_VERSION,
             "requested_policy": ADAPTIVE_POLICY_NAME,
+            "policy_name": ADAPTIVE_POLICY_NAME,
+            "profile": config.profile,
             "selected_policy": action.policy,
             "selected_context_budget_chars": action.context_budget_chars,
             "selected_per_doc_budget_chars": action.per_doc_budget_chars,
@@ -61,14 +77,35 @@ def apply_adaptive_context_budget(items: list[ContextItem], budget: ContextBudge
 def select_adaptive_budget_action(
     features: AdaptiveBudgetFeatures,
     *,
+    config: AdaptiveBudgetConfig | None = None,
+    profile: str | None = None,
     small_budget: int = 1000,
     medium_budget: int = 2000,
     large_budget: int = 4000,
+    per_doc_budget_chars: int = 800,
 ) -> AdaptiveBudgetAction:
+    config = config or AdaptiveBudgetConfig(
+        profile=profile or "conservative",
+        small_budget=small_budget,
+        medium_budget=medium_budget,
+        large_budget=large_budget,
+        per_doc_budget_chars=per_doc_budget_chars,
+    )
+    if config.profile not in ADAPTIVE_PROFILES:
+        allowed = ", ".join(ADAPTIVE_PROFILES)
+        raise ValueError(f"Unknown adaptive profile '{config.profile}'. Expected one of: {allowed}")
+    if config.profile == "balanced":
+        return _select_balanced(features, config)
+    if config.profile == "aggressive":
+        return _select_aggressive(features, config)
+    return _select_conservative(features, config)
+
+
+def _select_conservative(features: AdaptiveBudgetFeatures, config: AdaptiveBudgetConfig) -> AdaptiveBudgetAction:
     if features.num_candidates == 0:
         return AdaptiveBudgetAction(
             policy="char-budget",
-            context_budget_chars=medium_budget,
+            context_budget_chars=config.medium_budget,
             per_doc_budget_chars=None,
             reason="safe-fallback:no-candidates",
         )
@@ -76,15 +113,15 @@ def select_adaptive_budget_action(
     if _has_long_document_dominance(features):
         return AdaptiveBudgetAction(
             policy="per-doc-budget",
-            context_budget_chars=large_budget,
-            per_doc_budget_chars=min(1000, max(400, large_budget // 4)),
+            context_budget_chars=config.large_budget,
+            per_doc_budget_chars=min(1000, max(400, config.large_budget // 4)),
             reason="long-document-dominance",
         )
 
     if features.missing_score_count == features.num_candidates:
         return AdaptiveBudgetAction(
             policy="evidence-aware",
-            context_budget_chars=medium_budget,
+            context_budget_chars=config.medium_budget,
             per_doc_budget_chars=None,
             reason="missing-retrieval-scores",
         )
@@ -95,7 +132,7 @@ def select_adaptive_budget_action(
             reason = "long-query-and-flat-retrieval-scores"
         return AdaptiveBudgetAction(
             policy="evidence-aware",
-            context_budget_chars=large_budget,
+            context_budget_chars=config.large_budget,
             per_doc_budget_chars=None,
             reason=reason,
         )
@@ -103,7 +140,7 @@ def select_adaptive_budget_action(
     if _is_high_confidence(features):
         return AdaptiveBudgetAction(
             policy="score-density",
-            context_budget_chars=medium_budget if _is_long_query(features) else small_budget,
+            context_budget_chars=config.medium_budget if _is_long_query(features) else config.small_budget,
             per_doc_budget_chars=None,
             reason="high-confidence-retrieval",
         )
@@ -111,23 +148,85 @@ def select_adaptive_budget_action(
     if _is_long_query(features):
         return AdaptiveBudgetAction(
             policy="evidence-aware",
-            context_budget_chars=medium_budget,
+            context_budget_chars=config.medium_budget,
             per_doc_budget_chars=None,
             reason="long-query",
         )
 
     return AdaptiveBudgetAction(
         policy="char-budget",
-        context_budget_chars=medium_budget,
+        context_budget_chars=config.medium_budget,
         per_doc_budget_chars=None,
         reason="safe-fallback:balanced",
     )
+
+
+def _select_balanced(features: AdaptiveBudgetFeatures, config: AdaptiveBudgetConfig) -> AdaptiveBudgetAction:
+    if features.num_candidates == 0:
+        return AdaptiveBudgetAction("char-budget", config.medium_budget, None, "no-candidates-safe-fallback")
+    if _has_balanced_long_document_dominance(features):
+        return AdaptiveBudgetAction(
+            "per-doc-budget",
+            config.large_budget,
+            config.per_doc_budget_chars,
+            "long-document-dominance",
+        )
+    if features.missing_score_count > features.num_candidates / 2:
+        return AdaptiveBudgetAction("evidence-aware", config.medium_budget, None, "missing-retrieval-scores")
+
+    gap = features.normalized_score_gap
+    entropy = features.normalized_score_entropy
+    action: AdaptiveBudgetAction
+    if gap is not None and entropy is not None and gap >= 0.25 and entropy <= 0.70:
+        action = AdaptiveBudgetAction("score-density", config.small_budget, None, "high-confidence-retrieval")
+    elif gap is not None and entropy is not None and entropy >= 0.85 and gap <= 0.10:
+        action = AdaptiveBudgetAction("evidence-aware", config.large_budget, None, "flat-retrieval-scores")
+    elif (gap is not None and gap >= 0.12) or (entropy is not None and entropy <= 0.80):
+        action = AdaptiveBudgetAction("evidence-aware", config.medium_budget, None, "moderate-confidence-retrieval")
+    else:
+        action = AdaptiveBudgetAction("char-budget", config.medium_budget, None, "balanced-safe-fallback")
+    return _avoid_small_budget_for_long_query(action, features, config)
+
+
+def _select_aggressive(features: AdaptiveBudgetFeatures, config: AdaptiveBudgetConfig) -> AdaptiveBudgetAction:
+    if features.num_candidates == 0:
+        return AdaptiveBudgetAction("char-budget", config.medium_budget, None, "no-candidates-safe-fallback")
+    if _has_balanced_long_document_dominance(features):
+        return AdaptiveBudgetAction(
+            "per-doc-budget",
+            config.medium_budget,
+            min(config.per_doc_budget_chars, config.medium_budget),
+            "long-document-dominance",
+        )
+    if features.missing_score_count > features.num_candidates / 2:
+        return AdaptiveBudgetAction("evidence-aware", config.medium_budget, None, "missing-retrieval-scores")
+
+    gap = features.normalized_score_gap
+    entropy = features.normalized_score_entropy
+    action: AdaptiveBudgetAction
+    if gap is not None and entropy is not None and gap >= 0.18 and entropy <= 0.82:
+        action = AdaptiveBudgetAction("score-density", config.small_budget, None, "high-confidence-retrieval")
+    elif (gap is not None and gap >= 0.08) or (entropy is not None and entropy <= 0.90):
+        action = AdaptiveBudgetAction("evidence-aware", config.small_budget, None, "moderate-confidence-retrieval")
+    elif entropy is not None and entropy >= 0.90:
+        action = AdaptiveBudgetAction("evidence-aware", config.medium_budget, None, "flat-retrieval-scores")
+    else:
+        action = AdaptiveBudgetAction("char-budget", config.small_budget, None, "aggressive-safe-fallback")
+    return _avoid_small_budget_for_long_query(action, features, config)
 
 
 def _has_long_document_dominance(features: AdaptiveBudgetFeatures) -> bool:
     if features.num_candidates <= 1:
         return False
     if features.max_doc_chars < 2400:
+        return False
+    return features.avg_doc_chars > 0 and features.max_doc_chars >= features.avg_doc_chars * 2.5
+
+
+def _has_balanced_long_document_dominance(features: AdaptiveBudgetFeatures) -> bool:
+    if features.num_candidates <= 1:
+        return False
+    if features.max_doc_chars < 3000:
         return False
     return features.avg_doc_chars > 0 and features.max_doc_chars >= features.avg_doc_chars * 2.5
 
@@ -148,3 +247,19 @@ def _is_high_confidence(features: AdaptiveBudgetFeatures) -> bool:
 
 def _is_long_query(features: AdaptiveBudgetFeatures) -> bool:
     return features.query_est_tokens >= 32
+
+
+def _avoid_small_budget_for_long_query(
+    action: AdaptiveBudgetAction,
+    features: AdaptiveBudgetFeatures,
+    config: AdaptiveBudgetConfig,
+) -> AdaptiveBudgetAction:
+    if features.query_est_tokens < 40 or action.context_budget_chars >= config.medium_budget:
+        return action
+    reason = action.reason if "long-query" in action.reason else f"long-query-and-{action.reason}"
+    return AdaptiveBudgetAction(
+        policy=action.policy,
+        context_budget_chars=config.medium_budget,
+        per_doc_budget_chars=action.per_doc_budget_chars,
+        reason=reason,
+    )

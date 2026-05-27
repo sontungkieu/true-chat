@@ -33,6 +33,8 @@ class ContextBudget:
     adaptive_small_budget: int = 1000
     adaptive_medium_budget: int = 2000
     adaptive_large_budget: int = 4000
+    adaptive_profile: str = "conservative"
+    adaptive_per_doc_budget_chars: int = 800
 
 
 @dataclass
@@ -74,6 +76,8 @@ def validate_context_budget(budget: ContextBudget) -> None:
         raise ValueError("adaptive_medium_budget must be positive")
     if budget.adaptive_large_budget <= 0:
         raise ValueError("adaptive_large_budget must be positive")
+    if budget.adaptive_per_doc_budget_chars <= 0:
+        raise ValueError("adaptive_per_doc_budget_chars must be positive")
 
 
 def retrieval_hits_to_context_items(hits: list[RetrievalHit]) -> list[ContextItem]:
