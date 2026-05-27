@@ -172,13 +172,15 @@ If Groq reports one shared organization quota, switch the scheduler scope:
 uv run rag-bench run --bench scifact --retrievers bm25 --top-k 3 --limit 20 --max-context-chars 2500 --max-completion-tokens 128 --key-tpm 6000 --key-rpm 30 --rate-limit-scope shared --max-consecutive-errors 2
 ```
 
-## BudgetRAG Phase 1B: Context-Budgeted RAG
+## BudgetRAG: Context-Budgeted RAG
 
 BudgetRAG adds a context-budgeting layer between retrieval and generation in the benchmark CLI. It compares fixed and evidence-aware context policies under character, estimated token, latency, compression, and analytical KV-cache budgets. The default policy is `legacy`, which preserves the previous rank-ordered `--max-context-chars` truncation behavior.
 
 The current `evidence-aware` policy is a lightweight lexical/query-aware evidence retention policy. It scores candidate spans before answer generation using query overlap, retrieval score, and title overlap. It is not answer-aware verification and does not perform semantic entailment checking.
 
 This phase does not modify runtime KV-cache internals. KV-cache savings are analytical estimates from reduced estimated context length, not measured VRAM savings and not runtime KV pruning.
+
+Phase 1C adds `adaptive-heuristic`, a deterministic rule-based wrapper that runs after retrieval and selects one fixed policy plus one budget size per query. It chooses among `char-budget`, `score-density`, `evidence-aware`, and `per-doc-budget` using query length, candidate length stats, retrieval score gap, score entropy, and missing-score signals. It is not RL, not a bandit, not learned policy training, and not runtime KV pruning.
 
 Retrieval-only BudgetRAG smoke run:
 
@@ -205,6 +207,37 @@ uv run python scripts/run_budgetrag_matrix.py \
   --skip-generation \
   --run-name phase1b_smoke
 ```
+
+Adaptive retrieval-only smoke run:
+
+```bash
+uv run rag-bench run \
+  --bench scifact \
+  --retrievers bm25 \
+  --top-k 5 \
+  --limit 10 \
+  --skip-generation \
+  --context-policy adaptive-heuristic \
+  --adaptive-small-budget 1000 \
+  --adaptive-medium-budget 2000 \
+  --adaptive-large-budget 4000 \
+  --kv-profile qwen2.5-14b
+```
+
+Adaptive matrix entries can be included with:
+
+```bash
+uv run python scripts/run_budgetrag_matrix.py \
+  --bench scifact \
+  --limit 20 \
+  --retrievers bm25 \
+  --context-policies legacy,char-budget,evidence-aware,adaptive-heuristic \
+  --context-budgets 1000,2000,4000 \
+  --skip-generation \
+  --run-name phase1c_adaptive_smoke
+```
+
+For `adaptive-heuristic` matrix jobs, each `--context-budgets` value is passed as `--adaptive-medium-budget`; the small and large adaptive candidates keep their CLI defaults unless a direct `rag-bench run` command overrides them.
 
 Summarize local matrix outputs:
 
