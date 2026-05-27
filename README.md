@@ -182,6 +182,8 @@ This phase does not modify runtime KV-cache internals. KV-cache savings are anal
 
 Phase 1C adds `adaptive-heuristic`, a deterministic rule-based wrapper that runs after retrieval and selects one fixed policy plus one budget size per query. It chooses among `char-budget`, `score-density`, `evidence-aware`, and `per-doc-budget` using query length, candidate length stats, retrieval score gap, score entropy, and missing-score signals. It is not RL, not a bandit, not learned policy training, and not runtime KV pruning.
 
+Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuristic` and documents selected policy, selected budget, and reason distributions. Detailed results live under `docs/reports/`; raw matrix outputs remain ignored.
+
 Retrieval-only BudgetRAG smoke run:
 
 ```bash

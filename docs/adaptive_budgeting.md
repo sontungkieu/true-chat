@@ -66,3 +66,9 @@ Aggregate metrics include selected policy counts, selected budget counts, reason
 ## Matrix Behavior
 
 `scripts/run_budgetrag_matrix.py` accepts `adaptive-heuristic` in `--context-policies`. For adaptive jobs, each `--context-budgets` value is also passed as `--adaptive-medium-budget`. Small and large adaptive candidates keep their CLI defaults in the matrix helper.
+
+## Phase 1C.1 Observation
+
+The Phase 1C.1 SciFact BM25 retrieval-only validation used 50 queries and `top-k 5`. On that slice, the heuristic selected the large `4000` character budget for every adaptive query, with 48 queries routed to `evidence-aware` and 2 routed to `per-doc-budget`.
+
+This is acceptable for a transparent baseline, but it indicates conservative behavior on BM25 score distributions. Before Phase 1D offline bandit/RL-lite work, threshold calibration should be revisited with more retrievers and logged feature distributions.
