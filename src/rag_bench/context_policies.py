@@ -26,6 +26,7 @@ CONTEXT_POLICY_NAMES = (
     "score-density",
     "sentence-trim",
     "evidence-aware",
+    "adaptive-heuristic",
 )
 
 CONTEXT_POLICY_IMPLS = {
@@ -35,6 +36,7 @@ CONTEXT_POLICY_IMPLS = {
     "score-density": "score-per-estimated-token",
     "sentence-trim": "ranked-sentence-boundary-trim",
     "evidence-aware": "lexical-query-aware",
+    "adaptive-heuristic": "deterministic-adaptive-heuristic",
 }
 
 _WORD_RE = re.compile(r"\b\w+\b", re.UNICODE)
@@ -98,6 +100,8 @@ def apply_context_policy(items: list[ContextItem], budget: ContextBudget) -> Bud
         return _score_density(items, budget)
     if budget.policy == "sentence-trim":
         return _sentence_trim(items, budget)
+    if budget.policy == "adaptive-heuristic":
+        raise ValueError("adaptive-heuristic must be applied through apply_context_budget")
     return _evidence_aware(items, budget)
 
 

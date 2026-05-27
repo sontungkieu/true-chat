@@ -289,6 +289,70 @@ def test_run_benchmark_records_evidence_aware_experiment_impl(tmp_path: Path) ->
     assert rows[0]["experiment"]["kv_profile"] == "qwen2.5-14b"
 
 
+def test_run_benchmark_records_adaptive_budget_metadata(tmp_path: Path) -> None:
+    def fake_loader(_bench: str, *, limit: int | None, allow_large: bool) -> BenchmarkData:
+        del limit, allow_large
+        return BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[Query("q1", "alpha evidence")],
+            documents=[
+                Document("doc-1", "Alpha evidence sentence. Alpha alpha alpha.", "Alpha"),
+                Document("doc-2", "Unrelated text.", "Other"),
+            ],
+            qrels={"q1": {"doc-1": 1}},
+        )
+
+    config = RunConfig(
+        bench="scifact",
+        retrievers=("bm25",),
+        top_k=2,
+        limit=1,
+        output_dir=tmp_path / "runs",
+        groq_keys_path=tmp_path / "missing.env",
+        model="test-model",
+        vector_model="fake-vector-model",
+        max_retries=0,
+        max_completion_tokens=32,
+        temperature=0.0,
+        max_context_chars=1000,
+        allow_large_bench=False,
+        ragas=False,
+        ragas_limit=None,
+        max_consecutive_errors=1,
+        skip_generation=True,
+        sleep_between_queries_s=0.0,
+        key_tokens_per_minute=6000,
+        key_requests_per_minute=30,
+        rate_limit_scope="per-key",
+        context_policy="adaptive-heuristic",
+        adaptive_small_budget=80,
+        adaptive_medium_budget=120,
+        adaptive_large_budget=200,
+    )
+
+    summary = run_benchmark(config, benchmark_loader=fake_loader)
+    rows = [
+        json.loads(line)
+        for line in (Path(summary["output_dir"]) / "query_results.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    aggregate_context = summary["aggregates"][0]["context_budget"]
+
+    assert summary["experiment"]["context_policy"] == "adaptive-heuristic"
+    assert summary["experiment"]["context_policy_impl"] == "deterministic-adaptive-heuristic"
+    assert rows[0]["adaptive_budget"]["enabled"] is True
+    assert rows[0]["adaptive_budget"]["selected_policy"] in {
+        "char-budget",
+        "per-doc-budget",
+        "score-density",
+        "evidence-aware",
+    }
+    assert rows[0]["context_budget"]["requested_policy"] == "adaptive-heuristic"
+    assert aggregate_context["context_policy"] == "adaptive-heuristic"
+    assert aggregate_context["adaptive_budget"]["enabled"] is True
+    assert sum(aggregate_context["adaptive_budget"]["adaptive_selected_policy_counts"].values()) == 1
+
+
 def test_run_benchmark_uses_groq_for_llm_retriever_when_generation_is_skipped(tmp_path: Path) -> None:
     key_path = tmp_path / "groq.env"
     key_path.write_text("a=gsk_secret\n", encoding="utf-8")

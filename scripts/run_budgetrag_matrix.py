@@ -109,6 +109,8 @@ def build_matrix_jobs(
                 ]
                 if args.per_doc_budget_chars is not None:
                     command.extend(["--per-doc-budget-chars", str(args.per_doc_budget_chars)])
+                if policy == "adaptive-heuristic":
+                    command.extend(["--adaptive-medium-budget", str(budget)])
                 if args.skip_generation:
                     command.append("--skip-generation")
                 if args.disable_kv_estimate:
@@ -158,6 +160,10 @@ def _manifest(
         "retrievers": retrievers,
         "context_policies": policies,
         "context_budgets": budgets,
+        "adaptive_budget_note": (
+            "For adaptive-heuristic jobs, each context budget is also passed as --adaptive-medium-budget. "
+            "Small and large adaptive candidates keep CLI defaults unless overridden outside this matrix helper."
+        ),
         "top_k": args.top_k,
         "skip_generation": args.skip_generation,
         "kv_profile": args.kv_profile,

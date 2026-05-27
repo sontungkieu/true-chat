@@ -40,6 +40,12 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
             "250",
             "--kv-profile",
             "qwen2.5-14b",
+            "--adaptive-small-budget",
+            "800",
+            "--adaptive-medium-budget",
+            "1600",
+            "--adaptive-large-budget",
+            "3200",
         ]
     )
 
@@ -61,6 +67,9 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
     assert seen["config"].record_context_metrics is True
     assert seen["config"].kv_profile == "qwen2.5-14b"
     assert seen["config"].disable_kv_estimate is False
+    assert seen["config"].adaptive_small_budget == 800
+    assert seen["config"].adaptive_medium_budget == 1600
+    assert seen["config"].adaptive_large_budget == 3200
 
 
 def test_cli_run_rejects_invalid_context_budget(capsys) -> None:
@@ -69,6 +78,14 @@ def test_cli_run_rejects_invalid_context_budget(capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "--context-budget-chars must be positive" in captured.err
+
+
+def test_cli_run_rejects_invalid_adaptive_budget(capsys) -> None:
+    exit_code = cli.main(["run", "--context-policy", "adaptive-heuristic", "--adaptive-medium-budget", "0"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--adaptive-medium-budget must be positive" in captured.err
 
 
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:

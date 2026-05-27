@@ -23,5 +23,6 @@ Policies:
 - `score-density`: sorts by retrieval score per estimated token.
 - `sentence-trim`: keeps rank order and trims final text at simple sentence boundaries when possible.
 - `evidence-aware`: keeps the backward-compatible CLI name, but its current implementation subtype is `lexical-query-aware`. It scores sentence-like spans before answer generation using query overlap, retrieval score, and title overlap.
+- `adaptive-heuristic`: deterministic rule-based wrapper that extracts query/retrieval features, selects one fixed policy and budget size, then records the selected action. It is not RL, not a bandit, and not runtime KV pruning.
 
 Token counts use `ceil(chars / 4)`. These are estimates for comparison and scheduling, not provider-tokenizer counts.

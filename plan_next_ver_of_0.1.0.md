@@ -2,50 +2,46 @@
 
 ## Goal
 
-Implement BudgetRAG Phase 1B.1 for the benchmark CLI: schema hardening, robust summary tooling, lexical/query-aware evidence policy naming, traceable matrix runs, and a small curated smoke result snapshot.
+Implement BudgetRAG Phase 1C for the benchmark CLI: deterministic adaptive context budgeting that chooses among existing fixed policies and budget sizes after retrieval, while preserving all Phase 1B default behavior.
 
-Status: implemented and validated on `feature/budgetrag-phase1b1`; pending final review/merge.
+Status: implemented and validated on `feature/budgetrag-phase1c`.
 
 ## Constraints
 
-- Preserve the default `legacy` context behavior.
-- Keep `--max-context-chars` supported and use it as the default context budget.
-- Do not implement runtime KV-cache pruning in this phase.
-- Do not expose BudgetRAG controls in the built-in chat UI yet.
-- Do not implement adaptive, bandit, RL, or runtime KV-cache pruning policies.
-- Preserve web search, MiMo routing, dictionary mode, image mode, and all existing retrievers.
-- Do not commit benchmark outputs, datasets, caches, local reports, or secrets.
+- Keep `legacy` as the default context policy.
+- Implement `adaptive-heuristic` as a deterministic rule-based wrapper over existing fixed policies.
+- Do not implement RL, bandits, learned policy training, runtime KV-cache pruning, or measured VRAM accounting.
+- Keep built-in chat UI, web search, MiMo routing, dictionary mode, image mode, and existing retrievers functionally unchanged.
+- Commit only curated documentation/reports; keep raw benchmark outputs under ignored output directories.
 
 ## Implementation Plan
 
-1. Clarify evidence-aware policy naming
-   - Status: done.
-   - Keep the CLI policy name `evidence-aware`.
-   - Record implementation subtype `lexical-query-aware`.
-   - Document that this is not answer-aware verification.
+1. Merge Phase 1B.1 baseline
+   - Status: done locally.
+   - Merge `feature/budgetrag-phase1b1` into local `internship`.
+   - Push is blocked in this environment by missing GitHub HTTPS credentials.
 
-2. Add explicit experiment metadata
+2. Add adaptive feature extraction
    - Status: done.
-   - Add run metadata to top-level metrics, aggregate rows, and per-query rows.
-   - Include benchmark, retriever, policy, budget, generation mode, and KV profile.
+   - Compute query length, estimated query tokens, candidate counts, document length stats, score gap, score dispersion, score entropy, and missing score count.
 
-3. Harden summary script
+3. Add deterministic adaptive policy selection
    - Status: done.
-   - Summarize every aggregate record.
-   - Preserve run metadata in CSV rows.
-   - Handle older metrics files with missing experiment metadata.
+   - Add `adaptive-heuristic` as a CLI policy.
+   - Select among `char-budget`, `score-density`, `evidence-aware`, and `per-doc-budget`.
+   - Use configurable small, medium, and large budgets.
 
-4. Improve matrix traceability
+4. Record adaptive metrics
    - Status: done.
-   - Add `--run-name`, `--dry-run`, and `--continue-on-error`.
-   - Write a manifest for real matrix runs.
+   - Add per-query `adaptive_budget` metadata.
+   - Aggregate selected policy counts, selected budget counts, reason counts, average query tokens, average score gap, and average score entropy.
 
-5. Add curated result snapshot
+5. Update matrix and summary tooling
    - Status: done.
-   - Run a small SciFact retrieval-only matrix.
-   - Commit only `docs/reports/phase1b_smoke_results.md`.
+   - Pass matrix budget values as adaptive medium budgets for `adaptive-heuristic`.
+   - Add adaptive summary columns to CSV/Markdown outputs.
 
-6. Validate and commit
+6. Validate and document
    - Status: done.
-   - Run focused tests, full tests, and smoke commands.
-   - Create medium Conventional Commits.
+   - Run focused tests, full test suite, retrieval smoke, adaptive smoke, and compact adaptive matrix smoke.
+   - Add curated `docs/reports/phase1c_adaptive_smoke_results.md`.
