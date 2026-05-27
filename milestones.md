@@ -36,3 +36,13 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c`; pendin
 - Record per-query adaptive decision metadata and aggregate adaptive counts/feature averages.
 - Extend CLI, matrix, and summary tooling for adaptive budget candidates.
 - Document that adaptive budgeting is not RL, not a bandit, and not runtime KV-cache pruning.
+
+## BudgetRAG Phase 1C.1
+
+Status: implemented and validated locally on `feature/budgetrag-phase1c1`; pending final review/merge.
+
+- Merge Phase 1C into local `internship` and validate the merged baseline.
+- Run a larger SciFact BM25 retrieval-only matrix with 50 queries and `top-k 5`.
+- Document adaptive selected policy, selected budget, and reason distributions.
+- Record that the BM25 validation remains conservative: all adaptive rows selected the 4000-character budget.
+- Leave Phase 1D offline bandit/RL-lite for a later phase.
