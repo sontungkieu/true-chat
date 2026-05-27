@@ -23,6 +23,13 @@ SUMMARY_COLUMNS = [
     "generation_provider",
     "generation_model",
     "kv_profile",
+    "adaptive_enabled",
+    "adaptive_selected_policy_counts",
+    "adaptive_selected_budget_counts",
+    "adaptive_reason_counts",
+    "avg_adaptive_query_est_tokens",
+    "avg_adaptive_score_gap",
+    "avg_adaptive_score_entropy",
     "query_count",
     "avg_original_context_chars",
     "avg_kept_context_chars",
@@ -49,6 +56,10 @@ MARKDOWN_COLUMNS = [
     ("token savings", "avg_estimated_token_savings"),
     ("KV savings", "avg_estimated_kv_cache_savings_mb"),
     ("quality", "token_f1"),
+    ("adaptive", "adaptive_enabled"),
+    ("adaptive policies", "adaptive_selected_policy_counts"),
+    ("adaptive budgets", "adaptive_selected_budget_counts"),
+    ("adaptive reasons", "adaptive_reason_counts"),
 ]
 
 
@@ -112,6 +123,7 @@ def _summary_row(
 ) -> dict[str, Any]:
     aggregate_experiment = aggregate.get("experiment") or {}
     context = aggregate.get("context_budget") or {}
+    adaptive = context.get("adaptive_budget") or {}
     generation = aggregate.get("generation") or {}
     kv = aggregate.get("kv_estimate") or {}
     config = data.get("config") or {}
@@ -186,6 +198,13 @@ def _summary_row(
             config.get("kv_profile"),
             "",
         ),
+        "adaptive_enabled": bool(adaptive.get("enabled")),
+        "adaptive_selected_policy_counts": adaptive.get("adaptive_selected_policy_counts"),
+        "adaptive_selected_budget_counts": adaptive.get("adaptive_selected_budget_counts"),
+        "adaptive_reason_counts": adaptive.get("adaptive_reason_counts"),
+        "avg_adaptive_query_est_tokens": adaptive.get("avg_adaptive_query_est_tokens"),
+        "avg_adaptive_score_gap": adaptive.get("avg_adaptive_score_gap"),
+        "avg_adaptive_score_entropy": adaptive.get("avg_adaptive_score_entropy"),
         "query_count": _first_present(context.get("query_count"), aggregate.get("query_count"), ""),
         "avg_original_context_chars": context.get("avg_original_context_chars"),
         "avg_kept_context_chars": context.get("avg_kept_context_chars"),
@@ -207,7 +226,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=SUMMARY_COLUMNS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows([{key: _csv_value(value) for key, value in row.items()} for row in rows])
 
 
 def _markdown_summary(rows: list[dict[str, Any]]) -> str:
@@ -290,9 +309,17 @@ def _number(value: Any) -> float:
 def _format_value(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
     if isinstance(value, float):
         return f"{value:.4g}"
     return str(value)
+
+
+def _csv_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return value
 
 
 if __name__ == "__main__":
