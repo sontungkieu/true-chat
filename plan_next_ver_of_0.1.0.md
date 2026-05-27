@@ -2,43 +2,49 @@
 
 ## Goal
 
-Complete BudgetRAG Phase 1C.1: merge Phase 1C into local `internship`, validate adaptive heuristic behavior on a larger retrieval-only SciFact slice, and document decision distributions before any Phase 1D bandit/RL-lite work.
+Complete BudgetRAG Phase 1C.2: preserve the conservative adaptive baseline, add calibrated deterministic profiles, record normalized score diagnostics, and validate profile behavior on a retrieval-only SciFact BM25 matrix.
 
-Status: implemented and validated locally on `feature/budgetrag-phase1c1`.
+Status: implemented and validated locally on `feature/budgetrag-phase1c2`.
 
 ## Constraints
 
-- Do not implement RL, bandits, runtime KV-cache pruning, new retrievers, or new providers.
-- Preserve default `legacy` behavior and existing chat/web search/MiMo/dictionary/image routes.
+- Do not implement RL, bandits, runtime KV-cache pruning, local Qwen inference, new retrievers, or new providers.
+- Preserve existing `adaptive-heuristic` behavior through the default `conservative` profile.
 - Keep raw benchmark outputs ignored under `benchmark_results/budgetrag/`.
-- Commit only curated documentation and small diagnostic/docs updates.
+- Keep chat UI, web search, MiMo, dictionary, image, and fixed context policies functionally unchanged.
 
 ## Implementation Plan
 
-1. Merge Phase 1C
-   - Status: done locally.
-   - Merged local `feature/budgetrag-phase1c` into local `internship`.
-   - Push is blocked in this environment by missing GitHub HTTPS credentials.
-
-2. Validate merged baseline
+1. Add adaptive profiles
    - Status: done.
-   - `uv sync --frozen --group dev` passed.
-   - `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest` passed.
-   - Plain `uv run pytest` remains blocked by external ROS `launch_testing` missing `lark`.
-   - Legacy, fixed BudgetRAG, and adaptive retrieval-only smoke commands passed.
+   - Added `conservative`, `balanced`, and `aggressive` profiles.
+   - Kept `conservative` as the default to preserve Phase 1C behavior.
+   - Added CLI support through `--adaptive-profile`.
 
-3. Run Phase 1C.1 matrix
+2. Add normalized diagnostics
    - Status: done.
-   - Ran SciFact BM25 retrieval-only matrix with `limit 50`, `top-k 5`, four policies, and budgets `1000,2000,4000`.
-   - Summarized ignored raw outputs with `scripts/summarize_budgetrag_results.py`.
+   - Added normalized score gap, normalized score entropy, and score confidence features.
+   - Recorded profile and calibration version in per-query adaptive metadata.
+   - Aggregated average/min/max normalized diagnostics.
 
-4. Document findings
+3. Update matrix and summary tooling
    - Status: done.
-   - Added `docs/reports/phase1c1_adaptive_validation.md`.
-   - Updated README with a short Phase 1C.1 validation note.
-   - Updated adaptive budgeting docs with the observed conservative BM25 behavior.
+   - Added `--adaptive-profiles` to the matrix script.
+   - Matrix runs adaptive policies once per requested profile and ignores profiles for fixed policies.
+   - Summary output includes profile, calibration version, normalized diagnostics, and adaptive count dictionaries.
 
-5. Next decision
-   - Status: pending future work.
-   - If adaptive remains conservative across retrievers, do Phase 1C.2 threshold calibration.
-   - If action distributions become stable and diverse enough, proceed to Phase 1D offline bandit/RL-lite.
+4. Validate Phase 1C.2
+   - Status: done.
+   - Ran smoke commands for old, conservative adaptive, and balanced adaptive paths.
+   - Ran profile dry-run matrix.
+   - Ran SciFact BM25 retrieval-only matrix with `limit 50`, `top-k 5`, profiles `conservative,balanced,aggressive`, and budgets `1000,2000,4000`.
+
+5. Document findings
+   - Status: done.
+   - Added `docs/reports/phase1c2_adaptive_threshold_calibration.md`.
+   - Updated README, adaptive budgeting docs, limitations, and milestones.
+
+## Next Decision
+
+- Phase 1C.3: run tiny generation-mode validation if Groq quota/keys are intentionally available.
+- Phase 1D: start offline bandit/RL-lite once profile metadata and fixed-policy baselines are considered stable.
