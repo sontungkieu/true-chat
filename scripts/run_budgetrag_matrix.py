@@ -8,12 +8,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from rag_bench.adaptive_budget import ADAPTIVE_PROFILES
+
 
 @dataclass(frozen=True)
 class MatrixJob:
     retriever: str
     policy: str
     budget: int
+    adaptive_profile: str | None
     output_dir: Path
     command: list[str]
 
@@ -23,16 +26,38 @@ def main(argv: list[str] | None = None) -> int:
     retrievers = _split_csv(args.retrievers)
     policies = _split_csv(args.context_policies)
     budgets = [int(value) for value in _split_csv(args.context_budgets)]
+    adaptive_profiles = _split_csv(args.adaptive_profiles)
     if not retrievers:
         raise SystemExit("--retrievers must include at least one value")
     if not policies:
         raise SystemExit("--context-policies must include at least one value")
     if not budgets or any(value <= 0 for value in budgets):
         raise SystemExit("--context-budgets must include positive integers")
+    if not adaptive_profiles:
+        raise SystemExit("--adaptive-profiles must include at least one value")
+    unknown_profiles = sorted(set(adaptive_profiles) - set(ADAPTIVE_PROFILES))
+    if unknown_profiles:
+        allowed = ", ".join(ADAPTIVE_PROFILES)
+        unknown = ", ".join(unknown_profiles)
+        raise SystemExit(f"--adaptive-profiles contains unknown values: {unknown}. Expected one of: {allowed}")
 
     matrix_dir = args.output_dir / args.run_name if args.run_name else args.output_dir
-    jobs = build_matrix_jobs(args, retrievers=retrievers, policies=policies, budgets=budgets, matrix_dir=matrix_dir)
-    manifest = _manifest(args, retrievers=retrievers, policies=policies, budgets=budgets, jobs=jobs)
+    jobs = build_matrix_jobs(
+        args,
+        retrievers=retrievers,
+        policies=policies,
+        budgets=budgets,
+        adaptive_profiles=adaptive_profiles,
+        matrix_dir=matrix_dir,
+    )
+    manifest = _manifest(
+        args,
+        retrievers=retrievers,
+        policies=policies,
+        budgets=budgets,
+        adaptive_profiles=adaptive_profiles,
+        jobs=jobs,
+    )
     if args.dry_run:
         for job in jobs:
             print(" ".join(job.command), flush=True)
@@ -49,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
             failure = {
                 "retriever": job.retriever,
                 "policy": job.policy,
+                "adaptive_profile": job.adaptive_profile,
                 "budget": job.budget,
                 "returncode": completed.returncode,
             }
@@ -68,56 +94,70 @@ def build_matrix_jobs(
     retrievers: list[str],
     policies: list[str],
     budgets: list[int],
+    adaptive_profiles: list[str],
     matrix_dir: Path,
 ) -> list[MatrixJob]:
     jobs: list[MatrixJob] = []
     for retriever in retrievers:
         for policy in policies:
             for budget in budgets:
-                output_dir = matrix_dir / _job_slug(args.bench, retriever, policy, budget)
-                command = [
-                    sys.executable,
-                    "-m",
-                    "rag_bench",
-                    "run",
-                    "--bench",
-                    args.bench,
-                    "--retrievers",
-                    retriever,
-                    "--top-k",
-                    str(args.top_k),
-                    "--limit",
-                    str(args.limit),
-                    "--output-dir",
-                    str(output_dir),
-                    "--context-policy",
-                    policy,
-                    "--context-budget-chars",
-                    str(budget),
-                    "--max-context-chars",
-                    str(args.max_context_chars),
-                    "--max-completion-tokens",
-                    str(args.max_completion_tokens),
-                    "--max-consecutive-errors",
-                    str(args.max_consecutive_errors),
-                    "--model",
-                    args.model,
-                    "--vector-model",
-                    args.vector_model,
-                    "--kv-profile",
-                    args.kv_profile,
-                ]
-                if args.per_doc_budget_chars is not None:
-                    command.extend(["--per-doc-budget-chars", str(args.per_doc_budget_chars)])
-                if policy == "adaptive-heuristic":
-                    command.extend(["--adaptive-medium-budget", str(budget)])
-                if args.skip_generation:
-                    command.append("--skip-generation")
-                if args.disable_kv_estimate:
-                    command.append("--disable-kv-estimate")
-                if args.allow_large_bench:
-                    command.append("--allow-large-bench")
-                jobs.append(MatrixJob(retriever=retriever, policy=policy, budget=budget, output_dir=output_dir, command=command))
+                profiles = adaptive_profiles if policy == "adaptive-heuristic" else [None]
+                for adaptive_profile in profiles:
+                    output_dir = matrix_dir / _job_slug(args.bench, retriever, policy, budget, adaptive_profile)
+                    command = [
+                        sys.executable,
+                        "-m",
+                        "rag_bench",
+                        "run",
+                        "--bench",
+                        args.bench,
+                        "--retrievers",
+                        retriever,
+                        "--top-k",
+                        str(args.top_k),
+                        "--limit",
+                        str(args.limit),
+                        "--output-dir",
+                        str(output_dir),
+                        "--context-policy",
+                        policy,
+                        "--context-budget-chars",
+                        str(budget),
+                        "--max-context-chars",
+                        str(args.max_context_chars),
+                        "--max-completion-tokens",
+                        str(args.max_completion_tokens),
+                        "--max-consecutive-errors",
+                        str(args.max_consecutive_errors),
+                        "--model",
+                        args.model,
+                        "--vector-model",
+                        args.vector_model,
+                        "--kv-profile",
+                        args.kv_profile,
+                    ]
+                    if args.per_doc_budget_chars is not None:
+                        command.extend(["--per-doc-budget-chars", str(args.per_doc_budget_chars)])
+                    if policy == "adaptive-heuristic":
+                        command.extend(["--adaptive-medium-budget", str(budget)])
+                        if adaptive_profile is not None:
+                            command.extend(["--adaptive-profile", adaptive_profile])
+                    if args.skip_generation:
+                        command.append("--skip-generation")
+                    if args.disable_kv_estimate:
+                        command.append("--disable-kv-estimate")
+                    if args.allow_large_bench:
+                        command.append("--allow-large-bench")
+                    jobs.append(
+                        MatrixJob(
+                            retriever=retriever,
+                            policy=policy,
+                            budget=budget,
+                            adaptive_profile=adaptive_profile,
+                            output_dir=output_dir,
+                            command=command,
+                        )
+                    )
     return jobs
 
 
@@ -128,6 +168,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retrievers", default="bm25")
     parser.add_argument("--context-policies", default="legacy,char-budget,evidence-aware")
     parser.add_argument("--context-budgets", default="1000,2000,4000")
+    parser.add_argument("--adaptive-profiles", default="conservative")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--output-dir", type=Path, default=Path("benchmark_results/budgetrag"))
     parser.add_argument("--run-name", default=None, help="Optional matrix run name used as a subdirectory.")
@@ -152,6 +193,7 @@ def _manifest(
     retrievers: list[str],
     policies: list[str],
     budgets: list[int],
+    adaptive_profiles: list[str],
     jobs: list[MatrixJob],
 ) -> dict[str, object]:
     return {
@@ -160,9 +202,10 @@ def _manifest(
         "retrievers": retrievers,
         "context_policies": policies,
         "context_budgets": budgets,
+        "adaptive_profiles": adaptive_profiles,
         "adaptive_budget_note": (
-            "For adaptive-heuristic jobs, each context budget is also passed as --adaptive-medium-budget. "
-            "Small and large adaptive candidates keep CLI defaults unless overridden outside this matrix helper."
+            "For adaptive-heuristic jobs, each context budget is passed as --adaptive-medium-budget and each "
+            "requested adaptive profile is run. Non-adaptive policies ignore adaptive profiles."
         ),
         "top_k": args.top_k,
         "skip_generation": args.skip_generation,
@@ -173,6 +216,7 @@ def _manifest(
             {
                 "retriever": job.retriever,
                 "context_policy": job.policy,
+                "adaptive_profile": job.adaptive_profile,
                 "context_budget_chars": job.budget,
                 "output_dir": str(job.output_dir),
                 "command": job.command,
@@ -182,8 +226,9 @@ def _manifest(
     }
 
 
-def _job_slug(bench: str, retriever: str, policy: str, budget: int) -> str:
-    raw = f"{bench}__{retriever}__{policy}__{budget}"
+def _job_slug(bench: str, retriever: str, policy: str, budget: int, adaptive_profile: str | None = None) -> str:
+    profile = f"__{adaptive_profile}" if adaptive_profile else ""
+    raw = f"{bench}__{retriever}__{policy}{profile}__budget{budget}"
     return "".join(char if char.isalnum() or char in "._-" else "-" for char in raw)
 
 
