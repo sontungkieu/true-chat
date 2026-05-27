@@ -68,6 +68,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Per-document text budget for policies that support it.",
     )
     run_parser.add_argument(
+        "--adaptive-small-budget",
+        type=int,
+        default=1000,
+        help="Small character budget candidate for --context-policy adaptive-heuristic.",
+    )
+    run_parser.add_argument(
+        "--adaptive-medium-budget",
+        type=int,
+        default=2000,
+        help="Medium character budget candidate for --context-policy adaptive-heuristic.",
+    )
+    run_parser.add_argument(
+        "--adaptive-large-budget",
+        type=int,
+        default=4000,
+        help="Large character budget candidate for --context-policy adaptive-heuristic.",
+    )
+    run_parser.add_argument(
         "--record-context-metrics",
         action="store_true",
         default=True,
@@ -232,6 +250,15 @@ def _run(args: argparse.Namespace) -> int:
     if args.per_doc_budget_chars is not None and args.per_doc_budget_chars <= 0:
         print("--per-doc-budget-chars must be positive.", file=sys.stderr)
         return 2
+    if args.adaptive_small_budget <= 0:
+        print("--adaptive-small-budget must be positive.", file=sys.stderr)
+        return 2
+    if args.adaptive_medium_budget <= 0:
+        print("--adaptive-medium-budget must be positive.", file=sys.stderr)
+        return 2
+    if args.adaptive_large_budget <= 0:
+        print("--adaptive-large-budget must be positive.", file=sys.stderr)
+        return 2
     if args.sleep_between_queries < 0:
         print("--sleep-between-queries must be non-negative.", file=sys.stderr)
         return 2
@@ -273,6 +300,9 @@ def _run(args: argparse.Namespace) -> int:
         record_context_metrics=args.record_context_metrics,
         kv_profile=args.kv_profile,
         disable_kv_estimate=args.disable_kv_estimate,
+        adaptive_small_budget=args.adaptive_small_budget,
+        adaptive_medium_budget=args.adaptive_medium_budget,
+        adaptive_large_budget=args.adaptive_large_budget,
     )
     try:
         summary = run_benchmark(config)

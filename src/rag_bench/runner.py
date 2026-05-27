@@ -55,6 +55,9 @@ class RunConfig:
     record_context_metrics: bool = True
     kv_profile: str = "generic-small"
     disable_kv_estimate: bool = False
+    adaptive_small_budget: int = 1000
+    adaptive_medium_budget: int = 2000
+    adaptive_large_budget: int = 4000
 
 
 def run_benchmark(
@@ -176,6 +179,7 @@ def run_benchmark(
                 "retrieval_metrics": per_query_metrics,
                 "retrieval_metadata": retrieval.metadata,
                 "context_budget": context_metrics,
+                "adaptive_budget": context_metrics.get("metadata", {}).get("adaptive_budget"),
                 "kv_estimate": kv_estimate,
                 "estimated_prompt_tokens_after_budget": budgeted_context.kept_est_tokens,
                 "estimated_prompt_tokens_saved_by_budget": max(
@@ -353,6 +357,9 @@ def _experiment_metadata(
         "context_policy_impl": _context_policy_impl_name(config.context_policy),
         "context_budget_chars": context_budget_chars,
         "per_doc_budget_chars": config.per_doc_budget_chars,
+        "adaptive_small_budget": config.adaptive_small_budget,
+        "adaptive_medium_budget": config.adaptive_medium_budget,
+        "adaptive_large_budget": config.adaptive_large_budget,
         "skip_generation": config.skip_generation,
         "generation_provider": generation_provider,
         "generation_model": generation_model,
@@ -372,6 +379,9 @@ def _effective_context_budget(config: RunConfig, *, query_text: str) -> ContextB
         max_chars=config.context_budget_chars or config.max_context_chars,
         per_doc_max_chars=config.per_doc_budget_chars,
         query=query_text,
+        adaptive_small_budget=config.adaptive_small_budget,
+        adaptive_medium_budget=config.adaptive_medium_budget,
+        adaptive_large_budget=config.adaptive_large_budget,
     )
 
 

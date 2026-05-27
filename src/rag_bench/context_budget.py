@@ -30,6 +30,9 @@ class ContextBudget:
     max_docs: int | None = None
     query: str = ""
     estimate_tokens: bool = True
+    adaptive_small_budget: int = 1000
+    adaptive_medium_budget: int = 2000
+    adaptive_large_budget: int = 4000
 
 
 @dataclass
@@ -51,6 +54,10 @@ def apply_context_budget(hits: list[RetrievalHit] | list[ContextItem], budget: C
     from rag_bench.context_policies import apply_context_policy
 
     items = hits if not hits or isinstance(hits[0], ContextItem) else retrieval_hits_to_context_items(hits)  # type: ignore[index]
+    if budget.policy == "adaptive-heuristic":
+        from rag_bench.adaptive_budget import apply_adaptive_context_budget
+
+        return apply_adaptive_context_budget(items, budget)  # type: ignore[arg-type]
     return apply_context_policy(items, budget)  # type: ignore[arg-type]
 
 
@@ -61,6 +68,12 @@ def validate_context_budget(budget: ContextBudget) -> None:
         raise ValueError("per_doc_max_chars must be positive when provided")
     if budget.max_docs is not None and budget.max_docs <= 0:
         raise ValueError("max_docs must be positive when provided")
+    if budget.adaptive_small_budget <= 0:
+        raise ValueError("adaptive_small_budget must be positive")
+    if budget.adaptive_medium_budget <= 0:
+        raise ValueError("adaptive_medium_budget must be positive")
+    if budget.adaptive_large_budget <= 0:
+        raise ValueError("adaptive_large_budget must be positive")
 
 
 def retrieval_hits_to_context_items(hits: list[RetrievalHit]) -> list[ContextItem]:
