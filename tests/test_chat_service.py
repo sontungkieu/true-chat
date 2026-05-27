@@ -487,7 +487,9 @@ def test_web_command_uses_web_search_results_as_rag_context() -> None:
     assert result.response["rag"]["retrieved"][0]["doc_id"] == "web-1"
     assert result.response["rag"]["retrieved"][0]["url"] == "https://example.test/true-chat"
     assert "Web search results" in llm.messages[1]["content"]
+    assert "[web-1]" in llm.messages[1]["content"]
     assert "True Chat added web search" in llm.messages[1]["content"]
+    assert "URL: https://example.test/true-chat" in llm.messages[1]["content"]
     assert "Required response language: Vietnamese" in llm.messages[0]["content"]
 
 

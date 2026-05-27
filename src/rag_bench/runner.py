@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from rag_bench.benchmarks import load_benchmark
+from rag_bench.context_budget import ContextBudget, apply_context_budget
+from rag_bench.context_metrics import aggregate_context_budget_metrics, aggregate_kv_estimates, context_budget_metrics
 from rag_bench.groq_client import RoundRobinGroqClient
 from rag_bench.io import write_csv, write_json, write_jsonl
+from rag_bench.kv_estimator import estimate_kv_cache_savings
 from rag_bench.metrics import (
     aggregate_generation,
     aggregate_metric_dicts,
@@ -17,7 +20,7 @@ from rag_bench.metrics import (
     retrieval_metrics_for_query,
     token_f1,
 )
-from rag_bench.prompts import build_rag_messages
+from rag_bench.prompts import build_rag_messages_from_context
 from rag_bench.retriever_registry import create_retriever, retriever_uses_llm
 from rag_bench.secrets import ApiKey, load_groq_keys
 from rag_bench.types import BenchmarkData
@@ -46,6 +49,12 @@ class RunConfig:
     key_tokens_per_minute: int
     key_requests_per_minute: int
     rate_limit_scope: str
+    context_policy: str = "legacy"
+    context_budget_chars: int | None = None
+    per_doc_budget_chars: int | None = None
+    record_context_metrics: bool = True
+    kv_profile: str = "generic-small"
+    disable_kv_estimate: bool = False
 
 
 def run_benchmark(
@@ -71,6 +80,7 @@ def run_benchmark(
     aggregate_rows: list[dict[str, Any]] = []
     consecutive_generation_errors = 0
     stop_reason: str | None = None
+    created_at = datetime.now(timezone.utc).isoformat()
 
     for retriever_name in config.retrievers:
         if stop_reason is not None:
@@ -85,11 +95,41 @@ def run_benchmark(
 
         retrieval_metric_rows: list[dict[str, float]] = []
         generation_rows: list[dict[str, Any]] = []
+        context_budget_rows: list[dict[str, Any]] = []
+        kv_estimate_rows: list[dict[str, Any] | None] = []
         for query_index, query in enumerate(data.queries):
             if stop_reason is not None:
                 break
             query_started = time.perf_counter()
             retrieval = retriever.search(query, config.top_k)
+            context_budget = _effective_context_budget(config, query_text=query.text)
+            budgeted_context = apply_context_budget(retrieval.hits, context_budget)
+            context_metrics = context_budget_metrics(
+                budgeted_context,
+                context_budget,
+                retrieved_docs=len(retrieval.hits),
+            )
+            prompt_context = _prompt_context_with_safety_ceiling(
+                budgeted_context.text,
+                max_context_chars=config.max_context_chars,
+                context_budget_chars=config.context_budget_chars,
+            )
+            prompt_safety_truncated = prompt_context != budgeted_context.text
+            if prompt_safety_truncated:
+                context_metrics["metadata"] = {
+                    **context_metrics.get("metadata", {}),
+                    "prompt_safety_truncated": True,
+                    "prompt_safety_max_context_chars": config.max_context_chars,
+                }
+            kv_estimate = None
+            if not config.disable_kv_estimate:
+                kv_estimate = estimate_kv_cache_savings(
+                    before_tokens=budgeted_context.original_est_tokens,
+                    after_tokens=min(budgeted_context.kept_est_tokens, budgeted_context.original_est_tokens),
+                    profile=config.kv_profile,
+                )
+            context_budget_rows.append(context_metrics)
+            kv_estimate_rows.append(kv_estimate)
             per_query_metrics = retrieval_metrics_for_query(
                 retrieval,
                 data.qrels.get(query.query_id, {}),
@@ -101,7 +141,7 @@ def run_benchmark(
             generation = None
             if not config.skip_generation and llm is not None:
                 generation = llm.generate(
-                    build_rag_messages(query, retrieval.hits, max_context_chars=config.max_context_chars),
+                    build_rag_messages_from_context(query, prompt_context),
                     temperature=config.temperature,
                     max_completion_tokens=config.max_completion_tokens,
                 )
@@ -109,6 +149,13 @@ def run_benchmark(
             answer_em = exact_match(answer, query.reference_answers)
             answer_f1 = token_f1(answer, query.reference_answers)
             row = {
+                "experiment": _experiment_metadata(
+                    config,
+                    data=data,
+                    run_id=run_id,
+                    created_at=created_at,
+                    retriever=retriever.name,
+                ),
                 "run_id": run_id,
                 "benchmark": data.name,
                 "dataset_id": data.dataset_id,
@@ -128,6 +175,13 @@ def run_benchmark(
                 ],
                 "retrieval_metrics": per_query_metrics,
                 "retrieval_metadata": retrieval.metadata,
+                "context_budget": context_metrics,
+                "kv_estimate": kv_estimate,
+                "estimated_prompt_tokens_after_budget": budgeted_context.kept_est_tokens,
+                "estimated_prompt_tokens_saved_by_budget": max(
+                    0,
+                    budgeted_context.original_est_tokens - budgeted_context.kept_est_tokens,
+                ),
                 "generation_skipped": generation is None,
                 "answer": answer,
                 "answer_latency_s": generation.latency_s if generation is not None else None,
@@ -175,6 +229,13 @@ def run_benchmark(
                 time.sleep(config.sleep_between_queries_s)
 
         aggregate = {
+            "experiment": _experiment_metadata(
+                config,
+                data=data,
+                run_id=run_id,
+                created_at=created_at,
+                retriever=retriever.name,
+            ),
             "run_id": run_id,
             "benchmark": data.name,
             "dataset_id": data.dataset_id,
@@ -184,6 +245,8 @@ def run_benchmark(
             "top_k": config.top_k,
             "index_build_time_s": retriever.build_time_s,
             "retrieval": aggregate_metric_dicts(retrieval_metric_rows),
+            "context_budget": aggregate_context_budget_metrics(context_budget_rows),
+            "kv_estimate": aggregate_kv_estimates(kv_estimate_rows),
             "generation": (
                 {"skipped": True, "generation_count": 0}
                 if config.skip_generation
@@ -210,7 +273,14 @@ def run_benchmark(
 
     summary = {
         "run_id": run_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": created_at,
+        "experiment": _experiment_metadata(
+            config,
+            data=data,
+            run_id=run_id,
+            created_at=created_at,
+            retriever=None,
+        ),
         "config": _serializable_config(config),
         "benchmark": {
             "name": data.name,
@@ -257,6 +327,63 @@ def _serializable_config(config: RunConfig) -> dict[str, Any]:
     output["groq_keys_path"] = str(config.groq_keys_path)
     output["retrievers"] = list(config.retrievers)
     return output
+
+
+def _experiment_metadata(
+    config: RunConfig,
+    *,
+    data: BenchmarkData,
+    run_id: str,
+    created_at: str,
+    retriever: str | None,
+) -> dict[str, Any]:
+    context_budget_chars = config.context_budget_chars or config.max_context_chars
+    generation_model = None if config.skip_generation else config.model
+    generation_provider = None if config.skip_generation else "groq"
+    return {
+        "run_id": run_id,
+        "created_at": created_at,
+        "bench": config.bench,
+        "benchmark": data.name,
+        "dataset_id": data.dataset_id,
+        "retriever": retriever,
+        "retrievers": list(config.retrievers),
+        "top_k": config.top_k,
+        "context_policy": config.context_policy,
+        "context_policy_impl": _context_policy_impl_name(config.context_policy),
+        "context_budget_chars": context_budget_chars,
+        "per_doc_budget_chars": config.per_doc_budget_chars,
+        "skip_generation": config.skip_generation,
+        "generation_provider": generation_provider,
+        "generation_model": generation_model,
+        "kv_profile": None if config.disable_kv_estimate else config.kv_profile,
+    }
+
+
+def _context_policy_impl_name(policy: str) -> str:
+    from rag_bench.context_policies import context_policy_impl_name
+
+    return context_policy_impl_name(policy)
+
+
+def _effective_context_budget(config: RunConfig, *, query_text: str) -> ContextBudget:
+    return ContextBudget(
+        policy=config.context_policy,
+        max_chars=config.context_budget_chars or config.max_context_chars,
+        per_doc_max_chars=config.per_doc_budget_chars,
+        query=query_text,
+    )
+
+
+def _prompt_context_with_safety_ceiling(
+    context: str,
+    *,
+    max_context_chars: int,
+    context_budget_chars: int | None,
+) -> str:
+    if context_budget_chars is None or len(context) <= max_context_chars:
+        return context
+    return context[:max_context_chars].rstrip()
 
 
 def _retrieval_ops_metrics(metadata: dict[str, Any]) -> dict[str, float]:

@@ -14,6 +14,8 @@ from rag_bench.chat_service import (
     DEFAULT_MIMO_MODELS,
     DEFAULT_PROXY_MODEL_ID,
 )
+from rag_bench.context_policies import CONTEXT_POLICY_NAMES
+from rag_bench.kv_estimator import KV_MODEL_PROFILES
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.runner import RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
@@ -52,6 +54,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--max-completion-tokens", type=int, default=512)
     run_parser.add_argument("--temperature", type=float, default=0.0)
     run_parser.add_argument("--max-context-chars", type=int, default=12_000)
+    run_parser.add_argument("--context-policy", choices=CONTEXT_POLICY_NAMES, default="legacy")
+    run_parser.add_argument(
+        "--context-budget-chars",
+        type=int,
+        default=None,
+        help="BudgetRAG context budget. Defaults to --max-context-chars when omitted.",
+    )
+    run_parser.add_argument(
+        "--per-doc-budget-chars",
+        type=int,
+        default=None,
+        help="Per-document text budget for policies that support it.",
+    )
+    run_parser.add_argument(
+        "--record-context-metrics",
+        action="store_true",
+        default=True,
+        help="Record context budget metrics. Metrics are currently always recorded.",
+    )
+    run_parser.add_argument("--kv-profile", choices=sorted(KV_MODEL_PROFILES), default="generic-small")
+    run_parser.add_argument("--disable-kv-estimate", action="store_true", help="Disable analytical KV-cache estimates.")
     run_parser.add_argument("--allow-large-bench", action="store_true", help="Allow large benchmarks such as HotpotQA.")
     run_parser.add_argument("--skip-generation", action="store_true", help="Run retrieval metrics only without Groq calls.")
     run_parser.add_argument("--ragas", action="store_true", help="Run optional RAGAS metrics.")
@@ -197,6 +220,18 @@ def _run(args: argparse.Namespace) -> int:
     if args.max_consecutive_errors < 0:
         print("--max-consecutive-errors must be non-negative.", file=sys.stderr)
         return 2
+    if args.max_completion_tokens <= 0:
+        print("--max-completion-tokens must be positive.", file=sys.stderr)
+        return 2
+    if args.max_context_chars <= 0:
+        print("--max-context-chars must be positive.", file=sys.stderr)
+        return 2
+    if args.context_budget_chars is not None and args.context_budget_chars <= 0:
+        print("--context-budget-chars must be positive.", file=sys.stderr)
+        return 2
+    if args.per_doc_budget_chars is not None and args.per_doc_budget_chars <= 0:
+        print("--per-doc-budget-chars must be positive.", file=sys.stderr)
+        return 2
     if args.sleep_between_queries < 0:
         print("--sleep-between-queries must be non-negative.", file=sys.stderr)
         return 2
@@ -232,6 +267,12 @@ def _run(args: argparse.Namespace) -> int:
         key_tokens_per_minute=args.key_tpm,
         key_requests_per_minute=args.key_rpm,
         rate_limit_scope=args.rate_limit_scope,
+        context_policy=args.context_policy,
+        context_budget_chars=args.context_budget_chars,
+        per_doc_budget_chars=args.per_doc_budget_chars,
+        record_context_metrics=args.record_context_metrics,
+        kv_profile=args.kv_profile,
+        disable_kv_estimate=args.disable_kv_estimate,
     )
     try:
         summary = run_benchmark(config)

@@ -172,6 +172,48 @@ If Groq reports one shared organization quota, switch the scheduler scope:
 uv run rag-bench run --bench scifact --retrievers bm25 --top-k 3 --limit 20 --max-context-chars 2500 --max-completion-tokens 128 --key-tpm 6000 --key-rpm 30 --rate-limit-scope shared --max-consecutive-errors 2
 ```
 
+## BudgetRAG Phase 1B: Context-Budgeted RAG
+
+BudgetRAG adds a context-budgeting layer between retrieval and generation in the benchmark CLI. It compares fixed and evidence-aware context policies under character, estimated token, latency, compression, and analytical KV-cache budgets. The default policy is `legacy`, which preserves the previous rank-ordered `--max-context-chars` truncation behavior.
+
+The current `evidence-aware` policy is a lightweight lexical/query-aware evidence retention policy. It scores candidate spans before answer generation using query overlap, retrieval score, and title overlap. It is not answer-aware verification and does not perform semantic entailment checking.
+
+This phase does not modify runtime KV-cache internals. KV-cache savings are analytical estimates from reduced estimated context length, not measured VRAM savings and not runtime KV pruning.
+
+Retrieval-only BudgetRAG smoke run:
+
+```bash
+uv run rag-bench run \
+  --bench scifact \
+  --retrievers bm25 \
+  --top-k 5 \
+  --limit 10 \
+  --skip-generation \
+  --context-policy evidence-aware \
+  --context-budget-chars 2000
+```
+
+Compact matrix run:
+
+```bash
+uv run python scripts/run_budgetrag_matrix.py \
+  --bench scifact \
+  --limit 20 \
+  --retrievers bm25 \
+  --context-policies legacy,char-budget,evidence-aware \
+  --context-budgets 1000,2000,4000 \
+  --skip-generation \
+  --run-name phase1b_smoke
+```
+
+Summarize local matrix outputs:
+
+```bash
+uv run python scripts/summarize_budgetrag_results.py benchmark_results/budgetrag
+```
+
+Use `--kv-profile generic-small` or `--kv-profile qwen2.5-14b` to choose the analytical KV profile, and `--disable-kv-estimate` when those fields are not needed. If `--context-budget-chars` is omitted, the runner uses `--max-context-chars` as the BudgetRAG budget. When both are provided, `--context-budget-chars` controls the context policy and `--max-context-chars` remains a prompt safety ceiling.
+
 ## Built-In Chat UI And OpenAI Proxy
 
 Start the lightweight built-in RAG chat UI and OpenAI-compatible proxy:
@@ -248,7 +290,24 @@ Open the UI from Windows or the host browser:
 http://localhost:8000/
 ```
 
-The built-in page is the recommended temporary frontend for this repo. The UI lives in `ui/chat.html` and is served by a small FastAPI template loader, keeping frontend code outside `src/rag_bench/`. It is a single lightweight HTML/CSS/JS response with no frontend build, Docker, CDN, or extra model downloads. The visual shell follows a polished Open WebUI-like layout with a compact collapsible left chat sidebar, compact topbar, centered welcome state, rounded bottom composer, icon-based controls, collapsed local settings, responsive mobile sidebar, and local theme choices: `Light`, `Colorful`, and `System`. The `Colorful` theme is light-based and combines `#228B22` green with red and yellow accents. It stores conversations and local UI settings in browser `localStorage`, supports creating, renaming, and deleting local conversations, lets users edit a prior question and regenerate from that point, calls `POST /v1/chat/completions` with `stream=true`, supports stop/retry/copy, and displays compact RAG source metadata. The local settings panel can export/import chat history as JSON with message request profiles, assistant metadata, retrieved source metadata, and user feedback notes; the proxy API key and web search privilege key are intentionally excluded from exports. Persisted history stores compact source metadata instead of full dictionary `rich_blocks`, while the live in-memory session and exported archive keep the richest source metadata currently available; this avoids browser quota freezes on broad dictionary queries such as years. When an older or compacted chat lacks rich DOCX blocks, dictionary sources still render as cards using text fallback plus query highlights. The layout has desktop, tablet, and mobile breakpoints: wide screens use split chat/document panes, tablet widths keep the same shell with narrower panes, and small mobile widths turn sidebar and document panel into overlays. Mobile sizing uses the browser visual viewport plus safe-area padding so the top menu remains tappable and the bottom composer stays inside the visible screen on phones. On mobile, users can also swipe right from the chat area to open the sidebar without touching the top menu button. Local settings keep generation and retrieval separate: `Model` selects a configured generation model from Groq or the optional MiMo provider, while `Search` selects a registry-backed local retriever for text mode. The internship UI composer exposes `Text only` and `Web search` response modes by default; `Web search` requires a pasted local `Web search key`, then calls live DuckDuckGo search, turns results into cited `web-*` sources, and uses the same selected generation model. Dictionary and image controls are hidden on this branch unless their backend modes are explicitly re-enabled for legacy demos. Non-interactive dataset labels and duplicate topbar model labels stay out of the composer/header to keep the input compact. Menu-style chips use a small divider plus down-caret so adjustable controls are visually distinct from plain toggles; their dropdowns align to the chip that opened them and close when the user clicks elsewhere, including the message input. Composer chips, inline citation pills, dictionary cards, dictionary source panels, and dictionary match/related pills stay single-line or resize with the global UI font scale. Default chat text search options are BM25, TF-IDF, keyword match, deterministic multi-query, and Graph BM25; heavier vector and LLM-query strategies can be enabled through the backend config/CLI. The settings panel also includes an English/Vietnamese language selector, a dev mode toggle, a `Memory` toggle, and a `Font size` slider from `100%` to `200%`; the selected language is sent with each chat request and the backend forces generated text into that response language. When `Memory` is disabled, the UI still sends the OpenAI-style message list for compatibility, but the backend builds the RAG prompt with `history_messages=0`, so the selected model only sees the current question and retrieved contexts. When dev mode is enabled, each user question shows the request choices captured at send time, such as `Text only | TF-IDF | Qwen3 32B` or `Web search | Qwen3 32B`, so later setting changes do not obscure how that answer was produced. The UI clamps local `Max tokens` to at least `16` and falls back to a non-stream request if a stream unexpectedly returns empty content. Assistant copy/retry/feedback controls sit in the footer beside throughput metadata, while user copy/edit controls sit below and outside the user text bubble. Feedback notes are stored on the assistant message and exported with history for later optimization/evaluation. Reasoning blocks wrapped in `<think>...</think>` are rendered as a smaller, muted, collapsed disclosure by default. Assistant explanations render a safe Markdown subset for headings, bold, italic, paragraphs, and ordered/unordered lists while keeping citations clickable. Citations such as `[4323425]` or `[web-1]` are rendered as ordered inline references like `[1]` based on the `Citations and related documents` table, and clicking a citation or related-document row opens the document in the right-side panel while preserving each citation table's open/closed state; on mobile this becomes a full-screen document overlay that covers the chat behind it. When provider token usage is returned, the normal chat meta line shows completion throughput as `n tok/s`; dev mode adds key alias, rejected aliases, retry count, scheduler wait, and the captured request choices for each user question. Retrieved sources with zero or negative relevance scores are hidden from the related-document list unless the answer cites them directly. All retrieval, provider routing, key scheduling, retries, and rate limiting stay inside this repo.
+The built-in page is the recommended temporary frontend for this repo. The UI lives in `ui/chat.html` and is served by a small FastAPI template loader, keeping frontend code outside `src/rag_bench/`. It is a single lightweight HTML/CSS/JS response with no frontend build, Docker, CDN, or extra model downloads.
+
+Built-in UI behavior:
+
+- Visual shell: polished Open WebUI-like layout with a compact collapsible left chat sidebar, compact topbar, centered welcome state, rounded bottom composer, icon-based controls, collapsed local settings, responsive mobile sidebar, and local theme choices: `Light`, `Colorful`, and `System`. The `Colorful` theme is light-based and combines `#228B22` green with red and yellow accents.
+- Conversation workflow: stores conversations and local UI settings in browser `localStorage`, supports creating, renaming, and deleting local conversations, lets users edit a prior question and regenerate from that point, calls `POST /v1/chat/completions` with `stream=true`, supports stop/retry/copy, and displays compact RAG source metadata.
+- Import/export: local settings can export/import chat history as JSON with message request profiles, assistant metadata, retrieved source metadata, and user feedback notes. The proxy API key and web search privilege key are intentionally excluded from exports.
+- Dictionary persistence: persisted history stores compact source metadata instead of full dictionary `rich_blocks`, while the live in-memory session and exported archive keep the richest source metadata currently available. When an older or compacted chat lacks rich DOCX blocks, dictionary sources still render as cards using text fallback plus query highlights.
+- Responsive layout: desktop uses split chat/document panes, tablet keeps the same shell with narrower panes, and small mobile widths turn sidebar and document panel into overlays. Mobile sizing uses the browser visual viewport plus safe-area padding so the top menu remains tappable and the bottom composer stays inside the visible screen. Users can swipe right from the chat area to open the sidebar on mobile.
+- Model and search controls: `Model` selects a configured generation model from Groq or the optional MiMo provider, while `Search` selects a registry-backed local retriever for text mode. Default chat text search options are BM25, TF-IDF, keyword match, deterministic multi-query, and Graph BM25; heavier vector and LLM-query strategies can be enabled through backend config/CLI.
+- Response modes: the internship UI composer exposes `Text only` and `Web search` by default. `Web search` requires a pasted local `Web search key`, calls live DuckDuckGo search, turns results into cited `web-*` sources, and uses the selected generation model. Dictionary and image controls are hidden unless their backend modes are explicitly re-enabled for legacy demos.
+- Compact controls: non-interactive dataset labels and duplicate topbar model labels stay out of the composer/header. Menu-style chips use a divider plus down-caret, dropdowns align to their chip, and composer chips/citation pills/dictionary cards resize with the global UI font scale.
+- Local settings: includes an English/Vietnamese language selector, dev mode toggle, `Memory` toggle, and `Font size` slider from `100%` to `200%`. The backend forces generated text into the selected response language. When `Memory` is disabled, the backend builds the RAG prompt with `history_messages=0`.
+- Debug and recovery: dev mode shows request choices captured at send time, such as `Text only | TF-IDF | Qwen3 32B` or `Web search | Qwen3 32B`. The UI clamps local `Max tokens` to at least `16` and falls back to a non-stream request if a stream unexpectedly returns empty content.
+- Message rendering: assistant copy/retry/feedback controls sit in the footer beside throughput metadata, while user copy/edit controls sit below and outside the user text bubble. Feedback notes are stored on assistant messages and exported with history. Reasoning blocks wrapped in `<think>...</think>` render as a smaller, muted, collapsed disclosure by default.
+- Citations and documents: assistant explanations render a safe Markdown subset while keeping citations clickable. Citations such as `[4323425]` or `[web-1]` render as ordered inline references like `[1]` based on the `Citations and related documents` table. Clicking a citation or related-document row opens the document panel; on mobile this becomes a full-screen overlay.
+- Metadata: when provider token usage is returned, the normal chat meta line shows completion throughput as `n tok/s`; dev mode adds key alias, rejected aliases, retry count, scheduler wait, and captured request choices. Retrieved sources with zero or negative relevance scores are hidden from related documents unless the answer cites them directly.
+- Backend boundary: all retrieval, provider routing, key scheduling, retries, and rate limiting stay inside this repo.
 
 Use optional local auth:
 
