@@ -15,6 +15,7 @@ from rag_bench.chat_service import (
     DEFAULT_PROXY_MODEL_ID,
 )
 from rag_bench.context_policies import CONTEXT_POLICY_NAMES
+from rag_bench.adaptive_budget import ADAPTIVE_PROFILES
 from rag_bench.kv_estimator import KV_MODEL_PROFILES
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.runner import RunConfig, run_benchmark
@@ -27,7 +28,10 @@ DEFAULT_VECTOR_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 2
     if args.command == "run":
         return _run(args)
     if args.command == "serve":
@@ -84,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=4000,
         help="Large character budget candidate for --context-policy adaptive-heuristic.",
+    )
+    run_parser.add_argument(
+        "--adaptive-profile",
+        choices=ADAPTIVE_PROFILES,
+        default="conservative",
+        help="Adaptive heuristic profile. Conservative preserves Phase 1C behavior.",
     )
     run_parser.add_argument(
         "--record-context-metrics",
@@ -303,6 +313,7 @@ def _run(args: argparse.Namespace) -> int:
         adaptive_small_budget=args.adaptive_small_budget,
         adaptive_medium_budget=args.adaptive_medium_budget,
         adaptive_large_budget=args.adaptive_large_budget,
+        adaptive_profile=args.adaptive_profile,
     )
     try:
         summary = run_benchmark(config)
