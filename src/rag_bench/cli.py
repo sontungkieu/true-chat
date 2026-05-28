@@ -18,7 +18,7 @@ from rag_bench.context_policies import CONTEXT_POLICY_NAMES
 from rag_bench.adaptive_budget import ADAPTIVE_PROFILES
 from rag_bench.kv_estimator import KV_MODEL_PROFILES
 from rag_bench.retriever_registry import list_retriever_ids
-from rag_bench.runner import RunConfig, run_benchmark
+from rag_bench.runner import DEFAULT_MIMO_BASE_URL, RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
 
 
@@ -53,6 +53,20 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--output-dir", type=Path, default=Path("runs"))
     run_parser.add_argument("--groq-keys-path", type=Path, default=Path(".secrets/groq_key.env"))
     run_parser.add_argument("--model", default=DEFAULT_MODEL)
+    run_parser.add_argument(
+        "--generation-provider",
+        choices=("groq", "mimo"),
+        default="groq",
+        help="Generation provider for benchmark runs.",
+    )
+    run_parser.add_argument(
+        "--generation-model-role",
+        default=None,
+        help="Optional model role label recorded in generation metadata.",
+    )
+    run_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"), help="Env file containing MIMO_API_KEY for benchmark MiMo runs.")
+    run_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY", help="Variable name used for the MiMo API key.")
+    run_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL, help="OpenAI-compatible MiMo base URL.")
     run_parser.add_argument("--vector-model", default=DEFAULT_VECTOR_MODEL)
     run_parser.add_argument("--max-retries", type=int, default=2)
     run_parser.add_argument("--max-completion-tokens", type=int, default=512)
@@ -290,6 +304,11 @@ def _run(args: argparse.Namespace) -> int:
         output_dir=args.output_dir,
         groq_keys_path=args.groq_keys_path,
         model=args.model,
+        generation_provider=args.generation_provider,
+        generation_model_role=args.generation_model_role,
+        mimo_env_file=args.mimo_env_file,
+        mimo_api_key_var=args.mimo_api_key_var,
+        mimo_base_url=args.mimo_base_url,
         vector_model=args.vector_model,
         max_retries=args.max_retries,
         max_completion_tokens=args.max_completion_tokens,

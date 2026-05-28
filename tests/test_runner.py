@@ -108,9 +108,21 @@ def test_run_benchmark_writes_outputs_with_mocked_llm(tmp_path: Path) -> None:
     assert (run_dir / "metrics.csv").exists()
     assert summary["aggregates"][0]["retriever"] == "bm25"
     assert summary["aggregates"][0]["retrieval"]["hit@k"] == 1.0
+    assert summary["aggregates"][0]["experiment"]["generation_provider"] == "groq"
+    assert summary["aggregates"][0]["generation"]["provider"] == "groq"
+    assert summary["aggregates"][0]["generation"]["model"] == "test-model"
+    assert summary["aggregates"][0]["generation"]["avg_estimated_prompt_tokens"] > 0
     assert summary["aggregates"][0]["generation"]["avg_output_tokens_per_s"] == 400.0
     assert summary["key_usage_counts"] == {"a": 1}
     assert summary["key_rate_limits"]["a"]["requests_used"] == 1
+    rows = [
+        json.loads(line)
+        for line in (run_dir / "query_results.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[0]["generation"]["provider"] == "groq"
+    assert rows[0]["generation"]["model"] == "test-model"
+    assert rows[0]["generation"]["token_usage_is_estimated"] is False
+    assert rows[0]["answer_length_chars"] == len("Cats purr [cat-doc]")
 
 
 def test_run_benchmark_stops_after_consecutive_generation_errors(tmp_path: Path) -> None:
@@ -167,6 +179,68 @@ def test_run_benchmark_stops_after_consecutive_generation_errors(tmp_path: Path)
     assert "2 consecutive generation errors" in summary["stop_reason"]
     assert summary["aggregates"][0]["query_count"] == 2
     assert summary["key_usage_counts"] == {"a": 2}
+
+
+def test_run_benchmark_records_mimo_generation_metadata_with_mocked_llm(tmp_path: Path) -> None:
+    mimo_env = tmp_path / ".env"
+    mimo_env.write_text("MIMO_API_KEY=mimo_secret\n", encoding="utf-8")
+
+    def fake_loader(_bench: str, *, limit: int | None, allow_large: bool) -> BenchmarkData:
+        del limit, allow_large
+        return BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[Query("q1", "what animal purrs?", ("cats purr",))],
+            documents=[Document("cat-doc", "Cats purr and chase toys.", "Cats")],
+            qrels={"q1": {"cat-doc": 1}},
+        )
+
+    seen = {}
+
+    def fake_factory(keys):
+        seen["keys"] = keys
+        return FakeLLM()
+
+    config = RunConfig(
+        bench="scifact",
+        retrievers=("bm25",),
+        top_k=1,
+        limit=1,
+        output_dir=tmp_path / "runs",
+        groq_keys_path=tmp_path / "missing-groq.env",
+        model="mimo-v2.5-pro",
+        generation_provider="mimo",
+        generation_model_role="long-context-upper-bound",
+        mimo_env_file=mimo_env,
+        vector_model="fake-vector-model",
+        max_retries=0,
+        max_completion_tokens=32,
+        temperature=0.0,
+        max_context_chars=1000,
+        allow_large_bench=False,
+        ragas=False,
+        ragas_limit=None,
+        max_consecutive_errors=1,
+        skip_generation=False,
+        sleep_between_queries_s=0.0,
+        key_tokens_per_minute=0,
+        key_requests_per_minute=0,
+        rate_limit_scope="per-key",
+    )
+
+    summary = run_benchmark(config, benchmark_loader=fake_loader, groq_client_factory=fake_factory)
+    rows = [
+        json.loads(line)
+        for line in (Path(summary["output_dir"]) / "query_results.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert seen["keys"][0].alias == "mimo"
+    assert summary["experiment"]["generation_provider"] == "mimo"
+    assert summary["experiment"]["generation_model_role"] == "long-context-upper-bound"
+    assert summary["aggregates"][0]["generation"]["provider"] == "mimo"
+    assert summary["aggregates"][0]["generation"]["model_role"] == "long-context-upper-bound"
+    assert rows[0]["generation"]["provider"] == "mimo"
+    assert rows[0]["generation"]["model_role"] == "long-context-upper-bound"
 
 
 def test_run_benchmark_can_skip_generation_without_groq_keys(tmp_path: Path) -> None:
