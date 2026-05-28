@@ -59,13 +59,16 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c2`; pendi
 
 ## BudgetRAG Phase 1C.3
 
-Status: in progress on `feature/budgetrag-phase1c3`.
+Status: implemented and validated locally on `feature/budgetrag-phase1c3`; pending final review/merge.
 
 - Add multi-model generation validation across Groq Llama 8B, Groq Qwen 32B, and MiMo.
 - Treat MiMo as a token-rich/long-context upper-bound rather than a constrained deployment baseline.
 - Record generation provider, model role, latency, estimated prompt/completion tokens, answer length, and error counts.
-- Add generation matrix tooling with model config, MiMo credential skipping, dry-run, manifests, and continue-on-error support.
-- Run full SciFact BM25 generation validation and MiMo long-context validation before final report.
+- Add generation matrix tooling with model config, MiMo credential skipping, dry-run, resume-by-default behavior, per-job timeouts, manifests, and continue-on-error support.
+- Run full SciFact BM25 generation validation with 50 queries for Groq Llama 8B, Groq Qwen 32B, and MiMo v2.5 Pro.
+- Run MiMo long-context validation with 30 queries, `top-k 10`, and budgets up to 32000 characters.
+- Document curated results in `docs/reports/phase1c3_multi_model_generation.md` and `docs/reports/phase1c3_mimo_long_context.md`.
+- Record that Groq high-context adaptive cells hit provider rate limits; MiMo full and long-context cells completed without generation errors.
 
 ## BudgetRAG Phase 1D Presentation
 

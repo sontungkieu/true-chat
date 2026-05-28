@@ -186,6 +186,8 @@ Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuris
 
 Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggressive`) and normalized score diagnostics for threshold calibration. These profiles are deterministic heuristics, not learned policies.
 
+Phase 1C.3 adds multi-model generation validation across a fast Groq baseline, a stronger Groq baseline, and MiMo as a token-rich/long-context upper-bound. MiMo results are model-sensitivity evidence, not resource-constrained deployment behavior.
+
 Retrieval-only BudgetRAG smoke run:
 
 ```bash
@@ -250,6 +252,27 @@ Summarize local matrix outputs:
 ```bash
 uv run python scripts/summarize_budgetrag_results.py benchmark_results/budgetrag
 ```
+
+Multi-model generation matrix:
+
+```bash
+uv run python scripts/run_budgetrag_generation_matrix.py \
+  --bench scifact \
+  --limit 20 \
+  --retrievers bm25 \
+  --models groq_llama8b,groq_qwen32b,mimo_v25_pro \
+  --context-policies legacy,evidence-aware,adaptive-heuristic \
+  --context-budgets 1000,2000,4000,8000 \
+  --adaptive-profiles balanced,aggressive \
+  --top-k 5 \
+  --max-completion-tokens 256 \
+  --kv-profile qwen2.5-14b \
+  --run-name phase1c3_scifact_generation \
+  --job-timeout-s 3600 \
+  --continue-on-error
+```
+
+The generation matrix helper resumes safely by default: if a job directory already contains completed `metrics.json`, it is skipped on the next run. Use `--rerun-existing` to force recomputation. `--job-timeout-s` is optional and bounds each child `rag-bench run`; the default `0` disables per-job timeouts.
 
 Use `--kv-profile generic-small` or `--kv-profile qwen2.5-14b` to choose the analytical KV profile, and `--disable-kv-estimate` when those fields are not needed. If `--context-budget-chars` is omitted, the runner uses `--max-context-chars` as the BudgetRAG budget. When both are provided, `--context-budget-chars` controls the context policy and `--max-context-chars` remains a prompt safety ceiling.
 
