@@ -56,3 +56,28 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c2`; pendi
 - Add normalized score gap, normalized score entropy, and score confidence diagnostics.
 - Extend matrix and summary tooling for adaptive profile comparisons.
 - Run SciFact BM25 profile calibration matrix with 50 queries and document the threshold calibration results.
+
+## BudgetRAG Phase 1C.3
+
+Status: in progress on `feature/budgetrag-phase1c3`.
+
+- Add multi-model generation validation across Groq Llama 8B, Groq Qwen 32B, and MiMo.
+- Treat MiMo as a token-rich/long-context upper-bound rather than a constrained deployment baseline.
+- Record generation provider, model role, latency, estimated prompt/completion tokens, answer length, and error counts.
+- Add generation matrix tooling with model config, MiMo credential skipping, dry-run, manifests, and continue-on-error support.
+- Run full SciFact BM25 generation validation and MiMo long-context validation before final report.
+
+## BudgetRAG Phase 1D Presentation
+
+Status: presentation artifact drafted; implementation pending.
+
+- Add a LaTeX Beamer slide deck under `pressentation/` for the Phase 1D RLAIF, offline bandit, and local Qwen/KV roadmap.
+- Redesign the deck from default Beamer blocks into a custom minimal academic layout with fewer slides, diagrams, and tighter presenter-facing wording.
+- Revise the deck to show RLAIF at context, answer, reward, and downstream DPO/KV touchpoints; add benchmark charts, concrete reward-term definitions, context-policy definitions, and Qwen2.5 KV estimates at 1k/16k/128k tokens.
+- Add exact TurboQuant 3.5-bit KV payload math for 16k and 128k contexts, explicitly separating payload-only calculation from unmeasured runtime overhead.
+- Polish slide wording and typography for a more professional, consistent academic deck; reserve smaller font sizes for dense tables and captions only.
+- Add Phase 1C.3 snapshot data from `benchmark_results/budgetrag/phase1c3_snapshot_summary.md`; keep HotpotQA out of performance tables because no HotpotQA benchmark result is present.
+- Use the final slide as a close-out summary of the strategy and next decisions instead of a test coverage slide.
+- Reorder the deck so strategy/action space and algorithms are introduced before benchmark data and result slides.
+- Keep the deck scoped to AI feedback/RLAIF-style labels, offline contextual bandit/RL-lite, and analytical/profiling-oriented KV work.
+- Document boundaries in the deck: no PPO/GRPO, no human preference learning claim, no Qwen14B DPO completion claim, and no production runtime KV-cache pruning claim.
