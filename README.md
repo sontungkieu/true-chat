@@ -459,6 +459,35 @@ HotpotQA is much larger and must be enabled explicitly:
 uv run --frozen rag-bench run --bench hotpotqa --allow-large-bench --retrievers bm25,graph-bm25 --top-k 5 --limit 20 --skip-generation
 ```
 
+For BudgetRAG HotpotQA generation/RAGAS, prefer Kaggle instead of local matrix runs. The cached runner builds BM25 once, writes `retrieval_cache.jsonl`, replays the 16 MiMo context-policy action rows, joins HotpotQA gold answers from `hotpotqa/hotpot_qa`, and runs post-hoc RAGAS samples:
+
+```bash
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py
+```
+
+The upload script creates a private Kaggle notebook with internet enabled and CPU execution by default. It expects a Kaggle secret named `MIMO_API_KEY`, polls `kaggle kernels status`, and downloads outputs into `benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle/<timestamp>/`.
+Because the notebook clones GitHub and verifies the expected commit, commit and push local code before a real upload. Use `--no-push --allow-dirty --keep-staging-dir /tmp/hotpotqa-kaggle-dryrun` to inspect the generated notebook without uploading.
+
+Run a smaller Kaggle smoke first when validating the notebook path:
+
+```bash
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --limit 5 \
+  --max-action-rows 2 \
+  --ragas-samples-per-action 1
+```
+
+The Kaggle notebook calls:
+
+```bash
+uv run --frozen --extra vector --extra ragas python scripts/run_hotpotqa_cached_budgetrag_eval.py \
+  --limit 50 \
+  --top-k 10 \
+  --ragas-samples-per-action 5
+```
+
+Expected artifacts are `retrieval_cache.jsonl`, `query_results.jsonl`, `metrics.json`, `hotpotqa_summary.csv`, `hotpotqa_summary.md`, and `ragas_per_sample.csv`.
+
 Optional RAGAS mode:
 
 ```bash
@@ -556,6 +585,8 @@ Generation and operations metrics:
 - Exact match and token F1 when reference answers exist. BEIR retrieval datasets generally provide qrels, not answer strings, so these are usually `null`.
 
 Optional RAGAS mode attempts faithfulness, response relevancy, context precision, and context recall using the installed RAGAS version. Because BEIR qrels do not always include natural-language reference answers, some RAGAS metrics may be unavailable or return evaluator errors; those are recorded in `metrics.json`.
+
+The HotpotQA Kaggle cached eval is separate from `rag-bench run --ragas`: it uses BEIR qrels for retrieval, joins natural-language answers from `hotpotqa/hotpot_qa` for EM/token-F1, and sends deterministic post-hoc samples to MiMo-backed RAGAS.
 
 ## Development
 

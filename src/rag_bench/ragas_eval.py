@@ -174,7 +174,8 @@ def _row_to_ragas_sample(row: dict[str, Any]) -> dict[str, Any]:
         if context:
             contexts.append(context)
     contexts = [context for context in contexts if context]
-    reference = ""
+    reference_answers = row.get("reference_answers") or []
+    reference = str(row.get("reference") or (reference_answers[0] if reference_answers else ""))
     return {
         "question": row.get("question", ""),
         "answer": row.get("answer", ""),

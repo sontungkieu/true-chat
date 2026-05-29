@@ -77,10 +77,19 @@ Status: presentation artifact drafted; implementation pending.
 - Add a LaTeX Beamer slide deck under `pressentation/` for the Phase 1D RLAIF, offline bandit, and local Qwen/KV roadmap.
 - Redesign the deck from default Beamer blocks into a custom minimal academic layout with fewer slides, diagrams, and tighter presenter-facing wording.
 - Revise the deck to show RLAIF at context, answer, reward, and downstream DPO/KV touchpoints; add benchmark charts, concrete reward-term definitions, context-policy definitions, and Qwen2.5 KV estimates at 1k/16k/128k tokens.
-- Add exact TurboQuant 3.5-bit KV payload math for 16k and 128k contexts, explicitly separating payload-only calculation from unmeasured runtime overhead.
+- Move exact TurboQuant 3.5-bit KV payload math for 16k and 128k contexts into an appendix slide titled `KV quantization payload estimate`, explicitly separating payload-only calculation from unmeasured runtime overhead.
 - Polish slide wording and typography for a more professional, consistent academic deck; reserve smaller font sizes for dense tables and captions only.
 - Add Phase 1C.3 snapshot data from `benchmark_results/budgetrag/phase1c3_snapshot_summary.md`; keep HotpotQA out of performance tables because no HotpotQA benchmark result is present.
+- Refresh the generation result slide from `docs/reports/phase1c3_multi_model_generation.md` and `docs/reports/phase1c3_mimo_long_context.md`, including Groq Qwen3-32B and MiMo long-context aggregates.
 - Use the final slide as a close-out summary of the strategy and next decisions instead of a test coverage slide.
 - Reorder the deck so strategy/action space and algorithms are introduced before benchmark data and result slides.
+- Add explicit bandit explanation slides covering state/action/reward/policy mapping and the offline strategies to evaluate: fixed, cheapest, best-average, oracle, epsilon-greedy replay, UCB/LinUCB, and linear reward model.
+- Add an explicit RLAIF-to-signal slide showing how structured judge labels become scalar rewards for bandit learning or same-query preference pairs for ranking/DPO smoke.
+- Add an `Acc / quality` slide that separates retrieval accuracy proxies from answer-quality smoke metrics and clarifies that full generation strategy accuracy still needs RAGAS metrics on the full logged matrix.
+- Revise the Phase 1C.3 context slide itself to include retrieval acc (`hit@k/nDCG@k`) beside cost/KV, while marking answer acc as `N/A` until RAGAS is run post-hoc on cached answers.
+- Run a MiMo-backed RAGAS post-hoc judge on 5 cached answers for each slide-14 run and fill the slide with answer-relevancy scores, while noting faithfulness timeout and context-source limitations.
+- Expand the slide-14 context matrix into four full action-matrix slides covering all 64 model/action/budget rows from the full Llama, full Qwen, full MiMo, and MiMo long-context runs.
+- Replace the diagnostic `n=1` RAGAS fill with a proper MiMo-backed stratified RAGAS answer-relevancy pass: 64/64 action rows, 3 valid cached answers per row, deterministic spread sampling, no noncommittal filtering, and reference-dependent metrics explicitly excluded because cached SciFact rows do not include gold free-text answers.
+- Add a Kaggle-first HotpotQA eval path for Phase 1C.3: build BM25 once, cache retrieval, replay the 16 MiMo context-policy action rows, join `hotpotqa/hotpot_qa` references for EM/token-F1, and run MiMo-backed RAGAS samples per action. Local full matrix remains out of scope because HotpotQA BM25 indexing is too heavy for iterative local runs.
 - Keep the deck scoped to AI feedback/RLAIF-style labels, offline contextual bandit/RL-lite, and analytical/profiling-oriented KV work.
 - Document boundaries in the deck: no PPO/GRPO, no human preference learning claim, no Qwen14B DPO completion claim, and no production runtime KV-cache pruning claim.
