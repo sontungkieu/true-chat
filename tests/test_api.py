@@ -221,6 +221,8 @@ def test_chat_page() -> None:
     assert "docTrail" in response.text
     assert "renderDocumentTrail" in response.text
     assert "openDocumentFromTrail" in response.text
+    assert "if (options.fromCrossRef) {" in response.text
+    assert "options.fromCrossRef && selectedSource && !sameDocumentSource" not in response.text
     assert "referenceTrail" in response.text
     assert "backToPreviousEntry" in response.text
     assert "dictionaryCrossRefHint" in response.text

@@ -4116,8 +4116,10 @@
     }
 
     function openDocument(source, options = {}) {
-      if (options.fromCrossRef && selectedSource && !sameDocumentSource(selectedSource, source)) {
-        pushDocumentTrail(selectedSource);
+      if (options.fromCrossRef) {
+        if (selectedSource && !sameDocumentSource(selectedSource, source)) {
+          pushDocumentTrail(selectedSource);
+        }
       } else if (!options.preserveTrail) {
         documentTrail = [];
       }
