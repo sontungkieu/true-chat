@@ -215,6 +215,7 @@ def test_chat_page() -> None:
     assert "query-highlight" in response.text
     assert "sourceHighlightTerms" in response.text
     assert "isHighlightBoundary" in response.text
+    assert '? "dd"' in response.text
     assert "dictionarySourceLabel" in response.text
     assert "Từ điển PB 2021" in response.text
     assert "Bổ sung 2021" in response.text

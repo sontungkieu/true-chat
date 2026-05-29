@@ -4342,7 +4342,7 @@
       let pendingSpaceIndex = 0;
       for (let index = 0; index < text.length; index += 1) {
         const raw = text[index] === "đ" || text[index] === "Đ"
-          ? "d"
+          ? "dd"
           : text[index].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const chars = raw.replace(/[^a-z0-9]+/g, " ");
         for (const char of chars) {

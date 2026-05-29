@@ -276,6 +276,35 @@ def test_dictionary_graph_retriever_prefers_exact_phrase_mentions_over_generic_h
     assert two_places.hits[0].metadata["query_highlights"] == ["pháo đài Láng", "pháo đài Xuân Tảo"]
 
 
+def test_dictionary_graph_retriever_keeps_stroked_d_distinct_from_plain_d() -> None:
+    docs = [
+        Document(
+            doc_id="fort",
+            title="PHÁO ĐÀI",
+            text="PHÁO ĐÀI, công sự kiên cố dùng trong phòng thủ.",
+            metadata={"kind": "dictionary", "headword": "PHÁO ĐÀI"},
+        ),
+        Document(
+            doc_id="long-cannon",
+            title="PHÁO DÀI",
+            text="PHÁO DÀI, cách nói về nòng pháo dài.",
+            metadata={"kind": "dictionary", "headword": "PHÁO DÀI"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    fort = retriever.search(Query("q1", "pháo đài"), top_k=2)
+    long_cannon = retriever.search(Query("q2", "pháo dài"), top_k=2)
+
+    assert fort.hits[0].doc_id == "fort"
+    assert fort.hits[0].metadata["query_highlights"] == ["pháo đài"]
+    assert fort.hits[1].doc_id != "long-cannon" or "dictionary_direct_score" not in fort.hits[1].metadata
+    assert long_cannon.hits[0].doc_id == "long-cannon"
+    assert long_cannon.hits[0].metadata["query_highlights"] == ["pháo dài"]
+    assert long_cannon.hits[1].doc_id != "fort" or "dictionary_direct_score" not in long_cannon.hits[1].metadata
+
+
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:
     docs = [
         Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),

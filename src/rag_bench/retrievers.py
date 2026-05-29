@@ -1015,7 +1015,7 @@ def _metadata_text_values(value: Any) -> list[str]:
 
 
 def _dictionary_fold_text(text: str) -> str:
-    lowered = text.lower().replace("đ", "d")
+    lowered = text.lower().replace("đ", "dd")
     folded = "".join(
         char for char in unicodedata.normalize("NFD", lowered) if unicodedata.category(char) != "Mn"
     )
