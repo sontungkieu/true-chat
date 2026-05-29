@@ -63,6 +63,10 @@ class DictionaryLoadResult:
     entries: list[DictionaryEntry]
     documents: list[Document]
     status: dict[str, Any]
+    graph_nodes_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+    graph_edges: list[dict[str, Any]] = field(default_factory=list)
+    out_edges_by_source: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    in_edges_by_target: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 def load_dictionary_documents(
@@ -116,11 +120,36 @@ def load_dictionary_documents(
             if source_dir and not source_dir.exists():
                 status["warnings"].append(f"dictionary source not found: {source_dir}")
 
+    graph_nodes_by_id: dict[str, dict[str, Any]] = {}
+    graph_edges: list[dict[str, Any]] = []
+    out_edges_by_source: dict[str, list[dict[str, Any]]] = {}
+    in_edges_by_target: dict[str, list[dict[str, Any]]] = {}
+    if artifact_dir and artifact_dir.exists() and artifact_dir.is_dir():
+        graph_nodes_by_id, graph_edges, out_edges_by_source, in_edges_by_target = load_dictionary_graph_artifact(artifact_dir)
+        if graph_nodes_by_id or graph_edges:
+            status.update(
+                {
+                    "graph_node_count": len(graph_nodes_by_id),
+                    "graph_edge_count": len(graph_edges),
+                    "graph_source_count": len(out_edges_by_source),
+                }
+            )
+
     documents = [entry.to_document() for entry in entries]
+    if out_edges_by_source:
+        documents = _attach_graph_edges_to_documents(documents, out_edges_by_source)
     status["entry_count"] = len(entries)
     status["schema_version"] = max((entry.schema_version for entry in entries), default=DICTIONARY_SCHEMA_VERSION)
     status["rich_entry_count"] = sum(1 for entry in entries if entry.rich_blocks)
-    return DictionaryLoadResult(entries=entries, documents=documents, status=status)
+    return DictionaryLoadResult(
+        entries=entries,
+        documents=documents,
+        status=status,
+        graph_nodes_by_id=graph_nodes_by_id,
+        graph_edges=graph_edges,
+        out_edges_by_source=out_edges_by_source,
+        in_edges_by_target=in_edges_by_target,
+    )
 
 
 def load_dictionary_artifact(path: Path) -> list[DictionaryEntry]:
@@ -308,6 +337,113 @@ def _attach_graph_metadata(entries: list[DictionaryEntry], artifact_dir: Path) -
     return updated
 
 
+def load_dictionary_graph_artifact(
+    artifact_dir: Path,
+) -> tuple[
+    dict[str, dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, list[dict[str, Any]]],
+    dict[str, list[dict[str, Any]]],
+]:
+    nodes_path = artifact_dir / "nodes.jsonl"
+    edges_path = artifact_dir / "edges.jsonl"
+    if not nodes_path.is_file() or not edges_path.is_file():
+        return {}, [], {}, {}
+
+    nodes_by_id: dict[str, dict[str, Any]] = {}
+    with nodes_path.open(encoding="utf-8") as file_obj:
+        for line in file_obj:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            node_id = normalize_spaces(str(row.get("id") or ""))
+            if not node_id:
+                continue
+            label = normalize_spaces(str(row.get("label") or _graph_target_label(node_id)))
+            nodes_by_id[node_id] = {
+                **row,
+                "id": node_id,
+                "type": normalize_spaces(str(row.get("type") or "")),
+                "label": label,
+            }
+
+    edges: list[dict[str, Any]] = []
+    out_edges_by_source: dict[str, list[dict[str, Any]]] = {}
+    in_edges_by_target: dict[str, list[dict[str, Any]]] = {}
+    with edges_path.open(encoding="utf-8") as file_obj:
+        for line in file_obj:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            source = normalize_spaces(str(row.get("source") or ""))
+            target = normalize_spaces(str(row.get("target") or ""))
+            relation = normalize_spaces(str(row.get("type") or ""))
+            source_entry_id = normalize_spaces(str(row.get("source_entry_id") or source))
+            if not source or not target or not relation or not source_entry_id:
+                continue
+            source_node = nodes_by_id.get(source, {})
+            target_node = nodes_by_id.get(target, {})
+            edge = {
+                **row,
+                "source": source,
+                "target": target,
+                "type": relation,
+                "source_entry_id": source_entry_id,
+                "source_label": normalize_spaces(str(source_node.get("label") or _graph_target_label(source))),
+                "source_type": normalize_spaces(str(source_node.get("type") or ("entry" if source == source_entry_id else ""))),
+                "target_label": normalize_spaces(str(target_node.get("label") or _graph_target_label(target))),
+                "target_type": normalize_spaces(str(target_node.get("type") or "")),
+                "evidence_text": normalize_spaces(str(row.get("evidence_text") or "")),
+                "confidence": _float_or_default(row.get("confidence"), 0.5),
+                "weight": _float_or_default(row.get("weight"), 1.0),
+            }
+            edges.append(edge)
+            out_edges_by_source.setdefault(source_entry_id, []).append(edge)
+            in_edges_by_target.setdefault(target, []).append(edge)
+    return nodes_by_id, edges, out_edges_by_source, in_edges_by_target
+
+
+def _attach_graph_edges_to_documents(
+    documents: list[Document],
+    out_edges_by_source: dict[str, list[dict[str, Any]]],
+) -> list[Document]:
+    updated: list[Document] = []
+    for doc in documents:
+        edges = out_edges_by_source.get(doc.doc_id, [])
+        if not edges:
+            updated.append(doc)
+            continue
+        metadata = dict(doc.metadata)
+        metadata["dictionary_graph_edges"] = [
+            {
+                "source": edge.get("source"),
+                "target": edge.get("target"),
+                "type": edge.get("type"),
+                "source_entry_id": edge.get("source_entry_id"),
+                "source_label": edge.get("source_label"),
+                "source_type": edge.get("source_type"),
+                "target_label": edge.get("target_label"),
+                "target_type": edge.get("target_type"),
+                "evidence_text": edge.get("evidence_text"),
+                "confidence": edge.get("confidence"),
+                "weight": edge.get("weight"),
+            }
+            for edge in edges
+        ]
+        updated.append(replace(doc, metadata=metadata))
+    return updated
+
+
 def _load_graph_entry_metadata(artifact_dir: Path) -> dict[str, dict[str, list[str]]]:
     nodes_path = artifact_dir / "nodes.jsonl"
     edges_path = artifact_dir / "edges.jsonl"
@@ -365,6 +501,16 @@ def _graph_target_label(value: str) -> str:
     if ":" not in value:
         return value
     return normalize_spaces(value.split(":", 1)[1])
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number:
+        return default
+    return number
 
 
 def _string_list(value: Any) -> list[str]:

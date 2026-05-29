@@ -231,6 +231,10 @@ def test_chat_page() -> None:
     assert "dictionaryMatchMode" in response.text
     assert "strictHighlights" in response.text
     assert "strictForMatchWithMap" in response.text
+    assert "dictionaryGraphPath" in response.text
+    assert "renderDictionaryGraphPath" in response.text
+    assert "dictionaryRelationLabel" in response.text
+    assert "dictionary-graph-path" in response.text
     assert "isHighlightBoundary" in response.text
     assert '? "dd"' in response.text
     assert "dictionarySourceLabel" in response.text

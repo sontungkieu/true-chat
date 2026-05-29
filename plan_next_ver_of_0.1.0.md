@@ -311,6 +311,9 @@ Status: implemented in the current working tree; pending final commit.
    - Add `scripts/validate_dictionary_graph.py` for offline validation, threshold checks, quality report regeneration, and SQLite re-export.
    - Use stdlib SQLite as the v1 runtime/audit store; keep Neo4j deferred until graph query/UI needs justify a service.
    - Improve standalone graph visualization with category, relation, and confidence filters plus evidence/provenance details.
+   - Add runtime typed graph retrieval over artifact `nodes.jsonl`/`edges.jsonl`, including strict/folded query resolution, relation-weighted 1-hop expansion, limited 2-hop expansion, and graph path/evidence metadata for the UI.
+   - Add text-mode dictionary fallback for short term-like queries when the selected normal retriever has no positive evidence, so dictionary terms can resolve even outside explicit Dictionary mode.
+   - Add private source-set safety: inputs classified as `private` are refused for MiMo/Groq and require `--provider local` plus an explicit `--trusted-model` allowlist.
 
 ## Verification
 
@@ -337,6 +340,8 @@ Status: implemented in the current working tree; pending final commit.
 - Confirm SciFact can load from the Hugging Face fallback when `ir_datasets`/BEIR direct download fails.
 - Reproduce a dictionary graph build with `uv run --frozen python scripts/build_dictionary_graph.py --provider mimo --model mimo-v2.5-pro --letters A,B,C,D --batch-size 8 --max-completion-tokens 8192`.
 - Reproduce a unified base plus 2021 supplement graph with two `--source-set` values and confirm ids are namespaced.
+- Confirm private graph builds fail before provider calls unless run with `--provider local --model <id> --trusted-model <id>`.
+- Confirm `/v1/dictionary/lookup` returns graph metadata for typed graph matches while exact/direct strict matches remain ranked first.
 - Validate a production dictionary graph run with `uv run --frozen python scripts/validate_dictionary_graph.py --run-dir runs/pb_dictionary_abcdf_prod_graph --min-entry-coverage 0.98 --max-invalid-edge-rate 0.03`.
 
 ## Benchmark Snapshot

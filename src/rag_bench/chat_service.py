@@ -285,9 +285,16 @@ class RagChatService:
             )
         else:
             retrieval = retriever.search(Query(query_id="chat", text=question), request_top_k)
+        dictionary_fallback = self._text_dictionary_fallback(
+            question,
+            top_k=self.config.dictionary_top_k,
+            primary_retriever=retriever,
+            primary_retrieval=retrieval,
+        )
+        prompt_hits = _merge_text_and_dictionary_hits(retrieval.hits, dictionary_fallback.hits if dictionary_fallback else [])
         prompt_messages = build_chat_rag_messages(
             messages,
-            retrieval.hits,
+            prompt_hits,
             max_context_chars=self.config.max_context_chars,
             history_messages=history_messages,
             language=response_language,
@@ -301,8 +308,17 @@ class RagChatService:
         if generation.error:
             raise RuntimeError(generation.error)
 
-        combined_hits = list(retrieval.hits)
+        combined_hits = list(prompt_hits)
         retrieval_metadata = dict(retrieval.metadata)
+        if dictionary_fallback is not None:
+            retrieval_metadata.update(
+                {
+                    "dictionary_fallback": True,
+                    "dictionary_fallback_latency_s": dictionary_fallback.latency_s,
+                    "dictionary_fallback_count": len(dictionary_fallback.hits),
+                    "dictionary_fallback_metadata": dictionary_fallback.metadata,
+                }
+            )
         if mode == "text_image":
             image_query, image_query_metadata = self._image_query(
                 f"Question: {question}\nAnswer: {generation.answer}",
@@ -408,6 +424,32 @@ class RagChatService:
                 "key_rate_limits": self.llm.rate_limit_snapshot(),
             },
         }
+
+    def _text_dictionary_fallback(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        primary_retriever: Retriever,
+        primary_retrieval: RetrievalResult,
+    ) -> RetrievalResult | None:
+        if primary_retriever.name == "dictionary-graph":
+            return None
+        dictionary_retriever = self.retrievers.get("dictionary-graph")
+        if dictionary_retriever is None:
+            return None
+        if not _looks_like_dictionary_text_query(question):
+            return None
+        request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
+        retrieval = dictionary_retriever.search(Query(query_id="chat-dict-fallback", text=question), request_top_k)
+        hits = [hit for hit in retrieval.hits if _strong_dictionary_text_fallback_hit(hit)]
+        if not hits:
+            return None
+        primary_top_score = max((hit.score for hit in primary_retrieval.hits), default=0.0)
+        has_direct_dictionary_hit = any(float(hit.metadata.get("dictionary_direct_score") or 0.0) > 0 for hit in hits)
+        if primary_top_score > 0 and not has_direct_dictionary_hit:
+            return None
+        return RetrievalResult(query=retrieval.query, hits=hits, latency_s=retrieval.latency_s, metadata=retrieval.metadata)
 
     def lookup_dictionary(self, term: str, *, top_k: int | None = None) -> dict[str, Any]:
         query = str(term or "").strip()
@@ -652,6 +694,51 @@ def _merge_positive_keyword_hits(results: list[RetrievalResult], *, top_k: int) 
         )
         for rank, doc_id in enumerate(ranked[:top_k], 1)
     ]
+
+
+def _merge_text_and_dictionary_hits(primary_hits: list[RetrievalHit], dictionary_hits: list[RetrievalHit]) -> list[RetrievalHit]:
+    if not dictionary_hits:
+        return list(primary_hits)
+    merged: list[RetrievalHit] = []
+    seen: set[str] = set()
+    for hit in (*dictionary_hits, *primary_hits):
+        if hit.doc_id in seen:
+            continue
+        seen.add(hit.doc_id)
+        merged.append(hit)
+    return [
+        RetrievalHit(
+            doc_id=hit.doc_id,
+            score=hit.score,
+            rank=rank,
+            title=hit.title,
+            text=hit.text,
+            metadata=hit.metadata,
+        )
+        for rank, hit in enumerate(merged, 1)
+    ]
+
+
+def _looks_like_dictionary_text_query(text: str) -> bool:
+    query = _strip_command_prefix(text)
+    if not query or len(query) > 96:
+        return False
+    tokens = re.findall(r"[\wĐđ]+", query, flags=re.UNICODE)
+    if not (1 <= len(tokens) <= 8):
+        return False
+    if "?" in query and len(tokens) > 5:
+        return False
+    return True
+
+
+def _strong_dictionary_text_fallback_hit(hit: RetrievalHit) -> bool:
+    if hit.score <= 0:
+        return False
+    metadata = hit.metadata or {}
+    mode = str(metadata.get("dictionary_match_mode") or "")
+    direct_score = float(metadata.get("dictionary_direct_score") or 0.0)
+    graph_score = float(metadata.get("dictionary_graph_score") or 0.0)
+    return mode in {"strict", "folded"} or direct_score > 0 or (mode == "graph" and graph_score >= 0.35)
 
 
 def _filter_retrieved_for_display(hits: list[RetrievalHit], answer: str) -> list[RetrievalHit]:

@@ -809,6 +809,49 @@
       font-size: 12px;
     }
 
+    .dictionary-graph-path {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .doc-meta .dictionary-graph-path {
+      flex-basis: 100%;
+    }
+
+    .dictionary-graph-node,
+    .dictionary-graph-relation {
+      display: inline-flex;
+      align-items: center;
+      min-height: 21px;
+      max-width: min(220px, 100%);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted-strong);
+      padding: 0 7px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    button.dictionary-graph-node:hover {
+      border-color: var(--text);
+      color: var(--text);
+    }
+
+    .dictionary-graph-relation {
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+      padding-inline: 1px;
+    }
+
     .doc-trail {
       display: flex;
       align-items: center;
@@ -3905,6 +3948,7 @@
       open.title = `${t("openDocument")}: ${dictionarySourceLabel(source)}`;
       open.addEventListener("click", () => openDocument(source));
       head.append(title, open);
+      const graphPath = renderDictionaryGraphPath(source);
       const body = document.createElement("div");
       body.className = "dictionary-inline-body";
       const blocks = richBlocks(source);
@@ -3914,7 +3958,12 @@
       } else {
         appendHighlightedText(body, dictionaryDisplayText(source) || t("noDocumentText"), sourceHighlightTerms(source), highlightOptions);
       }
-      card.append(head, body);
+      if (graphPath) {
+        graphPath.style.padding = "0 14px";
+      }
+      card.append(head);
+      if (graphPath) card.appendChild(graphPath);
+      card.appendChild(body);
       return card;
     }
 
@@ -3933,6 +3982,68 @@
 
     function dictionaryMatchMode(source) {
       return String(source?.dictionary_match_mode || source?.metadata?.dictionary_match_mode || "");
+    }
+
+    function dictionaryGraphPath(source) {
+      const path = source?.dictionary_graph_path || source?.metadata?.dictionary_graph_path || [];
+      return Array.isArray(path) ? path : [];
+    }
+
+    function renderDictionaryGraphPath(source) {
+      const path = dictionaryGraphPath(source);
+      if (!path.length) return null;
+      const wrap = document.createElement("div");
+      wrap.className = "dictionary-graph-path";
+      path.forEach((item, index) => {
+        const normalized = normalizeDictionaryGraphPathItem(item);
+        if (!normalized.label) return;
+        if (index > 0) {
+          const arrow = document.createElement("span");
+          arrow.className = "dictionary-graph-relation";
+          arrow.textContent = ">";
+          wrap.appendChild(arrow);
+        }
+        if (normalized.type === "relation") {
+          const relation = document.createElement("span");
+          relation.className = "dictionary-graph-relation";
+          relation.textContent = dictionaryRelationLabel(normalized.label);
+          wrap.appendChild(relation);
+          return;
+        }
+        if (normalized.type === "entry") {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dictionary-graph-node";
+          button.textContent = normalized.label;
+          button.title = `${t("openDocument")}: ${normalized.label}`;
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            openDictionaryCrossReference(normalized.label);
+          });
+          wrap.appendChild(button);
+          return;
+        }
+        const node = document.createElement("span");
+        node.className = "dictionary-graph-node";
+        node.textContent = normalized.label;
+        wrap.appendChild(node);
+      });
+      return wrap.childElementCount ? wrap : null;
+    }
+
+    function normalizeDictionaryGraphPathItem(item) {
+      if (item && typeof item === "object") {
+        return {
+          type: String(item.type || "node"),
+          id: String(item.id || ""),
+          label: String(item.label || item.id || "").trim()
+        };
+      }
+      return { type: "node", id: "", label: String(item || "").trim() };
+    }
+
+    function dictionaryRelationLabel(label) {
+      return String(label || "").replace(/_/g, " ");
     }
 
     function dictionaryInlineSources(answer, sources) {
@@ -4169,6 +4280,8 @@
         pill.textContent = item;
         docMeta.appendChild(pill);
       }
+      const graphPath = dictionarySource ? renderDictionaryGraphPath(source) : null;
+      if (graphPath) docMeta.appendChild(graphPath);
       renderDocumentTrail(source);
       const image = imageSource(source);
       if (image) {

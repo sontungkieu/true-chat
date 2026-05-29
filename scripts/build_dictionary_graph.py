@@ -44,6 +44,8 @@ DEFAULT_SOURCE_DIR = DEFAULT_DICTIONARY_SOURCE_DIR
 DEFAULT_MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
 DEFAULT_MIMO_MODEL = "mimo-v2.5"
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEFAULT_LOCAL_MODEL = "local"
+PRIVATE_SOURCE_MARKERS = {"private", "secret", "classified", "top-secret", "top_secret", "tuyet-mat", "tuyệt-mật"}
 
 CATEGORIES = (
     "vũ khí/trang bị",
@@ -94,6 +96,7 @@ class SourceSpec:
     path: Path
     letters: list[str]
     namespace_ids: bool
+    classification: str = "public"
 
 
 @dataclass
@@ -146,6 +149,7 @@ class OpenAICompatibleClient:
         timeout_s: float,
         sleep_between_calls_s: float,
         extra_body: dict[str, Any] | None = None,
+        key_alias: str = "openai-compatible",
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -153,6 +157,7 @@ class OpenAICompatibleClient:
         self.timeout_s = timeout_s
         self.sleep_between_calls_s = sleep_between_calls_s
         self.extra_body = extra_body or {}
+        self.key_alias = key_alias
         self.call_count = 0
 
     def generate(
@@ -199,9 +204,9 @@ class OpenAICompatibleClient:
             return ProviderResult(
                 answer="",
                 error=f"status={exc.code} HTTPError: {_redact_secret(response_text)}",
-                key_alias="mimo",
-                attempted_aliases=["mimo"],
-                rejected_aliases=["mimo"] if exc.code in {401, 403} else [],
+                key_alias=self.key_alias,
+                attempted_aliases=[self.key_alias],
+                rejected_aliases=[self.key_alias] if exc.code in {401, 403} else [],
                 retry_count=0,
                 prompt_tokens=None,
                 completion_tokens=None,
@@ -213,8 +218,8 @@ class OpenAICompatibleClient:
             return ProviderResult(
                 answer="",
                 error=f"{exc.__class__.__name__}: {_redact_secret(str(exc))}",
-                key_alias="mimo",
-                attempted_aliases=["mimo"],
+                key_alias=self.key_alias,
+                attempted_aliases=[self.key_alias],
                 rejected_aliases=[],
                 retry_count=0,
                 prompt_tokens=None,
@@ -233,8 +238,8 @@ class OpenAICompatibleClient:
         return ProviderResult(
             answer=answer,
             error=None,
-            key_alias="mimo",
-            attempted_aliases=["mimo"],
+            key_alias=self.key_alias,
+            attempted_aliases=[self.key_alias],
             rejected_aliases=[],
             retry_count=0,
             prompt_tokens=usage.get("prompt_tokens"),
@@ -302,7 +307,8 @@ def main() -> int:
     args = parse_args()
     source_specs = parse_source_specs(args)
     letters = unique_letters(source_specs)
-    model = args.model or (DEFAULT_MIMO_MODEL if args.provider == "mimo" else DEFAULT_GROQ_MODEL)
+    model = args.model or _default_model_for_provider(args.provider)
+    enforce_private_source_policy(args, source_specs, model)
     run_dir = resolve_run_dir(args, letters, source_specs)
     raw_dir = run_dir / "raw_batches"
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -329,6 +335,7 @@ def main() -> int:
                 "path": str(spec.path),
                 "letters": spec.letters,
                 "namespace_ids": spec.namespace_ids,
+                "classification": spec.classification,
             }
             for spec in source_specs
         ],
@@ -342,6 +349,8 @@ def main() -> int:
         "fallback": not args.no_fallback,
         "quality_pass": args.quality_pass,
         "force_reextract": args.force_reextract,
+        "trusted_models": list(args.trusted_model),
+        "model_trust": "trusted" if is_trusted_private_model(args, model) else "untrusted",
         "validate_only": args.validate_only,
         "export_only": args.export_only,
         "sqlite_path": str(args.sqlite_path) if args.sqlite_path else "dictionary_graph.sqlite",
@@ -487,8 +496,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out-dir", type=Path, default=Path("runs"))
     parser.add_argument("--run-name", help="Stable run directory name. Defaults to timestamped provider/letters name.")
-    parser.add_argument("--provider", choices=("mimo", "groq"), default="mimo")
+    parser.add_argument("--provider", choices=("mimo", "groq", "local"), default="mimo")
     parser.add_argument("--model", help="LLM model id. Defaults to provider-specific value.")
+    parser.add_argument(
+        "--trusted-model",
+        action="append",
+        default=[],
+        help=(
+            "Model id allowed to process private source sets. Private inputs require "
+            "--provider local and the selected --model to appear in this allowlist."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=3)
     parser.add_argument("--entry-char-limit", type=int, default=500)
     parser.add_argument("--limit-entries", type=int)
@@ -514,7 +532,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-env-file", type=Path, default=Path(".secrets/.env"))
     parser.add_argument("--api-key-var", default="MIMO_API_KEY")
     parser.add_argument("--base-url", default=None)
-    parser.add_argument("--auth-header", choices=("authorization", "api-key", "both"), default="both")
+    parser.add_argument("--auth-header", choices=("authorization", "api-key", "both", "none"), default="both")
     parser.add_argument("--timeout-s", type=float, default=120.0)
     parser.add_argument("--sleep-between-calls-s", type=float, default=0.0)
 
@@ -538,7 +556,15 @@ def parse_letters(value: str) -> list[str]:
 
 def parse_source_specs(args: argparse.Namespace) -> list[SourceSpec]:
     if not args.source_set:
-        return [SourceSpec(name="base", path=args.source_dir, letters=parse_letters(args.letters), namespace_ids=False)]
+        return [
+            SourceSpec(
+                name="base",
+                path=args.source_dir,
+                letters=parse_letters(args.letters),
+                namespace_ids=False,
+                classification=classify_source_path(args.source_dir),
+            )
+        ]
     specs = [parse_source_set(value) for value in args.source_set]
     names = [spec.name for spec in specs]
     duplicate_names = sorted(name for name, count in Counter(names).items() if count > 1)
@@ -549,15 +575,60 @@ def parse_source_specs(args: argparse.Namespace) -> list[SourceSpec]:
 
 def parse_source_set(value: str) -> SourceSpec:
     if "=" not in value or "|" not in value:
-        raise SystemExit("--source-set must use format NAME=PATH|LETTERS")
+        raise SystemExit("--source-set must use format NAME=PATH|LETTERS or NAME=PATH|LETTERS|CLASSIFICATION")
     name, rest = value.split("=", 1)
-    path_text, letters_text = rest.rsplit("|", 1)
+    parts = rest.split("|")
+    if len(parts) not in {2, 3}:
+        raise SystemExit("--source-set must use format NAME=PATH|LETTERS or NAME=PATH|LETTERS|CLASSIFICATION")
+    path_text, letters_text = parts[0], parts[1]
+    explicit_classification = parts[2] if len(parts) == 3 else None
     name = slugify(name.strip())
     if not name:
         raise SystemExit("--source-set name cannot be empty")
     path = Path(path_text.strip())
     letters = parse_letters(letters_text)
-    return SourceSpec(name=name, path=path, letters=letters, namespace_ids=True)
+    classification = normalize_source_classification(explicit_classification or classify_source_path(path))
+    return SourceSpec(name=name, path=path, letters=letters, namespace_ids=True, classification=classification)
+
+
+def normalize_source_classification(value: str) -> str:
+    normalized = slugify(value.strip()).replace("_", "-")
+    if normalized in {"public", "semi-private", "semiprivate", "internal"}:
+        return "public" if normalized == "public" else "semi-private"
+    if normalized in PRIVATE_SOURCE_MARKERS:
+        return "private"
+    raise SystemExit("--source-set CLASSIFICATION must be one of: public, semi-private, private")
+
+
+def classify_source_path(path: Path) -> str:
+    parts = {slugify(part) for part in path.parts}
+    return "private" if parts & PRIVATE_SOURCE_MARKERS else "public"
+
+
+def _default_model_for_provider(provider: str) -> str:
+    if provider == "mimo":
+        return DEFAULT_MIMO_MODEL
+    if provider == "groq":
+        return DEFAULT_GROQ_MODEL
+    return DEFAULT_LOCAL_MODEL
+
+
+def enforce_private_source_policy(args: argparse.Namespace, source_specs: list[SourceSpec], model: str) -> None:
+    private_specs = [spec for spec in source_specs if spec.classification == "private"]
+    if not private_specs or args.validate_only or args.export_only:
+        return
+    if is_trusted_private_model(args, model):
+        return
+    names = ", ".join(spec.name for spec in private_specs)
+    raise SystemExit(
+        "Refusing to process private source set(s) with an untrusted or non-local model: "
+        f"{names}. Use --provider local --model {model!r} --trusted-model {model!r} "
+        "with a local OpenAI-compatible endpoint, or use --export-only/--validate-only for local artifact work."
+    )
+
+
+def is_trusted_private_model(args: argparse.Namespace, model: str) -> bool:
+    return args.provider == "local" and model in set(args.trusted_model or [])
 
 
 def unique_letters(source_specs: list[SourceSpec]) -> list[str]:
@@ -590,6 +661,19 @@ def build_provider_client(args: argparse.Namespace, model: str) -> Any:
             key_rpm=args.key_rpm,
             rate_limit_scope=args.rate_limit_scope,
         )
+    if args.provider == "local":
+        base_url = args.base_url or "http://127.0.0.1:8000/v1"
+        env_values = load_env_file(args.api_env_file)
+        api_key = env_values.get(args.api_key_var) or "local"
+        return OpenAICompatibleClient(
+            api_key=api_key,
+            base_url=base_url,
+            auth_header=args.auth_header if args.auth_header != "both" else "none",
+            timeout_s=args.timeout_s,
+            sleep_between_calls_s=args.sleep_between_calls_s,
+            extra_body={"enable_thinking": False},
+            key_alias="local",
+        )
     env_values = load_env_file(args.api_env_file)
     api_key = env_values.get(args.api_key_var)
     if not api_key:
@@ -602,6 +686,7 @@ def build_provider_client(args: argparse.Namespace, model: str) -> Any:
         timeout_s=args.timeout_s,
         sleep_between_calls_s=args.sleep_between_calls_s,
         extra_body={"enable_thinking": False},
+        key_alias="mimo",
     )
 
 

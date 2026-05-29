@@ -38,7 +38,7 @@ Strategy notes:
 - `llm-query-rewrite`: one Groq call rewrites the query, then BM25 retrieves original plus rewritten query.
 - `llm-multi-query`: one Groq call generates multiple search queries, then BM25 retrieves and merges them with reciprocal-rank fusion.
 - `image-digits`: local text-to-image demo over the bundled scikit-learn handwritten digits sample dataset; `/img` requests do not need a Groq generation call.
-- `dictionary-graph`: local dictionary lookup over `plain_text` with lexical plus graph-style expansion, while preserving DOCX rich blocks for UI rendering.
+- `dictionary-graph`: local dictionary lookup over `plain_text` with strict Vietnamese headword/alias matching, typed `nodes.jsonl`/`edges.jsonl` relation expansion, and lexical fallback, while preserving DOCX rich blocks for UI rendering.
 - `hybrid-rrf`: BM25 plus vector retrieval merged by reciprocal-rank fusion; requires `--extra vector`.
 - `vector-rerank`: vector candidates reranked by normalized BM25 lexical score; requires `--extra vector`.
 
@@ -63,6 +63,21 @@ uv run --frozen python scripts/build_dictionary_graph.py \
 
 The source DOCX files default to `data/semi_private/File Từ điển PB_2021/<letter>.docx`. The script reads `MIMO_API_KEY` and optional `MIMO_BASE_URL` from `.secrets/.env`; for Groq runs, use `--provider groq` and `.secrets/groq_key.env`. It keeps raw LLM batch outputs under `raw_batches/`, skips valid batches on resume, retries malformed JSON with a shorter repair prompt, micro-repairs missing entries one-by-one, and can insert explicit local fallback entries when the model still omits a source item. Production graph output is validated against `schemas/dictionary_ontology.json` and typed Pydantic models before becoming the main artifact. Each edge must carry `source_entry_id`, `evidence_text`, `confidence`, `extractor`, and `prompt_version`.
 
+Private source sets are blocked from cloud providers by default. Mark private inputs with a third `--source-set` field, or place them under a path component named `private`, `secret`, `classified`, `top-secret`, `top_secret`, `tuyet-mat`, or `tuyệt-mật`. Private graph extraction then requires a local OpenAI-compatible endpoint plus an explicit trusted model allowlist:
+
+```bash
+uv run --frozen python scripts/build_dictionary_graph.py \
+  --provider local \
+  --base-url http://127.0.0.1:8000/v1 \
+  --auth-header none \
+  --model qwen3-32b-local \
+  --trusted-model qwen3-32b-local \
+  --source-set "private=private/File Tuyet Mat|A,B|private" \
+  --run-name private_dictionary_local_graph
+```
+
+If a private source set is used with `--provider mimo` or `--provider groq`, or with a local model not listed through `--trusted-model`, the builder exits before provider calls. `--validate-only` and `--export-only` remain allowed for local artifact work because they do not send document text to a model.
+
 Useful production modes:
 
 ```bash
@@ -83,7 +98,7 @@ uv run --frozen python scripts/build_dictionary_graph.py \
   --run-name pb_dictionary_abcdf_prod_graph --force-reextract
 ```
 
-`--quality-pass weak` is the default. It sends weak non-deterministic edges to the selected provider for a critic pass when such edges exist; `--quality-pass all` audits all non-deterministic relation edges, and `--quality-pass none` disables the critic pass. Resume keys include source hashes, prompt version, model, batch size, and raw batch validity, so reruns reuse valid `raw_batches/` unless `--force-reextract` is set. Outputs are written under ignored `runs/`:
+`--quality-pass weak` is the default. It sends weak non-deterministic edges to the selected provider for a critic pass when such edges exist; private source sets therefore still require a trusted local model unless the pass is disabled or the run is `--export-only`/`--validate-only`. `--quality-pass all` audits all non-deterministic relation edges, and `--quality-pass none` disables the critic pass. Resume keys include source hashes, prompt version, model, batch size, and raw batch validity, so reruns reuse valid `raw_batches/` unless `--force-reextract` is set. Outputs are written under ignored `runs/`:
 
 To build a unified dictionary from the base files plus the 2021 supplement, use repeatable source sets. Source-set mode namespaces entry ids as `base:B-0001` and `supp2021:B-0001`, preventing collisions while preserving the original local id in source metadata:
 
@@ -206,7 +221,7 @@ uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 \
   --dictionary-top-k 5
 ```
 
-If `--dictionary-artifact` is missing or marked partial, the proxy warns in `/health` and falls back to parsing the selected DOCX letters from `--dictionary-source-dir`. Add `--dictionary-required` when startup should fail instead. `/dict AMONIT` and the `Dictionary` / `Từ điển` composer mode use `dictionary-graph`, show the original dictionary entry first, then ask the selected generation model for an explanation. Dictionary lookup first uses strict Vietnamese headword/alias keys that preserve tone marks, so terms such as `nhật` and `nhất` stay distinct. It then falls back to accent-insensitive matching over headwords, graph aliases, graph concepts, inferred headword abbreviations, and entry text when no strict canonical match exists, so variants such as `hexogen`, `hêxôgen`, and `hê-xô-gen` can resolve to the same `HEXOGEN` entry while abbreviations such as `PB` can resolve to `PHÁO BINH`. Related entries that mention the term are still shown below the canonical match. The document side panel renders rich dictionary blocks from the artifact, preserving inline formatting such as bold, italic, subscript/superscript, color, and table row boundaries.
+If `--dictionary-artifact` is missing or marked partial, the proxy warns in `/health` and falls back to parsing the selected DOCX letters from `--dictionary-source-dir`. Add `--dictionary-required` when startup should fail instead. `/dict AMONIT` and the `Dictionary` / `Từ điển` composer mode use `dictionary-graph`, show the original dictionary entry first, then ask the selected generation model for an explanation. Text-only mode still uses the selected benchmark/text retriever first, but short term-like queries can add a dictionary fallback when the normal retriever has no positive evidence, so prompts such as `pháo binh` can use local dictionary context without switching the composer mode. Dictionary lookup first uses strict Vietnamese headword/alias keys that preserve tone marks, so terms such as `nhật` and `nhất` stay distinct. It then falls back to accent-insensitive matching over headwords, graph aliases, graph concepts, inferred headword abbreviations, and entry text when no strict canonical match exists, so variants such as `hexogen`, `hêxôgen`, and `hê-xô-gen` can resolve to the same `HEXOGEN` entry while abbreviations such as `PB` can resolve to `PHÁO BINH`. Exact headword/alias matches are scored above mere phrase mentions, preventing broad entries containing `pháo binh` from hiding the canonical `PHÁO BINH` entry. When a typed graph artifact is available, the retriever loads all relation edges from `nodes.jsonl` and `edges.jsonl`, expands trusted 1-hop and limited 2-hop candidates using relation confidence, and exposes the match reason as `dictionary_graph_path`, `dictionary_relation`, and `dictionary_evidence_text`. Related entries that mention or connect through the term are still shown below the canonical match. The document side panel renders rich dictionary blocks from the artifact, preserving inline formatting such as bold, italic, subscript/superscript, color, and table row boundaries.
 
 Expose MiMo chat models in the same OpenAI-compatible chat UI by putting `MIMO_API_KEY=...` in `.secrets/.env` and adding `--enable-mimo`:
 

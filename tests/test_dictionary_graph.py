@@ -200,3 +200,28 @@ def test_build_script_help_exposes_production_flags() -> None:
     assert "--export-only" in result.stdout
     assert "--force-reextract" in result.stdout
     assert "--quality-pass" in result.stdout
+    assert "--trusted-model" in result.stdout
+    assert "local" in result.stdout
+
+
+def test_build_script_blocks_private_source_with_cloud_provider(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_dictionary_graph.py",
+            "--provider",
+            "mimo",
+            "--source-set",
+            f"private={tmp_path / 'private'}|A|private",
+            "--run-name",
+            "should-not-start",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Refusing to process private source set" in result.stderr
+    assert "untrusted or non-local model" in result.stderr

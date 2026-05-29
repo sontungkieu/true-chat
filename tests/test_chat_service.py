@@ -623,6 +623,67 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     assert lookup["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
 
 
+def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
+    class WeakTextRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert query.text == "pháo binh"
+            return RetrievalResult(
+                query=query,
+                hits=[RetrievalHit(doc_id="bench-noise", score=0.0, rank=1, title="Noise", text="No useful context.")],
+                latency_s=0.02,
+            )
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert query.text == "pháo binh"
+            assert top_k == 3
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="base:P-0023",
+                        score=2.0,
+                        rank=1,
+                        title="PHÁO BINH",
+                        text="PHÁO BINH, lực lượng tác chiến.",
+                        metadata={
+                            "kind": "dictionary",
+                            "headword": "PHÁO BINH",
+                            "dictionary_direct_score": 1.2,
+                            "dictionary_match_mode": "strict",
+                        },
+                    )
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    text_retriever = WeakTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=llm,
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "pháo binh"}], response_mode="text")
+
+    assert result.response["rag"]["retriever"] == "bm25"
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieved"][0]["doc_id"] == "base:P-0023"
+    assert "PHÁO BINH, lực lượng tác chiến." in llm.messages[1]["content"]
+
+
 def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_remain() -> None:
     class LowScoreRetriever(FakeRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:
