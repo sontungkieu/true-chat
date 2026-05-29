@@ -228,6 +228,9 @@ def test_chat_page() -> None:
     assert "dictionaryCrossRefHint" in response.text
     assert "query-highlight" in response.text
     assert "sourceHighlightTerms" in response.text
+    assert "dictionaryMatchMode" in response.text
+    assert "strictHighlights" in response.text
+    assert "strictForMatchWithMap" in response.text
     assert "isHighlightBoundary" in response.text
     assert '? "dd"' in response.text
     assert "dictionarySourceLabel" in response.text

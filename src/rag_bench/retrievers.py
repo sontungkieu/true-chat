@@ -354,20 +354,28 @@ class DictionaryGraphRetriever:
         started = time.perf_counter()
         self._documents = list(documents)
         self._headword_indexes: dict[str, list[int]] = {}
+        self._headword_strict_indexes: dict[str, list[int]] = {}
         self._alias_indexes: dict[str, list[int]] = {}
+        self._alias_strict_indexes: dict[str, list[int]] = {}
         self._concept_indexes: dict[str, list[int]] = {}
+        self._concept_strict_indexes: dict[str, list[int]] = {}
         self._abbreviation_scores: dict[str, dict[int, float]] = {}
         self._folded_texts: list[str] = []
+        self._strict_texts: list[str] = []
         for index, doc in enumerate(self._documents):
             headword = str(doc.metadata.get("headword") or doc.title or "")
             headword_key = _dictionary_query_key(headword)
             for key in _dictionary_query_keys(headword):
                 self._headword_indexes.setdefault(key, []).append(index)
+            for key in _dictionary_strict_query_keys(headword):
+                self._headword_strict_indexes.setdefault(key, []).append(index)
             alias_keys: list[str] = []
             for alias in _metadata_text_values(doc.metadata.get("aliases")):
                 for alias_key in _dictionary_query_keys(alias):
                     alias_keys.append(alias_key)
                     self._alias_indexes.setdefault(alias_key, []).append(index)
+                for alias_key in _dictionary_strict_query_keys(alias):
+                    self._alias_strict_indexes.setdefault(alias_key, []).append(index)
             abbreviation_key = _dictionary_abbreviation_key(headword)
             if abbreviation_key and _has_abbreviation_evidence(doc, abbreviation_key, alias_keys):
                 self._abbreviation_scores.setdefault(abbreviation_key, {})[index] = _abbreviation_score(
@@ -378,7 +386,10 @@ class DictionaryGraphRetriever:
             for concept in _metadata_text_values(doc.metadata.get("concepts")):
                 for concept_key in _dictionary_query_keys(concept):
                     self._concept_indexes.setdefault(concept_key, []).append(index)
+                for concept_key in _dictionary_strict_query_keys(concept):
+                    self._concept_strict_indexes.setdefault(concept_key, []).append(index)
             self._folded_texts.append(_dictionary_document_key(doc))
+            self._strict_texts.append(_dictionary_document_key(doc, strict=True))
         self._bm25 = BM25Retriever()
         self._graph = GraphBm25Retriever()
         if self._documents:
@@ -418,41 +429,82 @@ class DictionaryGraphRetriever:
     def _direct_search(self, query: Query, top_k: int) -> RetrievalResult:
         started = time.perf_counter()
         query_keys = _dictionary_query_keys(query.text)
-        if not query_keys:
+        strict_query_keys = _dictionary_strict_query_keys(query.text)
+        if not query_keys and not strict_query_keys:
             return RetrievalResult(query=query, hits=[], latency_s=time.perf_counter() - started)
 
         index_scores: dict[int, float] = {}
+        match_modes: dict[int, str] = {}
         highlight_terms = _dictionary_highlight_terms(query.text)
-        for query_key in query_keys:
+        strict_canonical_match = False
+        for query_key in strict_query_keys:
             query_token_count = len(query_key.split())
             if query_token_count >= 2:
                 phrase = f" {query_key} "
                 phrase_score = 1.1 + min(query_token_count, 6) * 0.05
-                for index, folded_text in enumerate(self._folded_texts):
-                    if phrase in f" {folded_text} ":
+                for index, strict_text in enumerate(self._strict_texts):
+                    if phrase in f" {strict_text} ":
                         index_scores[index] = max(index_scores.get(index, 0.0), phrase_score)
             elif len(query_key) >= 3:
                 phrase = f" {query_key} "
-                for index, folded_text in enumerate(self._folded_texts):
-                    if phrase in f" {folded_text} ":
+                for index, strict_text in enumerate(self._strict_texts):
+                    if phrase in f" {strict_text} ":
                         index_scores[index] = max(index_scores.get(index, 0.0), 0.45)
 
-            for index in self._headword_indexes.get(query_key, []):
-                index_scores[index] = max(index_scores.get(index, 0.0), 1.0)
-            for index, score in self._abbreviation_scores.get(query_key, {}).items():
-                index_scores[index] = max(index_scores.get(index, 0.0), score)
-            for index in self._alias_indexes.get(query_key, []):
-                index_scores[index] = max(index_scores.get(index, 0.0), 0.8)
-            for index in self._concept_indexes.get(query_key, []):
-                index_scores[index] = max(index_scores.get(index, 0.0), 0.55)
+            for index in self._headword_strict_indexes.get(query_key, []):
+                index_scores[index] = max(index_scores.get(index, 0.0), 1.2)
+                match_modes[index] = "strict"
+                strict_canonical_match = True
+            for index in self._alias_strict_indexes.get(query_key, []):
+                index_scores[index] = max(index_scores.get(index, 0.0), 0.9)
+                match_modes[index] = "strict"
+                strict_canonical_match = True
+            for index in self._concept_strict_indexes.get(query_key, []):
+                index_scores[index] = max(index_scores.get(index, 0.0), 0.6)
+                match_modes[index] = "strict"
+                strict_canonical_match = True
 
             if len(query_key) >= 3:
-                for headword_key, indexes in self._headword_indexes.items():
+                for headword_key, indexes in self._headword_strict_indexes.items():
                     if headword_key == query_key:
                         continue
-                    if query_key in headword_key or headword_key in query_key:
+                    if _dictionary_headword_partial_match(query_key, headword_key):
                         for index in indexes:
-                            index_scores[index] = max(index_scores.get(index, 0.0), 0.7)
+                            index_scores[index] = max(index_scores.get(index, 0.0), 0.75)
+                            match_modes[index] = "strict"
+                            strict_canonical_match = True
+
+        if not strict_canonical_match:
+            for query_key in query_keys:
+                query_token_count = len(query_key.split())
+                if query_token_count >= 2:
+                    phrase = f" {query_key} "
+                    phrase_score = 1.1 + min(query_token_count, 6) * 0.05
+                    for index, folded_text in enumerate(self._folded_texts):
+                        if phrase in f" {folded_text} ":
+                            index_scores[index] = max(index_scores.get(index, 0.0), phrase_score)
+                elif len(query_key) >= 3:
+                    phrase = f" {query_key} "
+                    for index, folded_text in enumerate(self._folded_texts):
+                        if phrase in f" {folded_text} ":
+                            index_scores[index] = max(index_scores.get(index, 0.0), 0.45)
+
+                for index in self._headword_indexes.get(query_key, []):
+                    index_scores[index] = max(index_scores.get(index, 0.0), 1.0)
+                for index, score in self._abbreviation_scores.get(query_key, {}).items():
+                    index_scores[index] = max(index_scores.get(index, 0.0), score)
+                for index in self._alias_indexes.get(query_key, []):
+                    index_scores[index] = max(index_scores.get(index, 0.0), 0.8)
+                for index in self._concept_indexes.get(query_key, []):
+                    index_scores[index] = max(index_scores.get(index, 0.0), 0.55)
+
+                if len(query_key) >= 3:
+                    for headword_key, indexes in self._headword_indexes.items():
+                        if headword_key == query_key:
+                            continue
+                        if query_key in headword_key or headword_key in query_key:
+                            for index in indexes:
+                                index_scores[index] = max(index_scores.get(index, 0.0), 0.7)
 
         ranked = sorted(index_scores, key=lambda index: (-index_scores[index], self._documents[index].doc_id))
         hits = []
@@ -460,6 +512,8 @@ class DictionaryGraphRetriever:
             doc = self._documents[index]
             metadata = dict(doc.metadata)
             metadata["dictionary_direct_score"] = index_scores[index]
+            if match_modes.get(index):
+                metadata["dictionary_match_mode"] = match_modes[index]
             if highlight_terms:
                 metadata["query_highlights"] = list(highlight_terms)
             hits.append(
@@ -893,6 +947,7 @@ def _dictionary_merge(
     rrf_k: int,
 ) -> list[RetrievalHit]:
     query_keys = _dictionary_query_keys(query.text)
+    strict_query_keys = _dictionary_strict_query_keys(query.text)
     scores: dict[str, float] = {}
     best_rank: dict[str, int] = {}
     hits_by_doc_id: dict[str, RetrievalHit] = {}
@@ -904,9 +959,18 @@ def _dictionary_merge(
             existing = hits_by_doc_id.setdefault(hit.doc_id, hit)
             if existing is not hit and hit.metadata:
                 existing.metadata.update(hit.metadata)
-    if query_keys:
+    strict_canonical_match = any(
+        hit.metadata.get("dictionary_match_mode") == "strict" for hit in hits_by_doc_id.values()
+    )
+    if query_keys or strict_query_keys:
         for doc_id, hit in hits_by_doc_id.items():
             headword = str(hit.metadata.get("headword") or hit.title or "")
+            headword_strict_keys = _dictionary_strict_query_keys(headword)
+            if set(headword_strict_keys) & set(strict_query_keys):
+                scores[doc_id] = scores.get(doc_id, 0.0) + 1.1
+                continue
+            if strict_canonical_match:
+                continue
             headword_keys = _dictionary_query_keys(headword)
             if set(headword_keys) & set(query_keys):
                 scores[doc_id] = scores.get(doc_id, 0.0) + 1.0
@@ -945,6 +1009,16 @@ def _dictionary_query_keys(text: str) -> list[str]:
     return list(_dedupe_nonempty(keys))
 
 
+def _dictionary_strict_query_keys(text: str) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized)
+    segments = [segment.strip() for segment in re.split(r"[,;]+", normalized) if segment.strip()]
+    keys: list[str] = []
+    for segment in segments or [normalized]:
+        keys.extend(_dictionary_strict_key_variants(segment))
+    return list(_dedupe_nonempty(keys))
+
+
 def _dictionary_highlight_terms(text: str) -> tuple[str, ...]:
     normalized = re.sub(r"\s+", " ", text).strip()
     normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized, flags=re.IGNORECASE)
@@ -965,7 +1039,7 @@ def _dictionary_headword_partial_match(query_key: str, headword_key: str) -> boo
     return False
 
 
-def _dictionary_document_key(doc: Document) -> str:
+def _dictionary_document_key(doc: Document, *, strict: bool = False) -> str:
     parts = [
         doc.title,
         doc.text,
@@ -974,7 +1048,8 @@ def _dictionary_document_key(doc: Document) -> str:
         " ".join(_metadata_text_values(doc.metadata.get("aliases"))),
         " ".join(_metadata_text_values(doc.metadata.get("concepts"))),
     ]
-    folded = _dictionary_fold_text(" ".join(part for part in parts if part))
+    text = " ".join(part for part in parts if part)
+    folded = _dictionary_strict_text(text) if strict else _dictionary_fold_text(text)
     compact = folded.replace(" ", "")
     return f"{folded} {compact}" if compact and compact != folded else folded
 
@@ -1023,6 +1098,12 @@ def _dictionary_fold_text(text: str) -> str:
     return re.sub(r"\s+", " ", folded).strip()
 
 
+def _dictionary_strict_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFC", text.lower())
+    normalized = re.sub(r"[^\w]+", " ", normalized, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
 def _dictionary_key_variants(text: str) -> list[str]:
     folded = _dictionary_fold_text(text)
     variants = [folded] if folded else []
@@ -1032,6 +1113,17 @@ def _dictionary_key_variants(text: str) -> list[str]:
         # Hyphenated transliterations like "hê-xô-gen" should match the canonical
         # entry "HEXOGEN", but broad multi-word terms such as "pháo binh" should
         # keep their normal spaced key.
+        if len(tokens) >= 2 and all(len(token) <= 3 for token in tokens):
+            variants.append(compact)
+    return _dedupe_nonempty(variants)
+
+
+def _dictionary_strict_key_variants(text: str) -> list[str]:
+    strict = _dictionary_strict_text(text)
+    variants = [strict] if strict else []
+    compact = strict.replace(" ", "")
+    if compact and compact != strict:
+        tokens = strict.split()
         if len(tokens) >= 2 and all(len(token) <= 3 for token in tokens):
             variants.append(compact)
     return _dedupe_nonempty(variants)

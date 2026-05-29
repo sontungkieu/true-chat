@@ -305,6 +305,68 @@ def test_dictionary_graph_retriever_keeps_stroked_d_distinct_from_plain_d() -> N
     assert long_cannon.hits[1].doc_id != "fort" or "dictionary_direct_score" not in long_cannon.hits[1].metadata
 
 
+def test_dictionary_graph_retriever_keeps_tone_distinct_for_vietnamese_headwords() -> None:
+    docs = [
+        Document(
+            doc_id="japan",
+            title="NHẬT",
+            text="NHẬT, cách gọi tắt Nhật Bản trong một số ngữ cảnh.",
+            metadata={"kind": "dictionary", "headword": "NHẬT"},
+        ),
+        Document(
+            doc_id="first",
+            title="NHẤT",
+            text="NHẤT, thứ nhất hoặc mức cao nhất trong một thang phân loại.",
+            metadata={"kind": "dictionary", "headword": "NHẤT"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    japan = retriever.search(Query("q1", "nhật"), top_k=2)
+    first = retriever.search(Query("q2", "nhất"), top_k=2)
+
+    assert japan.hits[0].doc_id == "japan"
+    assert japan.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert japan.hits[0].metadata["query_highlights"] == ["nhật"]
+    assert japan.hits[1].doc_id != "first" or "dictionary_direct_score" not in japan.hits[1].metadata
+    assert first.hits[0].doc_id == "first"
+    assert first.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert first.hits[0].metadata["query_highlights"] == ["nhất"]
+    assert first.hits[1].doc_id != "japan" or "dictionary_direct_score" not in first.hits[1].metadata
+
+
+def test_dictionary_graph_retriever_uses_strict_tone_for_partial_vietnamese_headwords() -> None:
+    docs = [
+        Document(
+            doc_id="japan",
+            title="NHẬT BẢN",
+            text="NHẬT BẢN, quốc gia ở Đông Á.",
+            metadata={"kind": "dictionary", "headword": "NHẬT BẢN"},
+        ),
+        Document(
+            doc_id="first",
+            title="“BA NHẤT\"",
+            text="BA NHẤT, phong trào thi đua trong huấn luyện.",
+            metadata={"kind": "dictionary", "headword": "“BA NHẤT\""},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    first = retriever.search(Query("q1", "nhất"), top_k=2)
+    japan = retriever.search(Query("q2", "nhật"), top_k=2)
+
+    assert first.hits[0].doc_id == "first"
+    assert first.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert first.hits[0].metadata["query_highlights"] == ["nhất"]
+    assert first.hits[1].doc_id != "japan" or "dictionary_direct_score" not in first.hits[1].metadata
+    assert japan.hits[0].doc_id == "japan"
+    assert japan.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert japan.hits[0].metadata["query_highlights"] == ["nhật"]
+    assert japan.hits[1].doc_id != "first" or "dictionary_direct_score" not in japan.hits[1].metadata
+
+
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:
     docs = [
         Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),

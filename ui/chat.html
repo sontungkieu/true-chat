@@ -3908,10 +3908,11 @@
       const body = document.createElement("div");
       body.className = "dictionary-inline-body";
       const blocks = richBlocks(source);
+      const highlightOptions = { strictHighlights: dictionaryMatchMode(source) === "strict" };
       if (blocks.length) {
-        renderRichBlocks(body, blocks, sourceHighlightTerms(source));
+        renderRichBlocks(body, blocks, sourceHighlightTerms(source), highlightOptions);
       } else {
-        appendHighlightedText(body, dictionaryDisplayText(source) || t("noDocumentText"), sourceHighlightTerms(source));
+        appendHighlightedText(body, dictionaryDisplayText(source) || t("noDocumentText"), sourceHighlightTerms(source), highlightOptions);
       }
       card.append(head, body);
       return card;
@@ -3928,6 +3929,10 @@
     function dictionaryRelevance(source) {
       const directScore = Number(source?.dictionary_direct_score || source?.metadata?.dictionary_direct_score || 0);
       return sourceHighlightTerms(source).length || directScore > 0 ? "match" : "related";
+    }
+
+    function dictionaryMatchMode(source) {
+      return String(source?.dictionary_match_mode || source?.metadata?.dictionary_match_mode || "");
     }
 
     function dictionaryInlineSources(answer, sources) {
@@ -4189,9 +4194,13 @@
       docText.textContent = "";
       const blocks = richBlocks(source);
       const crossRefsEnabled = isDictionarySource(source) && Boolean(settings.dictionaryCrossRef);
+      const highlightOptions = {
+        crossRefs: crossRefsEnabled,
+        strictHighlights: dictionaryMatchMode(source) === "strict"
+      };
       if (blocks.length) {
         docText.classList.remove("plain");
-        renderRichBlocks(docText, blocks, sourceHighlightTerms(source), { crossRefs: crossRefsEnabled });
+        renderRichBlocks(docText, blocks, sourceHighlightTerms(source), highlightOptions);
         return;
       }
       docText.classList.add("plain");
@@ -4199,7 +4208,7 @@
         docText,
         source.text || source.raw_docx_text || source.metadata?.raw_docx_text || t("noDocumentText"),
         sourceHighlightTerms(source),
-        { crossRefs: crossRefsEnabled }
+        highlightOptions
       );
     }
 
@@ -4442,7 +4451,7 @@
 
     function appendHighlightedText(container, text, highlights = [], options = {}) {
       const value = String(text || "");
-      const ranges = highlightRanges(value, highlights);
+      const ranges = highlightRanges(value, highlights, options);
       if (!ranges.length) {
         container.appendChild(document.createTextNode(value));
         return;
@@ -4466,11 +4475,11 @@
       if (cursor < value.length) container.appendChild(document.createTextNode(value.slice(cursor)));
     }
 
-    function highlightRanges(text, highlights = []) {
-      const foldedText = foldForMatchWithMap(text);
+    function highlightRanges(text, highlights = [], options = {}) {
+      const foldedText = options.strictHighlights ? strictForMatchWithMap(text) : foldForMatchWithMap(text);
       if (!foldedText.folded) return [];
       const terms = highlights
-        .map((term) => foldForMatchWithMap(term).folded)
+        .map((term) => (options.strictHighlights ? strictForMatchWithMap(term) : foldForMatchWithMap(term)).folded)
         .filter(Boolean)
         .sort((a, b) => b.length - a.length);
       const ranges = [];
@@ -4493,6 +4502,32 @@
 
     function isHighlightBoundary(folded, index) {
       return index < 0 || index >= folded.length || folded[index] === " ";
+    }
+
+    function strictForMatchWithMap(value) {
+      const text = String(value || "");
+      let folded = "";
+      const map = [];
+      let pendingSpace = false;
+      let pendingSpaceIndex = 0;
+      for (let index = 0; index < text.length; index += 1) {
+        const char = text[index].toLowerCase();
+        if (!/[\p{L}\p{M}\p{N}]/u.test(char)) {
+          if (folded) {
+            pendingSpace = true;
+            pendingSpaceIndex = index;
+          }
+          continue;
+        }
+        if (pendingSpace && folded && !folded.endsWith(" ")) {
+          folded += " ";
+          map.push(pendingSpaceIndex);
+        }
+        pendingSpace = false;
+        folded += char;
+        map.push(index);
+      }
+      return { folded: folded.trim(), map };
     }
 
     function foldForMatchWithMap(value) {
