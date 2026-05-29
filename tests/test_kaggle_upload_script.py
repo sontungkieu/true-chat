@@ -49,6 +49,8 @@ def test_build_notebook_checks_expected_commit_and_injects_tunnel_token() -> Non
     assert "PROXY_STARTUP_TIMEOUT_S = 900" in source
     assert "uv', 'sync', '--frozen', '--no-dev'" in source
     assert "uv', 'run', '--frozen', '--no-sync'" in source
+    assert "'--model', 'qwen/qwen3-32b'" in source
+    assert "'--max-completion-tokens', '4096'" in source
     assert "print_proxy_log_tail" in source
     assert "LOCAL_PATCH" not in source
     assert "UserSecretsClient" in source

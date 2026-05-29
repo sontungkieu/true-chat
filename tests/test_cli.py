@@ -117,6 +117,7 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].api_key == "dev-secret"
     assert seen["config"].chat.bench == "scifact"
     assert seen["config"].chat.retriever == "bm25"
+    assert seen["config"].chat.model == "qwen/qwen3-32b"
     assert seen["config"].chat.available_retrievers == ("bm25", "keyword-match", "multi-query")
     assert seen["config"].chat.top_k == 4
     assert seen["config"].chat.max_context_chars == 2000
@@ -135,6 +136,23 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.mimo_key_tokens_per_minute == 0
     assert seen["config"].chat.mimo_key_requests_per_minute == 0
     assert "mimo-v2.5-pro" in seen["config"].chat.available_models
+    assert seen["config"].chat.available_models[0] == "qwen/qwen3-32b"
     assert seen["config"].chat.key_tokens_per_minute == 5000
     assert seen["config"].chat.key_requests_per_minute == 20
     assert seen["config"].chat.rate_limit_scope == "shared"
+
+
+def test_cli_serve_defaults_use_qwen_and_long_completion(monkeypatch) -> None:
+    seen = {}
+
+    def fake_serve_proxy(config):
+        seen["config"] = config
+
+    monkeypatch.setattr(cli, "serve_proxy", fake_serve_proxy)
+
+    exit_code = cli.main(["serve"])
+
+    assert exit_code == 0
+    assert seen["config"].chat.model == "qwen/qwen3-32b"
+    assert seen["config"].chat.max_completion_tokens == 4096
+    assert seen["config"].chat.available_models[0] == "qwen/qwen3-32b"

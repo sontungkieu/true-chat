@@ -180,6 +180,13 @@ def test_chat_page() -> None:
     assert "Graph BM25" in response.text
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
+    assert 'const DEFAULT_CHAT_MODEL = "qwen/qwen3-32b"' in response.text
+    assert 'const DEFAULT_LANGUAGE = "vi"' in response.text
+    assert 'const DEFAULT_RESPONSE_MODE = "dictionary"' in response.text
+    assert "const DEFAULT_MEMORY_ENABLED = false" in response.text
+    assert "const DEFAULT_DICTIONARY_CROSS_REF = true" in response.text
+    assert "const DEFAULT_MAX_TOKENS = 4096" in response.text
+    assert "SETTINGS_SCHEMA_VERSION = 2" in response.text
     assert "MiMo V2.5 Pro" in response.text
     assert "modelSelector" not in response.text
     assert "activeTitle" not in response.text
@@ -211,6 +218,11 @@ def test_chat_page() -> None:
     assert "openDictionaryCrossReference" in response.text
     assert "clickedDictionaryTerm" in response.text
     assert "xref-term" in response.text
+    assert "docTrail" in response.text
+    assert "renderDocumentTrail" in response.text
+    assert "openDocumentFromTrail" in response.text
+    assert "referenceTrail" in response.text
+    assert "backToPreviousEntry" in response.text
     assert "dictionaryCrossRefHint" in response.text
     assert "query-highlight" in response.text
     assert "sourceHighlightTerms" in response.text

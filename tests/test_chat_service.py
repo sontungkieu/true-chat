@@ -263,8 +263,8 @@ def test_rag_chat_service_answers_with_retrieved_context_and_history() -> None:
     assert result.response["rag"]["key_alias"] == "alias-a"
     assert result.response["rag"]["rejected_aliases"] == []
     assert result.response["rag"]["output_tokens_per_s"] == 166.7
-    assert result.response["rag"]["generation_model"] == "llama-3.1-8b-instant"
-    assert llm.model == "llama-3.1-8b-instant"
+    assert result.response["rag"]["generation_model"] == "qwen/qwen3-32b"
+    assert llm.model == "qwen/qwen3-32b"
     assert llm.temperature == 0.2
     assert llm.max_completion_tokens == 64
     assert "Required response language: English" in llm.messages[0]["content"]

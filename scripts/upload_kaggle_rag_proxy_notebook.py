@@ -540,7 +540,7 @@ def build_notebook(
                 "    'uv', 'run', '--frozen', '--no-sync', 'rag-bench', 'serve',\n"
                 "    '--host', '0.0.0.0', '--port', '8000',\n"
                 "    '--bench', 'scifact', '--retriever', 'bm25', '--top-k', '3', '--image-top-k', '5',\n"
-                "    '--max-context-chars', '2500', '--max-completion-tokens', '128',\n"
+                "    '--model', 'qwen/qwen3-32b', '--max-context-chars', '2500', '--max-completion-tokens', '4096',\n"
                 "    '--key-tpm', '6000', '--key-rpm', '30', '--rate-limit-scope', 'per-key',\n"
                 "]\n"
                 "proxy_env = {**os.environ, 'PYTHONUNBUFFERED': '1'}\n"

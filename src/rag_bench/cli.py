@@ -9,6 +9,7 @@ from pathlib import Path
 from rag_bench.benchmarks import BENCHMARKS
 from rag_bench.chat_service import (
     ChatProxyConfig,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CHAT_RETRIEVERS,
     DEFAULT_MIMO_BASE_URL,
     DEFAULT_MIMO_MODELS,
@@ -100,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument("--top-k", type=int, default=3)
     serve_parser.add_argument("--groq-keys-path", type=Path, default=Path(".secrets/groq_key.env"))
-    serve_parser.add_argument("--model", default=DEFAULT_MODEL)
+    serve_parser.add_argument("--model", default=DEFAULT_CHAT_MODEL)
     serve_parser.add_argument("--model-id", default=DEFAULT_PROXY_MODEL_ID, help="Model id exposed to Open WebUI.")
     serve_parser.add_argument(
         "--available-models",
@@ -126,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument("--vector-model", default=DEFAULT_VECTOR_MODEL)
     serve_parser.add_argument("--max-retries", type=int, default=2)
-    serve_parser.add_argument("--max-completion-tokens", type=int, default=128)
+    serve_parser.add_argument("--max-completion-tokens", type=int, default=4096)
     serve_parser.add_argument("--temperature", type=float, default=0.0)
     serve_parser.add_argument("--max-context-chars", type=int, default=2500)
     serve_parser.add_argument("--image-top-k", type=int, default=5, help="Default number of image results for /img.")
@@ -298,7 +299,7 @@ def _serve(args: argparse.Namespace) -> int:
     mimo_enabled = bool(args.enable_mimo or args.model in mimo_models)
     if available_models is None:
         available_models = _dedupe_preserve_order(
-            (DEFAULT_MODEL, "qwen/qwen3-32b", *(mimo_models if mimo_enabled else ()))
+            (args.model, DEFAULT_MODEL, DEFAULT_CHAT_MODEL, *(mimo_models if mimo_enabled else ()))
         )
 
     chat_config = ChatProxyConfig(

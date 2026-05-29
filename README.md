@@ -176,8 +176,10 @@ uv run rag-bench run --bench scifact --retrievers bm25 --top-k 3 --limit 20 --ma
 Start the lightweight built-in RAG chat UI and OpenAI-compatible proxy:
 
 ```bash
-uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --bench scifact --retriever bm25 --top-k 3 --max-context-chars 2500 --max-completion-tokens 128 --key-tpm 6000 --key-rpm 30 --rate-limit-scope per-key
+uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --bench scifact --retriever bm25 --top-k 3 --model qwen/qwen3-32b --max-context-chars 2500 --max-completion-tokens 4096 --key-tpm 6000 --key-rpm 30 --rate-limit-scope per-key
 ```
+
+The built-in UI defaults to Qwen3 32B, Vietnamese output, Dictionary mode, memory off, dictionary cross-reference on, and a 4096-token completion cap. Existing browser settings are migrated once to these defaults by the settings schema version.
 
 Expose additional search strategies in the built-in UI:
 
@@ -195,6 +197,7 @@ Expose the PB dictionary mode from the built-in UI:
 
 ```bash
 uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 \
+  --model qwen/qwen3-32b \
   --retriever bm25 \
   --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits \
   --dictionary-artifact runs/pb_dictionary_abcd_mimo_graph \

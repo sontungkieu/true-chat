@@ -25,7 +25,8 @@ from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 
 DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
-DEFAULT_CHAT_MODELS = ("llama-3.1-8b-instant", "qwen/qwen3-32b")
+DEFAULT_CHAT_MODEL = "qwen/qwen3-32b"
+DEFAULT_CHAT_MODELS = (DEFAULT_CHAT_MODEL, "llama-3.1-8b-instant")
 DEFAULT_MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
 DEFAULT_MIMO_MODELS = ("mimo-v2.5-pro", "mimo-v2.5")
 DEFAULT_CHAT_RETRIEVERS = (
@@ -60,7 +61,7 @@ class ChatProxyConfig:
     retriever: str = "bm25"
     top_k: int = 3
     groq_keys_path: Path = Path(".secrets/groq_key.env")
-    model: str = "llama-3.1-8b-instant"
+    model: str = DEFAULT_CHAT_MODEL
     model_id: str = DEFAULT_PROXY_MODEL_ID
     available_models: tuple[str, ...] = DEFAULT_CHAT_MODELS
     mimo_enabled: bool = False
@@ -73,7 +74,7 @@ class ChatProxyConfig:
     available_retrievers: tuple[str, ...] = DEFAULT_CHAT_RETRIEVERS
     vector_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     max_retries: int = 2
-    max_completion_tokens: int = 128
+    max_completion_tokens: int = 4096
     temperature: float = 0.0
     max_context_chars: int = 2500
     allow_large_bench: bool = False

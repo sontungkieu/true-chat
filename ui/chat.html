@@ -736,7 +736,7 @@
 
     .app.doc-open .doc-panel {
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-rows: auto auto auto minmax(0, 1fr);
     }
 
     .doc-header {
@@ -807,6 +807,59 @@
       color: var(--muted-strong);
       padding: 0 9px;
       font-size: 12px;
+    }
+
+    .doc-trail {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 8px 16px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .doc-trail[hidden] {
+      display: none;
+    }
+
+    .doc-trail::-webkit-scrollbar {
+      display: none;
+    }
+
+    .doc-trail-label,
+    .doc-trail-separator,
+    .doc-trail-current {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .doc-trail-link {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 auto;
+      min-height: 24px;
+      max-width: 180px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--text);
+      padding: 0 9px;
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+
+    .doc-trail-link:hover {
+      border-color: var(--border-strong);
+      background: var(--surface-strong);
     }
 
     .doc-content {
@@ -1929,6 +1982,11 @@
         padding-left: max(16px, var(--safe-left));
       }
 
+      .app.doc-open .doc-trail {
+        padding-right: max(16px, var(--safe-right));
+        padding-left: max(16px, var(--safe-left));
+      }
+
       .app.doc-open .doc-content {
         padding: 16px max(18px, var(--safe-right)) calc(18px + var(--safe-bottom)) max(18px, var(--safe-left));
       }
@@ -1961,6 +2019,10 @@
     .brand-title span,
     .status-pill,
     .doc-heading span,
+    .doc-trail-label,
+    .doc-trail-separator,
+    .doc-trail-current,
+    .doc-trail-link,
     .doc-pill,
     .role,
     .mini-action,
@@ -2239,6 +2301,7 @@
             </button>
           </div>
           <div class="doc-meta" id="docMeta"></div>
+          <div class="doc-trail" id="docTrail" hidden></div>
           <div class="doc-content">
             <div class="doc-image-wrap" id="docImageWrap"><img class="doc-image" id="docImage" alt=""></div>
             <div class="doc-text plain" id="docText"></div>
@@ -2262,6 +2325,13 @@
     const AVAILABLE_RETRIEVERS = __AVAILABLE_RETRIEVERS_JSON__;
     const STORAGE_KEY = "ragChatUiState.v1";
     const SETTINGS_KEY = "ragChatUiSettings.v1";
+    const SETTINGS_SCHEMA_VERSION = 2;
+    const DEFAULT_CHAT_MODEL = "qwen/qwen3-32b";
+    const DEFAULT_LANGUAGE = "vi";
+    const DEFAULT_RESPONSE_MODE = "dictionary";
+    const DEFAULT_MEMORY_ENABLED = false;
+    const DEFAULT_DICTIONARY_CROSS_REF = true;
+    const DEFAULT_MAX_TOKENS = 4096;
     const MAX_INLINE_DICTIONARY_SOURCES = 3;
     const app = document.querySelector("[data-app='rag-chat']");
     const chat = document.getElementById("chat");
@@ -2298,6 +2368,7 @@
     const docTitle = document.getElementById("docTitle");
     const docSubtitle = document.getElementById("docSubtitle");
     const docMeta = document.getElementById("docMeta");
+    const docTrail = document.getElementById("docTrail");
     const docImageWrap = document.getElementById("docImageWrap");
     const docImage = document.getElementById("docImage");
     const docText = document.getElementById("docText");
@@ -2306,6 +2377,7 @@
     const closeLightboxButton = document.getElementById("closeLightbox");
     let activeController = null;
     let selectedSource = null;
+    let documentTrail = [];
     let editingUserIndex = null;
     let chatSwipeStart = null;
     let activeComposerMenu = null;
@@ -2334,6 +2406,8 @@
         memoryMode: "Memory",
         memoryOff: "No memory",
         dictionaryCrossRef: "Dictionary cross-reference",
+        referenceTrail: "Refs",
+        backToPreviousEntry: "Back to previous entry",
         theme: "Theme",
         fontSize: "Font size",
         maxTokens: "Max tokens",
@@ -2402,6 +2476,8 @@
         memoryMode: "Ghi nhớ hội thoại",
         memoryOff: "Không nhớ",
         dictionaryCrossRef: "Ref chéo từ điển",
+        referenceTrail: "Ref",
+        backToPreviousEntry: "Quay về mục trước",
         theme: "Giao diện",
         fontSize: "Cỡ chữ",
         maxTokens: "Token tối đa",
@@ -2585,37 +2661,40 @@
     function loadSettings() {
       try {
         const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+        const migrateDefaults = Number(parsed.settingsVersion || 0) < SETTINGS_SCHEMA_VERSION;
         return {
+          settingsVersion: SETTINGS_SCHEMA_VERSION,
           apiKey: String(parsed.apiKey || ""),
-          model: String(parsed.model || defaultModelChoice()),
+          model: migrateDefaults ? defaultModelChoice() : String(parsed.model || defaultModelChoice()),
           search: String(parsed.search || parsed.retriever || DEFAULT_RETRIEVER),
           imageTopK: Number(parsed.imageTopK || 5),
-          language: ["en", "vi"].includes(parsed.language) ? parsed.language : "en",
-          devMode: Boolean(parsed.devMode),
-          memory: parsed.memory === undefined ? true : Boolean(parsed.memory),
-          dictionaryCrossRef: Boolean(parsed.dictionaryCrossRef),
-          responseMode: normalizeResponseMode(parsed.responseMode || (parsed.imageMode ? "image" : "text")),
+          language: migrateDefaults ? DEFAULT_LANGUAGE : ["en", "vi"].includes(parsed.language) ? parsed.language : DEFAULT_LANGUAGE,
+          devMode: migrateDefaults ? false : Boolean(parsed.devMode),
+          memory: migrateDefaults ? DEFAULT_MEMORY_ENABLED : parsed.memory === undefined ? DEFAULT_MEMORY_ENABLED : Boolean(parsed.memory),
+          dictionaryCrossRef: migrateDefaults ? DEFAULT_DICTIONARY_CROSS_REF : parsed.dictionaryCrossRef === undefined ? DEFAULT_DICTIONARY_CROSS_REF : Boolean(parsed.dictionaryCrossRef),
+          responseMode: migrateDefaults ? DEFAULT_RESPONSE_MODE : normalizeResponseMode(parsed.responseMode || (parsed.imageMode ? "image" : DEFAULT_RESPONSE_MODE)),
           imageRewrite: Boolean(parsed.imageRewrite),
           theme: ["light", "colorful", "system"].includes(parsed.theme) ? parsed.theme : "light",
           fontScale: Number(parsed.fontScale || 100),
-          maxTokens: Number(parsed.maxTokens || 128),
+          maxTokens: migrateDefaults ? DEFAULT_MAX_TOKENS : Number(parsed.maxTokens || DEFAULT_MAX_TOKENS),
           temperature: Number(parsed.temperature || 0)
         };
       } catch (_) {
         return {
+          settingsVersion: SETTINGS_SCHEMA_VERSION,
           apiKey: "",
           model: defaultModelChoice(),
           search: DEFAULT_RETRIEVER,
           imageTopK: 5,
-          language: "en",
+          language: DEFAULT_LANGUAGE,
           devMode: false,
-          memory: true,
-          dictionaryCrossRef: false,
-          responseMode: "text",
+          memory: DEFAULT_MEMORY_ENABLED,
+          dictionaryCrossRef: DEFAULT_DICTIONARY_CROSS_REF,
+          responseMode: DEFAULT_RESPONSE_MODE,
           imageRewrite: false,
           theme: "light",
           fontScale: 100,
-          maxTokens: 128,
+          maxTokens: DEFAULT_MAX_TOKENS,
           temperature: 0
         };
       }
@@ -2628,9 +2707,9 @@
       document.documentElement.lang = settings.language;
       settings.devMode = Boolean(settings.devMode);
       devModeInput.checked = settings.devMode;
-      settings.memory = settings.memory === undefined ? true : Boolean(settings.memory);
+      settings.memory = settings.memory === undefined ? DEFAULT_MEMORY_ENABLED : Boolean(settings.memory);
       memoryModeInput.checked = settings.memory;
-      settings.dictionaryCrossRef = Boolean(settings.dictionaryCrossRef);
+      settings.dictionaryCrossRef = settings.dictionaryCrossRef === undefined ? DEFAULT_DICTIONARY_CROSS_REF : Boolean(settings.dictionaryCrossRef);
       dictionaryCrossRefInput.checked = settings.dictionaryCrossRef;
       settings.responseMode = normalizeResponseMode(settings.responseMode);
       settings.imageRewrite = Boolean(settings.imageRewrite);
@@ -2646,7 +2725,7 @@
       settings.fontScale = clampNumber(settings.fontScale, 100, 200, 100);
       fontScaleInput.value = settings.fontScale;
       applyFontScale(settings.fontScale);
-      settings.maxTokens = clampNumber(settings.maxTokens, 16, 4096, 128);
+      settings.maxTokens = clampNumber(settings.maxTokens, 16, 4096, DEFAULT_MAX_TOKENS);
       maxTokensInput.value = settings.maxTokens;
       temperatureInput.value = Number.isFinite(settings.temperature) ? settings.temperature : 0;
       applyLocalization();
@@ -2662,6 +2741,7 @@
       settings.apiKey = apiKeyInput.value.trim();
       settings.language = normalizeLanguage(languageModeInput.value);
       document.documentElement.lang = settings.language;
+      settings.settingsVersion = SETTINGS_SCHEMA_VERSION;
       settings.devMode = Boolean(devModeInput.checked);
       settings.memory = Boolean(memoryModeInput.checked);
       settings.dictionaryCrossRef = Boolean(dictionaryCrossRefInput.checked);
@@ -2827,6 +2907,7 @@
     }
 
     function defaultModelChoice() {
+      if (MODEL_CHOICES.includes(DEFAULT_CHAT_MODEL)) return DEFAULT_CHAT_MODEL;
       return MODEL_CHOICES[0] || "llama-3.1-8b-instant";
     }
 
@@ -4034,7 +4115,12 @@
       return details;
     }
 
-    function openDocument(source) {
+    function openDocument(source, options = {}) {
+      if (options.fromCrossRef && selectedSource && !sameDocumentSource(selectedSource, source)) {
+        pushDocumentTrail(selectedSource);
+      } else if (!options.preserveTrail) {
+        documentTrail = [];
+      }
       selectedSource = source;
       renderDocumentPanel(source);
       app.classList.add("doc-open");
@@ -4043,10 +4129,12 @@
 
     function closeDocPanel() {
       selectedSource = null;
+      documentTrail = [];
       app.classList.remove("doc-open");
       docTitle.textContent = t("document");
       docSubtitle.textContent = t("retrievedContext");
       docMeta.textContent = "";
+      renderDocumentTrail(null);
       docText.textContent = "";
       docText.classList.add("plain");
       docText.classList.remove("xref-ready");
@@ -4074,6 +4162,7 @@
         pill.textContent = item;
         docMeta.appendChild(pill);
       }
+      renderDocumentTrail(source);
       const image = imageSource(source);
       if (image) {
         docImage.src = image;
@@ -4141,10 +4230,80 @@
           showNotice(t("dictionaryLookupEmpty") + query);
           return;
         }
-        openDocument(source);
+        openDocument(source, { fromCrossRef: true });
       } catch (error) {
         showNotice(t("dictionaryLookupError") + error.message);
       }
+    }
+
+    function pushDocumentTrail(source) {
+      if (!source) return;
+      if (documentTrail.length && sameDocumentSource(documentTrail[documentTrail.length - 1], source)) return;
+      documentTrail = [...documentTrail, source].slice(-8);
+    }
+
+    function openDocumentFromTrail(index) {
+      const source = documentTrail[index];
+      if (!source) return;
+      documentTrail = documentTrail.slice(0, index);
+      selectedSource = source;
+      renderDocumentPanel(source);
+      app.classList.add("doc-open");
+      renderChat();
+    }
+
+    function renderDocumentTrail(source) {
+      docTrail.textContent = "";
+      if (!source || !documentTrail.length) {
+        docTrail.hidden = true;
+        return;
+      }
+      docTrail.hidden = false;
+      const label = document.createElement("span");
+      label.className = "doc-trail-label";
+      label.textContent = t("referenceTrail");
+      docTrail.appendChild(label);
+      documentTrail.forEach((item, index) => {
+        const separator = document.createElement("span");
+        separator.className = "doc-trail-separator";
+        separator.textContent = "/";
+        docTrail.appendChild(separator);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "doc-trail-link";
+        button.textContent = dictionaryTrailLabel(item);
+        button.title = t("backToPreviousEntry") + ": " + dictionaryTrailLabel(item);
+        button.addEventListener("click", () => openDocumentFromTrail(index));
+        docTrail.appendChild(button);
+      });
+      const separator = document.createElement("span");
+      separator.className = "doc-trail-separator";
+      separator.textContent = "/";
+      const current = document.createElement("span");
+      current.className = "doc-trail-current";
+      current.textContent = dictionaryTrailLabel(source);
+      docTrail.append(separator, current);
+    }
+
+    function dictionaryTrailLabel(source) {
+      return String(source?.title || source?.doc_id || t("dictionary")).trim();
+    }
+
+    function sameDocumentSource(left, right) {
+      const leftId = documentSourceIdentity(left);
+      const rightId = documentSourceIdentity(right);
+      return Boolean(leftId && rightId && leftId === rightId);
+    }
+
+    function documentSourceIdentity(source) {
+      const sourceInfo = dictionarySourceInfo(source);
+      return String(
+        source?.doc_id ||
+        source?.source_entry_id ||
+        source?.metadata?.source_entry_id ||
+        sourceInfo.source_entry_id ||
+        sourceKey(source)
+      ).trim();
     }
 
     async function fetchDictionaryLookup(term) {
