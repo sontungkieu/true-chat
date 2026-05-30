@@ -35,13 +35,14 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                 active_service.available_generation_models(),
                 active_service.available_retriever_ids(),
                 active_service.retriever.name,
+                _runtime_commit(),
             )
         )
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        expected_commit = os.getenv("TRUE_CHAT_EXPECTED_COMMIT") or None
-        actual_commit = os.getenv("TRUE_CHAT_ACTUAL_COMMIT") or None
+        expected_commit = _expected_commit()
+        actual_commit = _actual_commit()
         return {
             "status": "ok",
             "model": service.config.model_id,
@@ -159,6 +160,18 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return app
+
+
+def _expected_commit() -> str | None:
+    return os.getenv("TRUE_CHAT_EXPECTED_COMMIT") or None
+
+
+def _actual_commit() -> str | None:
+    return os.getenv("TRUE_CHAT_ACTUAL_COMMIT") or None
+
+
+def _runtime_commit() -> str | None:
+    return _actual_commit() or _expected_commit()
 
 
 def _validate_messages(value: Any) -> list[dict[str, Any]]:

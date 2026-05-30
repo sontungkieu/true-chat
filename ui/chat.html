@@ -541,6 +541,26 @@
       font-weight: 650;
     }
 
+    .runtime-version {
+      display: grid;
+      gap: 5px;
+      padding: 2px 8px 0;
+    }
+
+    .runtime-version span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 620;
+    }
+
+    .runtime-version code {
+      color: var(--muted-strong);
+      font-size: 11px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      user-select: all;
+    }
+
     .field input.range-input {
       width: 100%;
       min-height: 22px;
@@ -2416,6 +2436,10 @@
             <button class="settings-action" id="exportChats" type="button" data-i18n="exportChats">Export chats</button>
             <button class="settings-action" id="importChats" type="button" data-i18n="importChats">Import chats</button>
           </div>
+          <div class="runtime-version" id="runtimeVersion" hidden>
+            <span data-i18n="version">Version</span>
+            <code id="runtimeVersionValue"></code>
+          </div>
           <input id="importChatsFile" type="file" accept="application/json,.json" hidden>
         </div>
       </details>
@@ -2513,6 +2537,7 @@
     const AVAILABLE_MODELS = __AVAILABLE_MODELS_JSON__;
     const DEFAULT_RETRIEVER = __DEFAULT_RETRIEVER_JSON__;
     const AVAILABLE_RETRIEVERS = __AVAILABLE_RETRIEVERS_JSON__;
+    const APP_VERSION = __APP_VERSION_JSON__;
     const STORAGE_KEY = "ragChatUiState.v1";
     const SETTINGS_KEY = "ragChatUiSettings.v1";
     const SETTINGS_SCHEMA_VERSION = 2;
@@ -2560,6 +2585,8 @@
     const exportChatsButton = document.getElementById("exportChats");
     const importChatsButton = document.getElementById("importChats");
     const importChatsFileInput = document.getElementById("importChatsFile");
+    const runtimeVersion = document.getElementById("runtimeVersion");
+    const runtimeVersionValue = document.getElementById("runtimeVersionValue");
     const docTitle = document.getElementById("docTitle");
     const docSubtitle = document.getElementById("docSubtitle");
     const docMeta = document.getElementById("docMeta");
@@ -2615,6 +2642,7 @@
         fontSize: "Font size",
         maxTokens: "Max tokens",
         temperature: "Temp",
+        version: "Version",
         exportChats: "Export chats",
         importChats: "Import chats",
         importChatsDone: "Imported chat history.",
@@ -2691,6 +2719,7 @@
         fontSize: "Cỡ chữ",
         maxTokens: "Token tối đa",
         temperature: "Nhiệt độ",
+        version: "Version",
         exportChats: "Xuất lịch sử",
         importChats: "Nhập lịch sử",
         importChatsDone: "Đã nhập lịch sử chat.",
@@ -3355,6 +3384,7 @@
       promptInput.placeholder = t("sendMessage");
       const statusLabel = document.querySelector(".status-pill span:last-child");
       if (statusLabel) statusLabel.textContent = t("proxyReady");
+      updateRuntimeVersion();
       populateModelChoices();
       populateSearchChoices();
       modelChoiceInput.value = selectedModel();
@@ -3384,6 +3414,14 @@
       rootStyle.setProperty("--font-hero-fluid", `${4 * scale}vw`);
       rootStyle.setProperty("--font-hero-max", `${38 * scale}px`);
       fontScaleValue.textContent = safePercent + "%";
+    }
+
+    function updateRuntimeVersion() {
+      if (!runtimeVersion || !runtimeVersionValue) return;
+      const version = String(APP_VERSION || "").trim();
+      runtimeVersion.hidden = !version;
+      runtimeVersionValue.textContent = version;
+      runtimeVersionValue.title = version;
     }
 
     function clampNumber(value, min, max, fallback) {

@@ -218,6 +218,9 @@ def test_chat_page() -> None:
     assert "const DEFAULT_DICTIONARY_CROSS_REF = true" in response.text
     assert "const DEFAULT_MAX_TOKENS = 4096" in response.text
     assert "SETTINGS_SCHEMA_VERSION = 2" in response.text
+    assert "runtimeVersion" in response.text
+    assert "const APP_VERSION = \"\"" in response.text
+    assert "__APP_VERSION_JSON__" not in response.text
     assert "MiMo V2.5 Pro" in response.text
     assert "modelSelector" not in response.text
     assert "activeTitle" not in response.text
@@ -363,6 +366,17 @@ def test_chat_page() -> None:
     assert "--keyboard-inset" in response.text
     assert "updateComposerReservedHeight" in response.text
     assert ".settings[open] .settings-body" in response.text
+
+
+def test_chat_page_includes_runtime_commit(monkeypatch) -> None:
+    monkeypatch.setenv("TRUE_CHAT_ACTUAL_COMMIT", "abc123def456")
+    client = TestClient(create_app(FakeService()))
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "runtimeVersionValue" in response.text
+    assert 'const APP_VERSION = "abc123def456"' in response.text
 
 
 def test_chat_completion_non_stream() -> None:
