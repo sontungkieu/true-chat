@@ -333,6 +333,7 @@ Status: implemented on `main`; the current working tree hardens the Kaggle full-
    - Make text-mode dictionary fallback honor the requested `top_k` so `Nguồn tối đa` remains the final total source cap.
    - Distribute prompt context budget across retrieved sources so later results are included instead of being truncated away by long earlier entries.
    - Show the deployed runtime version in Local settings as the active commit id.
+   - Add a desktop-only draggable resize handle for the document side panel while keeping mobile full-screen.
 
 ## Verification
 

@@ -366,6 +366,11 @@ def test_chat_page() -> None:
     assert "--keyboard-inset" in response.text
     assert "updateComposerReservedHeight" in response.text
     assert ".settings[open] .settings-body" in response.text
+    assert "--doc-panel-width" in response.text
+    assert 'id="docResizeHandle"' in response.text
+    assert "startDocumentPanelResize" in response.text
+    assert "resizeDocumentPanelWithKeyboard" in response.text
+    assert "ragChatDocPanelWidth.v1" in response.text
 
 
 def test_chat_page_includes_runtime_commit(monkeypatch) -> None:

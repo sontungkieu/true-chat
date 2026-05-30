@@ -35,6 +35,7 @@
       --app-height: 100vh;
       --keyboard-inset: 0px;
       --composer-reserved-height: 136px;
+      --doc-panel-width: 440px;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-right: env(safe-area-inset-right, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -759,8 +760,18 @@
       transition: grid-template-columns 0.18s ease;
     }
 
+    .app.doc-resizing,
+    .app.doc-resizing * {
+      cursor: col-resize !important;
+      user-select: none;
+    }
+
+    .app.doc-resizing .workbench {
+      transition: none;
+    }
+
     .app.doc-open .workbench {
-      grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+      grid-template-columns: minmax(0, 1fr) var(--doc-panel-width);
     }
 
     .chat-column {
@@ -771,6 +782,7 @@
     }
 
     .doc-panel {
+      position: relative;
       display: none;
       min-width: 0;
       min-height: 0;
@@ -782,6 +794,38 @@
     .app.doc-open .doc-panel {
       display: grid;
       grid-template-rows: auto auto auto minmax(0, 1fr);
+    }
+
+    .doc-resize-handle {
+      position: absolute;
+      inset: 0 auto 0 -6px;
+      z-index: 3;
+      width: 12px;
+      cursor: col-resize;
+      touch-action: none;
+    }
+
+    .doc-resize-handle::after {
+      content: "";
+      position: absolute;
+      top: 16px;
+      bottom: 16px;
+      left: 5px;
+      width: 2px;
+      border-radius: 999px;
+      background: transparent;
+      transition: background 0.13s ease, opacity 0.13s ease;
+    }
+
+    .doc-resize-handle:hover::after,
+    .doc-resize-handle:focus-visible::after,
+    .app.doc-resizing .doc-resize-handle::after {
+      background: var(--border-strong);
+    }
+
+    .doc-resize-handle:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
     }
 
     .doc-header {
@@ -2004,7 +2048,7 @@
       }
 
       .app.doc-open .workbench {
-        grid-template-columns: minmax(0, 1fr) minmax(320px, 38vw);
+        grid-template-columns: minmax(0, 1fr) var(--doc-panel-width);
       }
     }
 
@@ -2158,6 +2202,10 @@
         display: grid;
         border-left: 0;
         border-top: 0;
+      }
+
+      .doc-resize-handle {
+        display: none;
       }
 
       .app.doc-open .doc-header {
@@ -2504,6 +2552,7 @@
         </div>
 
         <aside class="doc-panel" id="docPanel" aria-label="Retrieved document">
+          <div class="doc-resize-handle" id="docResizeHandle" role="separator" aria-label="Resize document panel" aria-orientation="vertical" tabindex="0"></div>
           <div class="doc-header">
             <div class="doc-heading">
               <strong id="docTitle">Document</strong>
@@ -2540,6 +2589,7 @@
     const APP_VERSION = __APP_VERSION_JSON__;
     const STORAGE_KEY = "ragChatUiState.v1";
     const SETTINGS_KEY = "ragChatUiSettings.v1";
+    const DOC_PANEL_WIDTH_KEY = "ragChatDocPanelWidth.v1";
     const SETTINGS_SCHEMA_VERSION = 2;
     const DEFAULT_CHAT_MODEL = "qwen/qwen3-32b";
     const DEFAULT_LANGUAGE = "vi";
@@ -2547,6 +2597,9 @@
     const DEFAULT_MEMORY_ENABLED = false;
     const DEFAULT_DICTIONARY_CROSS_REF = true;
     const DEFAULT_MAX_TOKENS = 4096;
+    const DOC_PANEL_DEFAULT_WIDTH = 440;
+    const DOC_PANEL_MIN_WIDTH = 320;
+    const DOC_PANEL_MAX_WIDTH = 780;
     const MAX_INLINE_DICTIONARY_SOURCES = 3;
     const app = document.querySelector("[data-app='rag-chat']");
     const chat = document.getElementById("chat");
@@ -2588,6 +2641,8 @@
     const runtimeVersion = document.getElementById("runtimeVersion");
     const runtimeVersionValue = document.getElementById("runtimeVersionValue");
     const docTitle = document.getElementById("docTitle");
+    const docPanel = document.getElementById("docPanel");
+    const docResizeHandle = document.getElementById("docResizeHandle");
     const docSubtitle = document.getElementById("docSubtitle");
     const docMeta = document.getElementById("docMeta");
     const docTrail = document.getElementById("docTrail");
@@ -2607,6 +2662,7 @@
     let dictionaryXrefRequestId = 0;
     let stableViewportHeight = 0;
     let keyboardWasOpen = false;
+    let docResizeState = null;
     const ragDetailsOpen = new Map();
     const ICONS = {
       copy: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
@@ -2778,6 +2834,7 @@
     const RETRIEVER_CHOICES = normalizedRetrieverChoices();
     const TEXT_RETRIEVER_CHOICES = normalizedTextRetrieverChoices();
     syncViewportHeight();
+    applyStoredDocumentPanelWidth();
     const state = loadState();
     const settings = loadSettings();
     applySettings();
@@ -2800,6 +2857,8 @@
     document.getElementById("closeSidebar").addEventListener("click", closeSidebar);
     document.getElementById("sidebarBackdrop").addEventListener("click", closeSidebar);
     document.getElementById("closeDoc").addEventListener("click", closeDocPanel);
+    docResizeHandle.addEventListener("pointerdown", startDocumentPanelResize);
+    docResizeHandle.addEventListener("keydown", resizeDocumentPanelWithKeyboard);
     docText.addEventListener("click", onDocumentTextClick);
     docText.addEventListener("keydown", onDocumentTextKeydown);
     dictionaryXrefPopover.addEventListener("click", (event) => event.stopPropagation());
@@ -2827,6 +2886,9 @@
         closeDictionaryCrossReferencePopup();
       }
     });
+    document.addEventListener("pointermove", resizeDocumentPanel);
+    document.addEventListener("pointerup", stopDocumentPanelResize);
+    document.addEventListener("pointercancel", stopDocumentPanelResize);
 
     for (const input of [
       apiKeyInput,
@@ -2884,10 +2946,15 @@
     window.addEventListener("beforeunload", () => {
       if (activeController) activeController.abort();
     });
-    window.addEventListener("resize", syncViewportHeight);
-    window.addEventListener("orientationchange", () => setTimeout(syncViewportHeight, 250));
-    window.visualViewport?.addEventListener("resize", syncViewportHeight);
+    window.addEventListener("resize", syncLayout);
+    window.addEventListener("orientationchange", () => setTimeout(syncLayout, 250));
+    window.visualViewport?.addEventListener("resize", syncLayout);
     window.visualViewport?.addEventListener("scroll", syncViewportHeight);
+
+    function syncLayout() {
+      syncViewportHeight();
+      syncDocumentPanelWidth();
+    }
 
     function syncViewportHeight() {
       updateComposerReservedHeight();
@@ -2923,6 +2990,90 @@
 
     function isMobileViewport() {
       return Boolean(window.matchMedia?.("(max-width: 840px), (pointer: coarse)")?.matches) || (window.innerWidth || 0) <= 840;
+    }
+
+    function applyStoredDocumentPanelWidth() {
+      let width = DOC_PANEL_DEFAULT_WIDTH;
+      try {
+        const stored = Number(localStorage.getItem(DOC_PANEL_WIDTH_KEY));
+        if (Number.isFinite(stored) && stored > 0) width = stored;
+      } catch (_) {}
+      setDocumentPanelWidth(width);
+    }
+
+    function syncDocumentPanelWidth() {
+      if (isMobileViewport()) return;
+      setDocumentPanelWidth(currentDocumentPanelWidth());
+    }
+
+    function documentPanelWidthLimits() {
+      const workbench = document.querySelector(".workbench");
+      const available = workbench?.getBoundingClientRect?.().width || window.innerWidth || DOC_PANEL_DEFAULT_WIDTH;
+      const min = Math.min(DOC_PANEL_MIN_WIDTH, Math.max(260, Math.floor(available - 280)));
+      const max = Math.max(min, Math.min(DOC_PANEL_MAX_WIDTH, Math.floor(available * 0.72)));
+      return { min, max };
+    }
+
+    function currentDocumentPanelWidth() {
+      const current = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--doc-panel-width"));
+      if (Number.isFinite(current) && current > 0) return current;
+      return DOC_PANEL_DEFAULT_WIDTH;
+    }
+
+    function setDocumentPanelWidth(width, options = {}) {
+      const { min, max } = documentPanelWidthLimits();
+      const clamped = Math.min(max, Math.max(min, Math.round(Number(width) || DOC_PANEL_DEFAULT_WIDTH)));
+      document.documentElement.style.setProperty("--doc-panel-width", clamped + "px");
+      docResizeHandle.setAttribute("aria-valuemin", String(min));
+      docResizeHandle.setAttribute("aria-valuemax", String(max));
+      docResizeHandle.setAttribute("aria-valuenow", String(clamped));
+      if (options.persist) {
+        try {
+          localStorage.setItem(DOC_PANEL_WIDTH_KEY, String(clamped));
+        } catch (_) {}
+      }
+      return clamped;
+    }
+
+    function startDocumentPanelResize(event) {
+      if (isMobileViewport() || !app.classList.contains("doc-open")) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      const rect = docPanel.getBoundingClientRect();
+      docResizeState = { pointerId: event.pointerId, right: rect.right };
+      docResizeHandle.setPointerCapture?.(event.pointerId);
+      app.classList.add("doc-resizing");
+      event.preventDefault();
+    }
+
+    function resizeDocumentPanel(event) {
+      if (!docResizeState || event.pointerId !== docResizeState.pointerId) return;
+      setDocumentPanelWidth(docResizeState.right - event.clientX);
+      event.preventDefault();
+    }
+
+    function stopDocumentPanelResize(event) {
+      if (!docResizeState || event.pointerId !== docResizeState.pointerId) return;
+      setDocumentPanelWidth(currentDocumentPanelWidth(), { persist: true });
+      try {
+        docResizeHandle.releasePointerCapture?.(event.pointerId);
+      } catch (_) {}
+      docResizeState = null;
+      app.classList.remove("doc-resizing");
+      event.preventDefault();
+    }
+
+    function resizeDocumentPanelWithKeyboard(event) {
+      if (isMobileViewport() || !app.classList.contains("doc-open")) return;
+      const { min, max } = documentPanelWidthLimits();
+      const step = event.shiftKey ? 80 : 32;
+      let next = currentDocumentPanelWidth();
+      if (event.key === "ArrowLeft") next += step;
+      else if (event.key === "ArrowRight") next -= step;
+      else if (event.key === "Home") next = min;
+      else if (event.key === "End") next = max;
+      else return;
+      setDocumentPanelWidth(next, { persist: true });
+      event.preventDefault();
     }
 
     function updateComposerReservedHeight() {
