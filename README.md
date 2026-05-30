@@ -301,17 +301,42 @@ The Kaggle notebook expects a Kaggle secret named `GROQ_KEY_ENV` containing `.se
 
 On Kaggle, the generated notebook now runs `uv sync --frozen --no-dev` before starting the proxy, then launches `rag-bench serve` with `uv run --frozen --no-sync`. It waits up to `900` seconds for `/health` by default, prints periodic health-check progress, and includes a tail of `/kaggle/working/rag-proxy.log` if the proxy exits or times out. Override the wait with `--proxy-startup-timeout-s` if Kaggle dependency sync or BEIR startup is slower. If the upstream BEIR SciFact zip host times out, `scifact` falls back to the Hugging Face `BeIR/scifact` parquet mirror plus `BeIR/scifact-qrels` TSV and caches those files under `RAG_BENCH_DATA_CACHE` or `~/.cache/true-chat-rag-bench`.
 
-For a private throwaway notebook, the script can embed local Groq keys directly into a generated cell instead of using Kaggle Secrets:
+For the full dictionary chat deployment, attach the dictionary runtime dataset and expose the dictionary retriever explicitly:
+
+```bash
+scripts/upload_kaggle_rag_proxy_notebook.py \
+  --account codemaivanngu \
+  --credentials /home/tung/all-kaggle.json \
+  --dictionary-dataset-source codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732 \
+  --dictionary-artifact runs/pb_dictionary_base_supp2021_prod_graph \
+  --dictionary-required \
+  --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits
+```
+
+`--dictionary-dataset-source` is written to Kaggle `dataset_sources`, then the notebook copies the attached artifact from `/kaggle/input` into the cloned repo before `rag-bench serve` starts. If `--available-retrievers` is omitted while a dictionary dataset is attached, the uploader defaults to the full local UI retriever set above. The generated notebook can also expose MiMo models through Kaggle Secrets named `MIMO_API_KEY` and optional `MIMO_BASE_URL`:
+
+```bash
+scripts/upload_kaggle_rag_proxy_notebook.py \
+  --account codemaivanngu \
+  --credentials /home/tung/all-kaggle.json \
+  --dictionary-dataset-source codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732 \
+  --dictionary-required \
+  --enable-mimo
+```
+
+For a private throwaway notebook, the script can embed local Groq keys and MiMo env directly into generated cells instead of using Kaggle Secrets:
 
 ```bash
 scripts/upload_kaggle_rag_proxy_notebook.py \
   --account codemaivanngu \
   --credentials .secrets/all-kaggle.json \
   --embed-groq-keys \
-  --groq-keys-file .secrets/groq_key.env
+  --groq-keys-file .secrets/groq_key.env \
+  --embed-mimo-env \
+  --mimo-env-file .secrets/.env
 ```
 
-This uploads the Groq key values inside the Kaggle notebook source, so use it only for notebooks you plan to delete. Every successful upload is recorded locally in `.secrets/kaggle_notebooks.jsonl` without secret values:
+This uploads the provider key values inside the Kaggle notebook source, so use it only for notebooks you plan to delete. Every successful upload is recorded locally in `.secrets/kaggle_notebooks.jsonl` without secret values:
 
 ```bash
 scripts/upload_kaggle_rag_proxy_notebook.py --list-uploads

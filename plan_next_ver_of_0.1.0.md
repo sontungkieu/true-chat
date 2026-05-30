@@ -4,7 +4,7 @@
 
 Make the built-in FastAPI chat UI the primary temporary frontend for the RAG proxy. The UI should be ultra fast, lightweight, responsive, and modern, with an Open WebUI-like chat workflow while keeping all RAG, Groq key scheduling, and benchmark logic inside the existing backend.
 
-Status: implemented on `main`; retrieval score controls are implemented in the current working tree and pending final commit/deploy.
+Status: implemented on `main`; the current working tree hardens the Kaggle full-dictionary deploy path and local settings scrolling.
 
 ## Constraints
 
@@ -249,7 +249,7 @@ Status: implemented on `main`; retrieval score controls are implemented in the c
    - Hide zero/negative-score related documents from the UI source list unless the answer cites that source directly.
 
 33. Add Kaggle notebook upload script
-   - Status: done.
+   - Status: done; full-dictionary deploy hardening is implemented in the current working tree.
    - Add `scripts/upload_kaggle_rag_proxy_notebook.py` to render and push a private Kaggle notebook.
    - Use the `codemaivanngu` account entry from `.secrets/all-kaggle.json` by default.
    - Inject a Cloudflare named tunnel token into the generated notebook immediately before upload without printing it.
@@ -259,6 +259,9 @@ Status: implemented on `main`; retrieval score controls are implemented in the c
    - Add notebook cell ids to avoid Kaggle/nbformat missing-id warnings.
    - Add a SciFact Hugging Face parquet/qrels fallback when the upstream BEIR zip host times out on Kaggle.
    - Add optional `--embed-groq-keys` to write `.secrets/groq_key.env` into a generated notebook cell for private throwaway kernels.
+   - Add dataset source attachment, dictionary artifact copy from `/kaggle/input`, and dictionary-required startup support for full dictionary notebooks.
+   - Add optional MiMo support through Kaggle Secrets or embedded `MIMO_API_KEY`/`MIMO_BASE_URL` payloads without printing raw provider keys.
+   - Record dataset and provider-secret modes in the upload registry without storing secret values.
    - Record successful uploads in `.secrets/kaggle_notebooks.jsonl` and add list/delete commands for API-key cleanup.
 
 34. Add reproducible private dictionary graph pipeline
@@ -316,7 +319,7 @@ Status: implemented on `main`; retrieval score controls are implemented in the c
    - Add private source-set safety: inputs classified as `private` are refused for MiMo/Groq and require `--provider local` plus an explicit `--trusted-model` allowlist.
 
 37. Add retrieval score controls
-   - Status: implemented in the current working tree; pending final commit/deploy.
+   - Status: done; local settings scroll hardening is implemented in the current working tree.
    - Add request-level `score_min`, `score_max`, and `sort_by_score` controls for chat and dictionary lookup APIs.
    - Apply score controls before prompt construction so filtered-out sources are neither shown nor used by the model.
    - Add local UI controls for max sources, score range, and score sorting.
@@ -325,6 +328,7 @@ Status: implemented on `main`; retrieval score controls are implemented in the c
    - Show dictionary cross-reference clicks as a top-5 result popover instead of immediately opening the first match.
    - Keep the mobile composer above iOS-style keyboards without shrinking the whole app viewport.
    - Add an internal scroll area for long Local settings content.
+   - Fix the sidebar settings panel to keep its own scroll container on mobile and desktop instead of extending past the viewport.
 
 ## Verification
 

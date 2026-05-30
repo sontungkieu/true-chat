@@ -39,6 +39,7 @@ DEFAULT_CHAT_RETRIEVERS = (
     "dictionary-graph",
     "image-digits",
 )
+MIN_RETRIEVAL_DISPLAY_SCORE = 5e-4
 
 
 class ChatGenerationClient(Protocol):
@@ -339,7 +340,11 @@ class RagChatService:
             )
             if not dictionary_fallback.hits:
                 dictionary_fallback = None
-        prompt_hits = _merge_text_and_dictionary_hits(retrieval.hits, dictionary_fallback.hits if dictionary_fallback else [])
+        prompt_hits = _merge_text_and_dictionary_hits(
+            retrieval.hits,
+            dictionary_fallback.hits if dictionary_fallback else [],
+            max_hits=request_top_k,
+        )
         prompt_messages = build_chat_rag_messages(
             messages,
             prompt_hits,
@@ -773,16 +778,30 @@ def _merge_positive_keyword_hits(results: list[RetrievalResult], *, top_k: int) 
     ]
 
 
-def _merge_text_and_dictionary_hits(primary_hits: list[RetrievalHit], dictionary_hits: list[RetrievalHit]) -> list[RetrievalHit]:
+def _merge_text_and_dictionary_hits(
+    primary_hits: list[RetrievalHit],
+    dictionary_hits: list[RetrievalHit],
+    *,
+    max_hits: int | None = None,
+) -> list[RetrievalHit]:
     if not dictionary_hits:
-        return list(primary_hits)
+        hits = list(primary_hits)
+        if max_hits is not None:
+            hits = hits[: _clamp_top_k(max_hits, fallback=max_hits)]
+        return [
+            replace(hit, rank=rank)
+            for rank, hit in enumerate(hits, 1)
+        ]
+    primary_candidates = [hit for hit in primary_hits if hit.score > MIN_RETRIEVAL_DISPLAY_SCORE]
     merged: list[RetrievalHit] = []
     seen: set[str] = set()
-    for hit in (*dictionary_hits, *primary_hits):
+    for hit in (*dictionary_hits, *primary_candidates):
         if hit.doc_id in seen:
             continue
         seen.add(hit.doc_id)
         merged.append(hit)
+        if max_hits is not None and len(merged) >= _clamp_top_k(max_hits, fallback=max_hits):
+            break
     return [
         RetrievalHit(
             doc_id=hit.doc_id,
@@ -895,7 +914,7 @@ def _filter_retrieved_for_display(
     return [
         hit
         for hit in hits
-        if include_score_filtered or hit.score > 0 or hit.doc_id in cited_doc_ids or _hit_is_image(hit)
+        if include_score_filtered or hit.score > MIN_RETRIEVAL_DISPLAY_SCORE or hit.doc_id in cited_doc_ids or _hit_is_image(hit)
     ]
 
 

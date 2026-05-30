@@ -455,8 +455,11 @@
     }
 
     .settings[open] .settings-body {
+      max-height: min(540px, calc(var(--app-height) - 138px));
       overflow-y: auto;
       overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      -webkit-overflow-scrolling: touch;
     }
 
     .field {
@@ -1999,9 +2002,19 @@
         inset: 0 auto 0 0;
         z-index: 30;
         width: min(304px, 88vw);
+        height: var(--app-height);
+        max-height: var(--app-height);
         padding: calc(9px + var(--safe-top)) max(9px, var(--safe-right)) calc(9px + var(--safe-bottom)) max(9px, var(--safe-left));
         transform: translateX(-105%);
         transition: transform 0.18s ease;
+      }
+
+      .settings[open] {
+        max-height: max(260px, calc(var(--app-height) - 120px - var(--safe-top) - var(--safe-bottom)));
+      }
+
+      .settings[open] .settings-body {
+        max-height: max(210px, calc(var(--app-height) - 166px - var(--safe-top) - var(--safe-bottom)));
       }
 
       .app.sidebar-open .sidebar {

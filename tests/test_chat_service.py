@@ -684,6 +684,70 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
     assert "PHÁO BINH, lực lượng tác chiến." in llm.messages[1]["content"]
 
 
+def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:
+    class BenchmarkRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert top_k == 6
+            hits = [
+                RetrievalHit(doc_id=f"bench-good-{index}", score=0.25, rank=index, title=f"Good {index}", text=f"Useful benchmark {index}.")
+                for index in range(1, 4)
+            ]
+            hits.extend(
+                RetrievalHit(doc_id=f"bench-tiny-{index}", score=0.0001, rank=rank, title=f"Tiny {index}", text=f"Tiny benchmark {index}.")
+                for rank, index in enumerate(range(1, 4), start=4)
+            )
+            return RetrievalResult(query=query, hits=hits, latency_s=0.02)
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert top_k == 5
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id=f"dict-{index}",
+                        score=2.0 - index * 0.01,
+                        rank=index,
+                        title=f"Dictionary {index}",
+                        text=f"Dictionary entry {index}.",
+                        metadata={
+                            "kind": "dictionary",
+                            "dictionary_direct_score": 1.0,
+                            "dictionary_match_mode": "strict",
+                        },
+                    )
+                    for index in range(1, 6)
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    text_retriever = BenchmarkRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=6, dictionary_top_k=5, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=llm,
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 5},
+    )
+
+    result = service.answer([{"role": "user", "content": "pháo đài"}], response_mode="text", top_k=6)
+    doc_ids = [source["doc_id"] for source in result.response["rag"]["retrieved"]]
+
+    assert len(doc_ids) == 6
+    assert doc_ids == ["dict-1", "dict-2", "dict-3", "dict-4", "dict-5", "bench-good-1"]
+    assert "Tiny benchmark" not in llm.messages[1]["content"]
+
+
 def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_remain() -> None:
     class LowScoreRetriever(FakeRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:
