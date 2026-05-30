@@ -33,6 +33,8 @@
       --font-hero-fluid: 4vw;
       --font-hero-max: 38px;
       --app-height: 100vh;
+      --keyboard-inset: 0px;
+      --composer-reserved-height: 136px;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-right: env(safe-area-inset-right, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -400,6 +402,14 @@
     .settings {
       border-top: 1px solid var(--border);
       padding: 10px 2px 2px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .settings[open] {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      max-height: min(70vh, calc(var(--app-height) - 92px));
     }
 
     .settings summary {
@@ -439,7 +449,14 @@
     .settings-body {
       display: grid;
       gap: 8px;
+      min-height: 0;
+      padding-right: 4px;
       padding-top: 8px;
+    }
+
+    .settings[open] .settings-body {
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
 
     .field {
@@ -2074,6 +2091,19 @@
         padding: 8px max(10px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(10px, var(--safe-left));
       }
 
+      .app.keyboard-open .chat {
+        padding-bottom: var(--composer-reserved-height);
+        scroll-padding-bottom: var(--composer-reserved-height);
+      }
+
+      .app.keyboard-open .composer-wrap {
+        position: fixed;
+        right: 0;
+        bottom: var(--keyboard-inset);
+        left: 0;
+        z-index: 18;
+      }
+
       .composer-tools {
         max-width: calc(100vw - 92px);
         overflow-x: auto;
@@ -2485,6 +2515,7 @@
     const conversationList = document.getElementById("conversationList");
     const brandModel = document.getElementById("brandModel");
     const composer = document.getElementById("composer");
+    const composerWrap = document.querySelector(".composer-wrap");
     const promptInput = document.getElementById("prompt");
     const sendButton = document.getElementById("send");
     const notice = document.getElementById("notice");
@@ -2534,6 +2565,8 @@
     let chatSwipeStart = null;
     let activeComposerMenu = null;
     let dictionaryXrefRequestId = 0;
+    let stableViewportHeight = 0;
+    let keyboardWasOpen = false;
     const ragDetailsOpen = new Map();
     const ICONS = {
       copy: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
@@ -2777,6 +2810,8 @@
     fontScaleInput.addEventListener("input", saveSettingsFromInputs);
 
     promptInput.addEventListener("input", resizePrompt);
+    promptInput.addEventListener("focus", () => setTimeout(syncViewportHeight, 50));
+    promptInput.addEventListener("blur", () => setTimeout(syncViewportHeight, 120));
     promptInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -2813,9 +2848,45 @@
     window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 
     function syncViewportHeight() {
-      const height = window.visualViewport?.height || window.innerHeight || 0;
+      updateComposerReservedHeight();
+      const visualViewport = window.visualViewport;
+      const layoutHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const visualHeight = visualViewport?.height || layoutHeight || 0;
+      const viewportOffsetTop = visualViewport?.offsetTop || 0;
+      const mobileViewport = isMobileViewport();
+      const composerFocused = document.activeElement === promptInput || composer.contains(document.activeElement);
+      const baselineHeight = stableViewportHeight || Math.max(layoutHeight, visualHeight);
+      const keyboardInset = Math.max(
+        0,
+        layoutHeight - visualHeight - viewportOffsetTop,
+        baselineHeight - visualHeight - viewportOffsetTop
+      );
+      const keyboardOpen = mobileViewport && composerFocused && keyboardInset > 90;
+      if (!stableViewportHeight || (!composerFocused && layoutHeight > stableViewportHeight * 0.9)) {
+        stableViewportHeight = Math.max(layoutHeight, visualHeight, stableViewportHeight);
+      }
+      const appHeight = keyboardOpen ? Math.max(stableViewportHeight, layoutHeight, visualHeight) : visualHeight;
+      if (Number.isFinite(appHeight) && appHeight > 0) {
+        document.documentElement.style.setProperty("--app-height", Math.round(appHeight) + "px");
+      }
+      document.documentElement.style.setProperty("--keyboard-inset", Math.round(keyboardOpen ? keyboardInset : 0) + "px");
+      app.classList.toggle("keyboard-open", keyboardOpen);
+      if (keyboardOpen && !keyboardWasOpen) {
+        requestAnimationFrame(() => {
+          chat.scrollTop = chat.scrollHeight;
+        });
+      }
+      keyboardWasOpen = keyboardOpen;
+    }
+
+    function isMobileViewport() {
+      return Boolean(window.matchMedia?.("(max-width: 840px), (pointer: coarse)")?.matches) || (window.innerWidth || 0) <= 840;
+    }
+
+    function updateComposerReservedHeight() {
+      const height = composerWrap?.getBoundingClientRect?.().height || 0;
       if (Number.isFinite(height) && height > 0) {
-        document.documentElement.style.setProperty("--app-height", Math.round(height) + "px");
+        document.documentElement.style.setProperty("--composer-reserved-height", Math.ceil(height + 16) + "px");
       }
     }
 
@@ -5353,6 +5424,7 @@
     function resizePrompt() {
       promptInput.style.height = "auto";
       promptInput.style.height = Math.min(promptInput.scrollHeight, 190) + "px";
+      updateComposerReservedHeight();
     }
 
     function titleFrom(text) {

@@ -323,6 +323,8 @@ Status: implemented on `main`; retrieval score controls are implemented in the c
    - Record filter input/output counts in `retrieval_metadata.score_filter`.
    - Keep raw source id/rank/score badges in dictionary cards and the document panel behind local Dev mode.
    - Show dictionary cross-reference clicks as a top-5 result popover instead of immediately opening the first match.
+   - Keep the mobile composer above iOS-style keyboards without shrinking the whole app viewport.
+   - Add an internal scroll area for long Local settings content.
 
 ## Verification
 

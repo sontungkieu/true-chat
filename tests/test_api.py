@@ -344,6 +344,10 @@ def test_chat_page() -> None:
     assert 'id="dictionaryXrefPopover"' in response.text
     assert "renderDictionaryCrossReferencePopup" in response.text
     assert "body: JSON.stringify({ term, top_k: topK })" in response.text
+    assert "keyboard-open" in response.text
+    assert "--keyboard-inset" in response.text
+    assert "updateComposerReservedHeight" in response.text
+    assert ".settings[open] .settings-body" in response.text
 
 
 def test_chat_completion_non_stream() -> None:
