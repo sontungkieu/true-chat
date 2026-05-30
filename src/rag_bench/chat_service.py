@@ -40,6 +40,7 @@ DEFAULT_CHAT_RETRIEVERS = (
     "image-digits",
 )
 MIN_RETRIEVAL_DISPLAY_SCORE = 5e-4
+CONTEXT_SEPARATOR = "\n\n---\n\n"
 
 
 class ChatGenerationClient(Protocol):
@@ -1235,21 +1236,40 @@ def _clean_image_query(text: str) -> str:
 
 
 def _format_context(hits: list[RetrievalHit], *, max_context_chars: int) -> str:
-    context_blocks: list[str] = []
-    used_chars = 0
+    raw_blocks: list[str] = []
     for hit in hits:
         title = f"{hit.title}\n" if hit.title else ""
         block = f"[{hit.doc_id}]\n{title}{hit.text}".strip()
-        if not block:
-            continue
-        remaining = max_context_chars - used_chars
-        if remaining <= 0:
-            break
-        if len(block) > remaining:
-            block = block[:remaining].rstrip()
-        context_blocks.append(block)
-        used_chars += len(block)
-    return "\n\n---\n\n".join(context_blocks) if context_blocks else "No retrieved context."
+        if block:
+            raw_blocks.append(block)
+    if not raw_blocks:
+        return "No retrieved context."
+    if max_context_chars <= 0:
+        return CONTEXT_SEPARATOR.join(block.splitlines()[0] for block in raw_blocks)
+    separator_budget = len(CONTEXT_SEPARATOR) * max(0, len(raw_blocks) - 1)
+    text_budget = max(1, max_context_chars - separator_budget)
+    base_budget = max(1, text_budget // len(raw_blocks))
+    extra_budget = text_budget % len(raw_blocks)
+    carried_budget = 0
+    context_blocks: list[str] = []
+    for index, block in enumerate(raw_blocks):
+        block_budget = base_budget + (1 if index < extra_budget else 0) + carried_budget
+        formatted = _truncate_context_block(block, max_chars=block_budget)
+        context_blocks.append(formatted)
+        carried_budget = max(0, block_budget - len(formatted))
+    return CONTEXT_SEPARATOR.join(context_blocks)
+
+
+def _truncate_context_block(block: str, *, max_chars: int) -> str:
+    if len(block) <= max_chars:
+        return block
+    lines = block.splitlines()
+    header = "\n".join(lines[:2]).strip() if len(lines) >= 2 else lines[0].strip()
+    if max_chars <= len(header):
+        return lines[0].strip() if lines else block[:max_chars].rstrip()
+    text_budget = max_chars - len(header) - 1
+    body = "\n".join(lines[2:] if len(lines) >= 2 else lines[1:]).strip()
+    return f"{header}\n{body[:text_budget].rstrip()}".strip()
 
 
 def _format_image_answer(query: str, hits: list[RetrievalHit], *, language: str | None = None) -> str:

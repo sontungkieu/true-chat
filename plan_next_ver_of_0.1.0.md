@@ -331,6 +331,7 @@ Status: implemented on `main`; the current working tree hardens the Kaggle full-
    - Add an internal scroll area for long Local settings content.
    - Fix the sidebar settings panel to keep its own scroll container on mobile and desktop instead of extending past the viewport.
    - Make text-mode dictionary fallback honor the requested `top_k` so `Nguồn tối đa` remains the final total source cap.
+   - Distribute prompt context budget across retrieved sources so later results are included instead of being truncated away by long earlier entries.
 
 ## Verification
 

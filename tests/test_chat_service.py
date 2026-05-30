@@ -6,6 +6,7 @@ from rag_bench.chat_service import (
     ChatProxyConfig,
     ModelRoutedChatClient,
     RagChatService,
+    _format_context,
     last_user_text,
     parse_chat_command,
 )
@@ -746,6 +747,27 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
     assert len(doc_ids) == 6
     assert doc_ids == ["dict-1", "dict-2", "dict-3", "dict-4", "dict-5", "dict-6"]
     assert "Tiny benchmark" not in llm.messages[1]["content"]
+
+
+def test_format_context_distributes_budget_across_all_hits() -> None:
+    hits = [
+        RetrievalHit(
+            doc_id=f"doc-{index}",
+            score=1.0,
+            rank=index,
+            title=f"Title {index}",
+            text=f"Important context {index}. " + ("x" * 700),
+        )
+        for index in range(1, 7)
+    ]
+
+    context = _format_context(hits, max_context_chars=900)
+
+    for index in range(1, 7):
+        assert f"[doc-{index}]" in context
+        assert f"Title {index}" in context
+    assert len(context) <= 900
+    assert not context.endswith("[")
 
 
 def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_remain() -> None:
