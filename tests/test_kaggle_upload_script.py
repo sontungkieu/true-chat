@@ -47,6 +47,8 @@ def test_build_notebook_checks_expected_commit_and_injects_tunnel_token() -> Non
     assert "actual_commit != EXPECTED_COMMIT" in source
     assert "CLOUDFLARE_TUNNEL_TOKEN = 'cf-token'" in source
     assert "PROXY_STARTUP_TIMEOUT_S = 900" in source
+    assert "'TRUE_CHAT_EXPECTED_COMMIT': EXPECTED_COMMIT" in source
+    assert "'TRUE_CHAT_ACTUAL_COMMIT': actual_commit" in source
     assert "uv', 'sync', '--frozen', '--no-dev'" in source
     assert "uv', 'run', '--frozen', '--no-sync'" in source
     assert "'--model', 'qwen/qwen3-32b'" in source

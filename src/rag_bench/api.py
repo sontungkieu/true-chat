@@ -40,6 +40,8 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
 
     @app.get("/health")
     def health() -> dict[str, Any]:
+        expected_commit = os.getenv("TRUE_CHAT_EXPECTED_COMMIT") or None
+        actual_commit = os.getenv("TRUE_CHAT_ACTUAL_COMMIT") or None
         return {
             "status": "ok",
             "model": service.config.model_id,
@@ -50,6 +52,15 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
             "retriever": service.retriever.name,
             "available_retrievers": service.available_retriever_ids(),
             "dictionary": getattr(service, "dictionary_status", {}),
+            "version": {
+                "expected_commit": expected_commit,
+                "actual_commit": actual_commit,
+                "commit_matches_expected": (
+                    actual_commit == expected_commit
+                    if actual_commit is not None and expected_commit is not None
+                    else None
+                ),
+            },
         }
 
     @app.get("/v1/models", dependencies=[Depends(_require_bearer)])

@@ -254,6 +254,7 @@ Status: implemented on `main`; the current working tree hardens the Kaggle full-
    - Use the `codemaivanngu` account entry from `.secrets/all-kaggle.json` by default.
    - Inject a Cloudflare named tunnel token into the generated notebook immediately before upload without printing it.
    - Inject the local `HEAD` commit as `EXPECTED_COMMIT`; the Kaggle notebook fails if the cloned repo commit differs.
+   - Expose expected/actual runtime commits in `/health` so deployed version can be checked after tunnel startup.
    - Keep the notebook simple: clone repo, verify commit, pre-sync `uv` dependencies, load Groq keys from Kaggle secrets, start `rag-bench serve`, then run `cloudflared tunnel run`.
    - Give the proxy a longer Kaggle startup window, print periodic health-check progress, and dump the proxy log tail when startup fails.
    - Add notebook cell ids to avoid Kaggle/nbformat missing-id warnings.

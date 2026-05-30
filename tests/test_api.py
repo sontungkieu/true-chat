@@ -160,6 +160,21 @@ def test_health_and_models() -> None:
     health = client.get("/health").json()
     assert health["available_generation_models"] == ["llama-3.1-8b-instant", "qwen/qwen3-32b"]
     assert health["available_retrievers"] == ["bm25", "tfidf"]
+    assert health["version"]["commit_matches_expected"] is None
+
+
+def test_health_reports_runtime_commit_match(monkeypatch) -> None:
+    monkeypatch.setenv("TRUE_CHAT_EXPECTED_COMMIT", "abc123")
+    monkeypatch.setenv("TRUE_CHAT_ACTUAL_COMMIT", "abc123")
+    client = TestClient(create_app(FakeService()))
+
+    health = client.get("/health").json()
+
+    assert health["version"] == {
+        "expected_commit": "abc123",
+        "actual_commit": "abc123",
+        "commit_matches_expected": True,
+    }
 
 
 def test_chat_page() -> None:

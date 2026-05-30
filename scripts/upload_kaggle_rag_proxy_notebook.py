@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     slug = args.slug or slugify(f"true-chat-rag-proxy-{args.account}-{timestamp}")
-    title = args.title or f"True Chat RAG Proxy {args.account} {timestamp}"
+    title = args.title or (slug if args.slug else f"True Chat RAG Proxy {args.account} {timestamp}")
     kernel_id = f"{credential.username}/{slug}"
     groq_key_env_b64 = read_groq_key_env_b64(repo_root, args.groq_keys_file) if args.embed_groq_keys else None
     mimo_env_b64 = read_mimo_env_b64(repo_root, args.mimo_env_file) if args.embed_mimo_env else None
@@ -756,7 +756,12 @@ def build_notebook(
                 "if ENABLE_MIMO:\n"
                 "    proxy_cmd.append('--enable-mimo')\n"
                 "    proxy_cmd.extend(['--mimo-models', MIMO_MODELS])\n"
-                "proxy_env = {**os.environ, 'PYTHONUNBUFFERED': '1'}\n"
+                "proxy_env = {\n"
+                "    **os.environ,\n"
+                "    'PYTHONUNBUFFERED': '1',\n"
+                "    'TRUE_CHAT_EXPECTED_COMMIT': EXPECTED_COMMIT,\n"
+                "    'TRUE_CHAT_ACTUAL_COMMIT': actual_commit,\n"
+                "}\n"
                 "proxy_log = open(proxy_log_path, 'w', buffering=1)\n"
                 "proxy = subprocess.Popen(proxy_cmd, cwd=REPO_DIR, env=proxy_env, stdout=proxy_log, stderr=subprocess.STDOUT, text=True)\n"
                 "deadline = time.time() + PROXY_STARTUP_TIMEOUT_S\n"
