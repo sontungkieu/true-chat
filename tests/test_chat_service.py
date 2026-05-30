@@ -721,6 +721,65 @@ def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_rema
     assert [source["doc_id"] for source in result.response["rag"]["retrieved"]] == ["cited-low"]
 
 
+def test_score_controls_filter_sort_prompt_and_display_sources() -> None:
+    class MixedScoreRetriever(FakeRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert top_k == 4
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(doc_id="low", score=0.2, rank=1, title="Low", text="Low confidence."),
+                    RetrievalHit(doc_id="high", score=2.0, rank=2, title="High", text="High confidence."),
+                    RetrievalHit(doc_id="mid", score=1.0, rank=3, title="Mid", text="Mid confidence."),
+                    RetrievalHit(doc_id="too-high", score=9.0, rank=4, title="Too high", text="Outlier."),
+                ],
+                latency_s=0.01,
+            )
+
+    class CitingFilteredLLM(FakeLLM):
+        def generate(self, *args, **kwargs) -> GenerationResult:
+            result = super().generate(*args, **kwargs)
+            result.answer = "Filtered answer [high]."
+            return result
+
+    retriever = MixedScoreRetriever()
+    llm = CitingFilteredLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=4, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=retriever,
+        llm=llm,
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "What do cats do?"}],
+        top_k=4,
+        score_min=0.5,
+        score_max=2.5,
+        sort_by_score=True,
+    )
+
+    prompt = llm.messages[1]["content"]
+    assert prompt.index("[high]") < prompt.index("[mid]")
+    assert "[low]" not in prompt
+    assert "[too-high]" not in prompt
+    assert [source["doc_id"] for source in result.response["rag"]["retrieved"]] == ["high", "mid"]
+    assert [source["rank"] for source in result.response["rag"]["retrieved"]] == [1, 2]
+    assert result.response["rag"]["retrieval_metadata"]["score_filter"] == {
+        "min_score": 0.5,
+        "max_score": 2.5,
+        "sort_by_score": True,
+        "input_count": 4,
+        "output_count": 2,
+    }
+
+
 def test_last_user_text_supports_openai_text_parts() -> None:
     assert (
         last_user_text(

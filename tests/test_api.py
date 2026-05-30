@@ -32,6 +32,9 @@ class FakeService:
         self.seen_image_rewrite = None
         self.seen_language = None
         self.seen_memory = None
+        self.seen_score_min = None
+        self.seen_score_max = None
+        self.seen_sort_by_score = None
 
     def answer(
         self,
@@ -47,6 +50,9 @@ class FakeService:
         image_rewrite=None,
         language=None,
         memory=None,
+        score_min=None,
+        score_max=None,
+        sort_by_score=None,
     ):
         self.seen_messages = messages
         self.seen_model = request_model
@@ -59,6 +65,9 @@ class FakeService:
         self.seen_image_rewrite = image_rewrite
         self.seen_language = language
         self.seen_memory = memory
+        self.seen_score_min = score_min
+        self.seen_score_max = score_max
+        self.seen_sort_by_score = sort_by_score
         response = {
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -106,12 +115,19 @@ class FakeService:
     def available_retriever_ids(self) -> tuple[str, ...]:
         return ("bm25", "tfidf")
 
-    def lookup_dictionary(self, term, *, top_k=None):
+    def lookup_dictionary(self, term, *, top_k=None, score_min=None, score_max=None, sort_by_score=None):
         return {
             "object": "dictionary.lookup",
             "query": term,
             "retriever": "dictionary-graph",
             "top_k": top_k or 1,
+            "retrieval_metadata": {
+                "score_filter": {
+                    "min_score": score_min,
+                    "max_score": score_max,
+                    "sort_by_score": bool(sort_by_score),
+                }
+            },
             "retrieved": [
                 {
                     "doc_id": "base:D-0001",
@@ -321,6 +337,13 @@ def test_chat_page() -> None:
     assert 'buffer.split("\\\\n\\\\n")' not in response.text
     assert "parseSseEvent" in response.text
     assert "localStorage" in response.text
+    assert 'id="sourceTopK"' in response.text
+    assert "score_min: requestOptions.score_min" in response.text
+    assert "sort_by_score: requestOptions.sort_by_score" in response.text
+    assert "function showDebugSourceMetadata()" in response.text
+    assert 'id="dictionaryXrefPopover"' in response.text
+    assert "renderDictionaryCrossReferencePopup" in response.text
+    assert "body: JSON.stringify({ term, top_k: topK })" in response.text
 
 
 def test_chat_completion_non_stream() -> None:
@@ -341,6 +364,9 @@ def test_chat_completion_non_stream() -> None:
             "image_rewrite": True,
             "language": "vi",
             "memory": False,
+            "score_min": 0.25,
+            "score_max": 2.5,
+            "sort_by_score": True,
         },
     )
 
@@ -360,6 +386,9 @@ def test_chat_completion_non_stream() -> None:
     assert service.seen_image_rewrite is True
     assert service.seen_language == "vi"
     assert service.seen_memory is False
+    assert service.seen_score_min == 0.25
+    assert service.seen_score_max == 2.5
+    assert service.seen_sort_by_score is True
 
 
 def test_chat_completion_accepts_qwen_model_choice() -> None:

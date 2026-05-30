@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import uuid
@@ -95,6 +96,18 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                     payload.get("memory", payload.get("use_memory", payload.get("chat_memory"))),
                     "memory",
                 ),
+                score_min=_optional_float(
+                    payload.get("score_min", payload.get("min_score", payload.get("retrieval_min_score"))),
+                    "score_min",
+                ),
+                score_max=_optional_float(
+                    payload.get("score_max", payload.get("max_score", payload.get("retrieval_max_score"))),
+                    "score_max",
+                ),
+                sort_by_score=_optional_bool(
+                    payload.get("sort_by_score", payload.get("retrieval_sort_by_score")),
+                    "sort_by_score",
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -118,6 +131,18 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
             return active_service.lookup_dictionary(
                 term,
                 top_k=_optional_int(payload.get("top_k"), "top_k"),
+                score_min=_optional_float(
+                    payload.get("score_min", payload.get("min_score", payload.get("retrieval_min_score"))),
+                    "score_min",
+                ),
+                score_max=_optional_float(
+                    payload.get("score_max", payload.get("max_score", payload.get("retrieval_max_score"))),
+                    "score_max",
+                ),
+                sort_by_score=_optional_bool(
+                    payload.get("sort_by_score", payload.get("retrieval_sort_by_score")),
+                    "sort_by_score",
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -157,9 +182,12 @@ def _optional_float(value: Any, name: str) -> float | None:
     if isinstance(value, bool):
         raise ValueError(f"{name} must be a number")
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be a number") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be a finite number")
+    return parsed
 
 
 def _optional_bool(value: Any, name: str) -> bool | None:

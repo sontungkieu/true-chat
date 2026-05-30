@@ -4,7 +4,7 @@
 
 Make the built-in FastAPI chat UI the primary temporary frontend for the RAG proxy. The UI should be ultra fast, lightweight, responsive, and modern, with an Open WebUI-like chat workflow while keeping all RAG, Groq key scheduling, and benchmark logic inside the existing backend.
 
-Status: implemented in the current working tree; pending final commit.
+Status: implemented on `main`; retrieval score controls are implemented in the current working tree and pending final commit/deploy.
 
 ## Constraints
 
@@ -315,6 +315,15 @@ Status: implemented in the current working tree; pending final commit.
    - Add text-mode dictionary fallback for short term-like queries when the selected normal retriever has no positive evidence, so dictionary terms can resolve even outside explicit Dictionary mode.
    - Add private source-set safety: inputs classified as `private` are refused for MiMo/Groq and require `--provider local` plus an explicit `--trusted-model` allowlist.
 
+37. Add retrieval score controls
+   - Status: implemented in the current working tree; pending final commit/deploy.
+   - Add request-level `score_min`, `score_max`, and `sort_by_score` controls for chat and dictionary lookup APIs.
+   - Apply score controls before prompt construction so filtered-out sources are neither shown nor used by the model.
+   - Add local UI controls for max sources, score range, and score sorting.
+   - Record filter input/output counts in `retrieval_metadata.score_filter`.
+   - Keep raw source id/rank/score badges in dictionary cards and the document panel behind local Dev mode.
+   - Show dictionary cross-reference clicks as a top-5 result popover instead of immediately opening the first match.
+
 ## Verification
 
 - `uv lock --check`
@@ -342,6 +351,7 @@ Status: implemented in the current working tree; pending final commit.
 - Reproduce a unified base plus 2021 supplement graph with two `--source-set` values and confirm ids are namespaced.
 - Confirm private graph builds fail before provider calls unless run with `--provider local --model <id> --trusted-model <id>`.
 - Confirm `/v1/dictionary/lookup` returns graph metadata for typed graph matches while exact/direct strict matches remain ranked first.
+- Confirm `score_min`/`score_max` filter sources before prompt construction and `sort_by_score` reranks surviving hits by top score.
 - Validate a production dictionary graph run with `uv run --frozen python scripts/validate_dictionary_graph.py --run-dir runs/pb_dictionary_abcdf_prod_graph --min-entry-coverage 0.98 --max-invalid-edge-rate 0.03`.
 
 ## Benchmark Snapshot

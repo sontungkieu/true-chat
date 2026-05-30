@@ -480,6 +480,11 @@
       gap: 7px;
     }
 
+    .compact-toggle {
+      align-self: end;
+      min-height: 34px;
+    }
+
     .settings-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -850,6 +855,83 @@
       background: transparent;
       color: var(--muted);
       padding-inline: 1px;
+    }
+
+    .dictionary-xref-popover {
+      position: fixed;
+      z-index: 90;
+      width: min(360px, calc(100vw - 24px));
+      max-height: min(430px, calc(100vh - 24px));
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 8px;
+    }
+
+    .dictionary-xref-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      padding: 7px 8px 9px;
+    }
+
+    .dictionary-xref-title {
+      min-width: 0;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 720;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dictionary-xref-list {
+      display: grid;
+      gap: 5px;
+      padding-top: 7px;
+    }
+
+    .dictionary-xref-item {
+      display: grid;
+      gap: 3px;
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--text);
+      padding: 8px;
+      text-align: left;
+    }
+
+    .dictionary-xref-item:hover,
+    .dictionary-xref-item:focus-visible {
+      border-color: var(--border-strong);
+      background: var(--surface-soft);
+      outline: none;
+    }
+
+    .dictionary-xref-item-title {
+      overflow: hidden;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 690;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dictionary-xref-item-meta,
+    .dictionary-xref-empty {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .dictionary-xref-empty {
+      padding: 10px 8px 8px;
     }
 
     .doc-trail {
@@ -2219,6 +2301,27 @@
             <label for="imageTopK" data-i18n="imageTopK">Images</label>
             <input id="imageTopK" type="number" min="1" max="20" step="1" value="5">
           </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="sourceTopK" data-i18n="sourceTopK">Max sources</label>
+              <input id="sourceTopK" type="number" min="1" max="50" step="1" placeholder="Default">
+            </div>
+            <div class="field">
+              <label for="scoreMin" data-i18n="scoreMin">Min score</label>
+              <input id="scoreMin" type="number" step="0.01" placeholder="Any">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="scoreMax" data-i18n="scoreMax">Max score</label>
+              <input id="scoreMax" type="number" step="0.01" placeholder="Any">
+            </div>
+            <label class="toggle-field compact-toggle" for="sortByScore">
+              <span data-i18n="sortByScore">Sort by score</span>
+              <input id="sortByScore" type="checkbox">
+              <span class="toggle-track" aria-hidden="true"></span>
+            </label>
+          </div>
           <div class="field">
             <label for="languageMode" data-i18n="language">Language</label>
             <select id="languageMode">
@@ -2360,6 +2463,7 @@
     </button>
     <img id="lightboxImage" alt="">
   </div>
+  <div class="dictionary-xref-popover" id="dictionaryXrefPopover" role="dialog" aria-live="polite" hidden></div>
 
   <script>
     const MODEL_ID = __MODEL_JSON__;
@@ -2396,6 +2500,10 @@
     const modelChoiceInput = document.getElementById("modelChoice");
     const searchChoiceInput = document.getElementById("searchChoice");
     const imageTopKInput = document.getElementById("imageTopK");
+    const sourceTopKInput = document.getElementById("sourceTopK");
+    const scoreMinInput = document.getElementById("scoreMin");
+    const scoreMaxInput = document.getElementById("scoreMax");
+    const sortByScoreInput = document.getElementById("sortByScore");
     const languageModeInput = document.getElementById("languageMode");
     const devModeInput = document.getElementById("devMode");
     const memoryModeInput = document.getElementById("memoryMode");
@@ -2415,6 +2523,7 @@
     const docImageWrap = document.getElementById("docImageWrap");
     const docImage = document.getElementById("docImage");
     const docText = document.getElementById("docText");
+    const dictionaryXrefPopover = document.getElementById("dictionaryXrefPopover");
     const imageLightbox = document.getElementById("imageLightbox");
     const lightboxImage = document.getElementById("lightboxImage");
     const closeLightboxButton = document.getElementById("closeLightbox");
@@ -2424,6 +2533,7 @@
     let editingUserIndex = null;
     let chatSwipeStart = null;
     let activeComposerMenu = null;
+    let dictionaryXrefRequestId = 0;
     const ragDetailsOpen = new Map();
     const ICONS = {
       copy: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
@@ -2444,6 +2554,10 @@
         model: "Model",
         searchAlgorithm: "Search",
         imageTopK: "Images",
+        sourceTopK: "Max sources",
+        scoreMin: "Min score",
+        scoreMax: "Max score",
+        sortByScore: "Sort by score",
         language: "Language",
         devMode: "Dev mode",
         memoryMode: "Memory",
@@ -2492,6 +2606,8 @@
         document: "Document",
         noDocumentText: "No document text returned for this source.",
         dictionaryCrossRefHint: "Click a highlighted dictionary term, or select text and click it, to open that entry.",
+        dictionaryCrossRefResults: "Dictionary matches",
+        dictionaryCrossRefLoading: "Searching...",
         dictionaryLookupEmpty: "No dictionary entry found for: ",
         dictionaryLookupError: "Could not open dictionary entry: ",
         emptyAnswer: "Model returned an empty answer. Try increasing Max tokens.",
@@ -2514,6 +2630,10 @@
         model: "Mô hình",
         searchAlgorithm: "Tìm kiếm",
         imageTopK: "Số ảnh",
+        sourceTopK: "Nguồn tối đa",
+        scoreMin: "Score tối thiểu",
+        scoreMax: "Score tối đa",
+        sortByScore: "Sort theo score",
         language: "Ngôn ngữ",
         devMode: "Chế độ dev",
         memoryMode: "Ghi nhớ hội thoại",
@@ -2562,6 +2682,8 @@
         document: "Tài liệu",
         noDocumentText: "Nguồn này không có nội dung tài liệu.",
         dictionaryCrossRefHint: "Bấm một cụm từ điển được bôi vàng, hoặc bôi đen rồi bấm, để mở mục từ đó.",
+        dictionaryCrossRefResults: "Kết quả từ điển",
+        dictionaryCrossRefLoading: "Đang tìm...",
         dictionaryLookupEmpty: "Không tìm thấy mục từ cho: ",
         dictionaryLookupError: "Không mở được mục từ: ",
         emptyAnswer: "Model không trả về câu trả lời. Hãy thử tăng Max tokens.",
@@ -2605,6 +2727,7 @@
     document.getElementById("closeDoc").addEventListener("click", closeDocPanel);
     docText.addEventListener("click", onDocumentTextClick);
     docText.addEventListener("keydown", onDocumentTextKeydown);
+    dictionaryXrefPopover.addEventListener("click", (event) => event.stopPropagation());
     closeLightboxButton.addEventListener("click", closeImageLightbox);
     imageLightbox.addEventListener("click", (event) => {
       if (event.target === imageLightbox) closeImageLightbox();
@@ -2618,11 +2741,15 @@
       if (!event.target.closest("#composerToolMenu") && !event.target.closest(".menu-chip")) {
         closeComposerToolMenu();
       }
+      if (!event.target.closest("#dictionaryXrefPopover") && !event.target.closest("[data-dictionary-xref]")) {
+        closeDictionaryCrossReferencePopup();
+      }
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeImageLightbox();
         closeComposerToolMenu();
+        closeDictionaryCrossReferencePopup();
       }
     });
 
@@ -2631,6 +2758,10 @@
       modelChoiceInput,
       searchChoiceInput,
       imageTopKInput,
+      sourceTopKInput,
+      scoreMinInput,
+      scoreMaxInput,
+      sortByScoreInput,
       languageModeInput,
       devModeInput,
       memoryModeInput,
@@ -2711,6 +2842,10 @@
           model: migrateDefaults ? defaultModelChoice() : String(parsed.model || defaultModelChoice()),
           search: String(parsed.search || parsed.retriever || DEFAULT_RETRIEVER),
           imageTopK: Number(parsed.imageTopK || 5),
+          sourceTopK: parsed.sourceTopK === undefined ? null : parsed.sourceTopK,
+          scoreMin: parsed.scoreMin === undefined ? null : parsed.scoreMin,
+          scoreMax: parsed.scoreMax === undefined ? null : parsed.scoreMax,
+          sortByScore: Boolean(parsed.sortByScore),
           language: migrateDefaults ? DEFAULT_LANGUAGE : ["en", "vi"].includes(parsed.language) ? parsed.language : DEFAULT_LANGUAGE,
           devMode: migrateDefaults ? false : Boolean(parsed.devMode),
           memory: migrateDefaults ? DEFAULT_MEMORY_ENABLED : parsed.memory === undefined ? DEFAULT_MEMORY_ENABLED : Boolean(parsed.memory),
@@ -2729,6 +2864,10 @@
           model: defaultModelChoice(),
           search: DEFAULT_RETRIEVER,
           imageTopK: 5,
+          sourceTopK: null,
+          scoreMin: null,
+          scoreMax: null,
+          sortByScore: false,
           language: DEFAULT_LANGUAGE,
           devMode: false,
           memory: DEFAULT_MEMORY_ENABLED,
@@ -2762,6 +2901,14 @@
       searchChoiceInput.value = settings.search;
       settings.imageTopK = clampNumber(settings.imageTopK, 1, 20, 5);
       imageTopKInput.value = settings.imageTopK;
+      settings.sourceTopK = optionalClampedNumber(settings.sourceTopK, 1, 50);
+      sourceTopKInput.value = settings.sourceTopK ?? "";
+      settings.scoreMin = optionalFiniteNumber(settings.scoreMin);
+      settings.scoreMax = optionalFiniteNumber(settings.scoreMax);
+      scoreMinInput.value = settings.scoreMin ?? "";
+      scoreMaxInput.value = settings.scoreMax ?? "";
+      settings.sortByScore = Boolean(settings.sortByScore);
+      sortByScoreInput.checked = settings.sortByScore;
       settings.theme = ["light", "colorful", "system"].includes(settings.theme) ? settings.theme : "light";
       themeModeInput.value = settings.theme;
       applyTheme(settings.theme);
@@ -2796,6 +2943,13 @@
       searchChoiceInput.value = settings.search;
       settings.imageTopK = clampNumber(imageTopKInput.value, 1, 20, 5);
       imageTopKInput.value = settings.imageTopK;
+      settings.sourceTopK = optionalClampedNumber(sourceTopKInput.value, 1, 50);
+      sourceTopKInput.value = settings.sourceTopK ?? "";
+      settings.scoreMin = optionalFiniteNumber(scoreMinInput.value);
+      settings.scoreMax = optionalFiniteNumber(scoreMaxInput.value);
+      scoreMinInput.value = settings.scoreMin ?? "";
+      scoreMaxInput.value = settings.scoreMax ?? "";
+      settings.sortByScore = Boolean(sortByScoreInput.checked);
       settings.theme = ["light", "colorful", "system"].includes(themeModeInput.value) ? themeModeInput.value : "light";
       applyTheme(settings.theme);
       settings.fontScale = clampNumber(fontScaleInput.value, 100, 200, 100);
@@ -3054,6 +3208,10 @@
         model: selectedModel(),
         image_rewrite: responseMode === "image" || responseMode === "text_image" ? Boolean(settings.imageRewrite) : false,
         image_top_k: usesImageResults ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined,
+        top_k: settings.sourceTopK || undefined,
+        score_min: settings.scoreMin ?? undefined,
+        score_max: settings.scoreMax ?? undefined,
+        sort_by_score: settings.sortByScore ? true : undefined,
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
         language: currentLanguage(),
@@ -3148,6 +3306,19 @@
       const number = Number(value);
       if (!Number.isFinite(number)) return fallback;
       return Math.min(max, Math.max(min, number));
+    }
+
+    function optionalClampedNumber(value, min, max) {
+      if (value === null || value === undefined || String(value).trim() === "") return null;
+      const number = Number(value);
+      if (!Number.isFinite(number)) return null;
+      return Math.min(max, Math.max(min, Math.round(number)));
+    }
+
+    function optionalFiniteNumber(value) {
+      if (value === null || value === undefined || String(value).trim() === "") return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
     }
 
     function saveState() {
@@ -3663,6 +3834,13 @@
       }
       if (request.language) parts.push(languageLabel(request.language));
       if (request.memory === false) parts.push(t("memoryOff"));
+      if (request.top_k) parts.push("top-k " + request.top_k);
+      if (request.score_min !== undefined || request.score_max !== undefined) {
+        const min = request.score_min === undefined ? "-inf" : request.score_min;
+        const max = request.score_max === undefined ? "+inf" : request.score_max;
+        parts.push("score " + min + ".." + max);
+      }
+      if (request.sort_by_score) parts.push(t("sortByScore"));
       if ((mode === "image" || mode === "text_image") && request.image_rewrite) parts.push(t("rewrite"));
       return parts.filter(Boolean).join(" | ");
     }
@@ -3935,11 +4113,14 @@
       strong.textContent = source.title || source.doc_id || t("dictionary");
       const meta = document.createElement("div");
       meta.className = "dictionary-inline-meta";
-      const metaText = document.createElement("span");
-      metaText.className = "dictionary-inline-meta-text";
-      const score = typeof source.score === "number" ? " · score " + source.score.toFixed(3) : "";
-      metaText.textContent = (source.doc_id || t("source")) + score;
-      meta.append(metaText, renderDictionaryRelevance(source));
+      if (showDebugSourceMetadata()) {
+        const metaText = document.createElement("span");
+        metaText.className = "dictionary-inline-meta-text";
+        const score = typeof source.score === "number" ? " · score " + source.score.toFixed(3) : "";
+        metaText.textContent = (source.doc_id || t("source")) + score;
+        meta.appendChild(metaText);
+      }
+      meta.appendChild(renderDictionaryRelevance(source));
       title.append(strong, meta);
       const open = document.createElement("button");
       open.type = "button";
@@ -4018,7 +4199,8 @@
           button.title = `${t("openDocument")}: ${normalized.label}`;
           button.addEventListener("click", (event) => {
             event.preventDefault();
-            openDictionaryCrossReference(normalized.label);
+            event.stopPropagation();
+            openDictionaryCrossReference(normalized.label, event.currentTarget);
           });
           wrap.appendChild(button);
           return;
@@ -4222,7 +4404,7 @@
         }
         const title = document.createElement("div");
         title.className = "rag-title";
-        const score = typeof source.score === "number" ? " | score " + source.score.toFixed(3) : "";
+        const score = showDebugSourceMetadata() && typeof source.score === "number" ? " | score " + source.score.toFixed(3) : "";
         title.textContent = (source.title || source.doc_id || t("source")) + score;
         row.appendChild(title);
         table.appendChild(row);
@@ -4232,6 +4414,7 @@
     }
 
     function openDocument(source, options = {}) {
+      closeDictionaryCrossReferencePopup();
       if (options.fromCrossRef) {
         if (selectedSource && !sameDocumentSource(selectedSource, source)) {
           pushDocumentTrail(selectedSource);
@@ -4246,6 +4429,7 @@
     }
 
     function closeDocPanel() {
+      closeDictionaryCrossReferencePopup();
       selectedSource = null;
       documentTrail = [];
       app.classList.remove("doc-open");
@@ -4269,11 +4453,13 @@
       docTitle.textContent = source.title || docId;
       docSubtitle.textContent = dictionarySource ? dictionarySourceLabel(source) : docId;
       docMeta.textContent = "";
-      const metaItems = [
-        dictionarySource ? docId : null,
-        source.rank ? "rank #" + source.rank : null,
-        typeof source.score === "number" ? "score " + source.score.toFixed(3) : null
-      ].filter(Boolean);
+      const metaItems = showDebugSourceMetadata()
+        ? [
+            dictionarySource ? docId : null,
+            source.rank ? "rank #" + source.rank : null,
+            typeof source.score === "number" ? "score " + source.score.toFixed(3) : null
+          ].filter(Boolean)
+        : [];
       for (const item of metaItems) {
         const pill = document.createElement("span");
         pill.className = "doc-pill";
@@ -4301,6 +4487,10 @@
         docText.removeAttribute("title");
       }
       renderDocumentText(source);
+    }
+
+    function showDebugSourceMetadata() {
+      return Boolean(settings.devMode);
     }
 
     function renderDocumentText(source) {
@@ -4332,7 +4522,8 @@
       const term = explicit?.dataset.dictionaryXref || clickedDictionaryTerm(event);
       if (!term) return;
       event.preventDefault();
-      await openDictionaryCrossReference(term);
+      event.stopPropagation();
+      await openDictionaryCrossReference(term, explicit || event);
     }
 
     async function onDocumentTextKeydown(event) {
@@ -4342,22 +4533,136 @@
       const explicit = event.target.closest("[data-dictionary-xref]");
       if (!explicit?.dataset.dictionaryXref) return;
       event.preventDefault();
-      await openDictionaryCrossReference(explicit.dataset.dictionaryXref);
+      event.stopPropagation();
+      await openDictionaryCrossReference(explicit.dataset.dictionaryXref, explicit);
     }
 
-    async function openDictionaryCrossReference(term) {
+    async function openDictionaryCrossReference(term, anchor) {
       const query = String(term || "").trim();
       if (!query) return;
+      const requestId = ++dictionaryXrefRequestId;
+      renderDictionaryCrossReferencePopup(query, [], { loading: true });
+      placeDictionaryCrossReferencePopup(anchor);
       try {
-        const source = await fetchDictionaryLookup(query);
-        if (!source) {
+        const sources = await fetchDictionaryLookup(query, 5);
+        if (requestId !== dictionaryXrefRequestId) return;
+        if (!sources.length) {
+          renderDictionaryCrossReferencePopup(query, [], { empty: true });
+          placeDictionaryCrossReferencePopup(anchor);
           showNotice(t("dictionaryLookupEmpty") + query);
           return;
         }
-        openDocument(source, { fromCrossRef: true });
+        renderDictionaryCrossReferencePopup(query, sources);
+        placeDictionaryCrossReferencePopup(anchor);
       } catch (error) {
+        if (requestId !== dictionaryXrefRequestId) return;
+        closeDictionaryCrossReferencePopup();
         showNotice(t("dictionaryLookupError") + error.message);
       }
+    }
+
+    function renderDictionaryCrossReferencePopup(term, sources, options = {}) {
+      dictionaryXrefPopover.textContent = "";
+      const head = document.createElement("div");
+      head.className = "dictionary-xref-head";
+      const title = document.createElement("div");
+      title.className = "dictionary-xref-title";
+      title.textContent = `${t("dictionaryCrossRefResults")}: ${term}`;
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "icon-btn";
+      close.title = "Close";
+      close.setAttribute("aria-label", "Close");
+      close.innerHTML = '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>';
+      close.addEventListener("click", closeDictionaryCrossReferencePopup);
+      head.append(title, close);
+      dictionaryXrefPopover.appendChild(head);
+
+      const list = document.createElement("div");
+      list.className = "dictionary-xref-list";
+      if (options.loading || options.empty || !sources.length) {
+        const empty = document.createElement("div");
+        empty.className = "dictionary-xref-empty";
+        empty.textContent = options.loading ? t("dictionaryCrossRefLoading") : t("dictionaryLookupEmpty") + term;
+        list.appendChild(empty);
+      } else {
+        sources.slice(0, 5).forEach((source) => {
+          list.appendChild(renderDictionaryCrossReferenceItem(source));
+        });
+      }
+      dictionaryXrefPopover.appendChild(list);
+      dictionaryXrefPopover.hidden = false;
+      const first = dictionaryXrefPopover.querySelector(".dictionary-xref-item");
+      if (first) first.focus({ preventScroll: true });
+    }
+
+    function renderDictionaryCrossReferenceItem(source) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "dictionary-xref-item";
+      const title = document.createElement("div");
+      title.className = "dictionary-xref-item-title";
+      title.textContent = source.title || source.doc_id || t("dictionary");
+      const meta = document.createElement("div");
+      meta.className = "dictionary-xref-item-meta";
+      const parts = [dictionarySourceLabel(source)];
+      if (showDebugSourceMetadata() && typeof source.score === "number") {
+        parts.push("score " + source.score.toFixed(3));
+      }
+      meta.textContent = parts.filter(Boolean).join(" · ");
+      item.append(title, meta);
+      item.addEventListener("click", () => openDocument(source, { fromCrossRef: true }));
+      return item;
+    }
+
+    function placeDictionaryCrossReferencePopup(anchor) {
+      const rect = dictionaryCrossReferenceAnchorRect(anchor);
+      const margin = 12;
+      const width = Math.min(360, Math.max(240, window.innerWidth - margin * 2));
+      dictionaryXrefPopover.style.width = width + "px";
+      dictionaryXrefPopover.style.left = "0px";
+      dictionaryXrefPopover.style.top = "0px";
+      dictionaryXrefPopover.hidden = false;
+      const popoverRect = dictionaryXrefPopover.getBoundingClientRect();
+      let left = rect.left;
+      let top = rect.bottom + 8;
+      if (left + width > window.innerWidth - margin) left = window.innerWidth - width - margin;
+      if (left < margin) left = margin;
+      if (top + popoverRect.height > window.innerHeight - margin) {
+        top = rect.top - popoverRect.height - 8;
+      }
+      if (top < margin) top = margin;
+      dictionaryXrefPopover.style.left = Math.round(left) + "px";
+      dictionaryXrefPopover.style.top = Math.round(top) + "px";
+    }
+
+    function dictionaryCrossReferenceAnchorRect(anchor) {
+      if (anchor?.getBoundingClientRect) return anchor.getBoundingClientRect();
+      if (anchor && Number.isFinite(anchor.clientX) && Number.isFinite(anchor.clientY)) {
+        return {
+          left: anchor.clientX,
+          right: anchor.clientX,
+          top: anchor.clientY,
+          bottom: anchor.clientY,
+          width: 0,
+          height: 0
+        };
+      }
+      const fallback = docText.getBoundingClientRect();
+      return {
+        left: fallback.left + 24,
+        right: fallback.left + 24,
+        top: fallback.top + 24,
+        bottom: fallback.top + 24,
+        width: 0,
+        height: 0
+      };
+    }
+
+    function closeDictionaryCrossReferencePopup() {
+      dictionaryXrefRequestId += 1;
+      dictionaryXrefPopover.hidden = true;
+      dictionaryXrefPopover.textContent = "";
     }
 
     function pushDocumentTrail(source) {
@@ -4430,18 +4735,18 @@
       ).trim();
     }
 
-    async function fetchDictionaryLookup(term) {
+    async function fetchDictionaryLookup(term, topK = 5) {
       const response = await fetch("/v1/dictionary/lookup", {
         method: "POST",
         headers: apiHeaders(),
-        body: JSON.stringify({ term, top_k: 1 })
+        body: JSON.stringify({ term, top_k: topK })
       });
       if (!response.ok) {
         throw new Error(await responseError(response));
       }
       const data = await response.json();
       const sources = Array.isArray(data.retrieved) ? data.retrieved : [];
-      return sources[0] || null;
+      return sources;
     }
 
     function clickedDictionaryTerm(event) {
@@ -4868,6 +5173,10 @@
           messages: apiMessages,
           temperature: requestOptions.temperature,
           max_tokens: requestOptions.max_tokens,
+          top_k: requestOptions.top_k,
+          score_min: requestOptions.score_min,
+          score_max: requestOptions.score_max,
+          sort_by_score: requestOptions.sort_by_score,
           image_top_k: requestOptions.image_top_k,
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
@@ -4899,6 +5208,10 @@
           messages: apiMessages,
           temperature: requestOptions.temperature,
           max_tokens: requestOptions.max_tokens,
+          top_k: requestOptions.top_k,
+          score_min: requestOptions.score_min,
+          score_max: requestOptions.score_max,
+          sort_by_score: requestOptions.sort_by_score,
           image_top_k: requestOptions.image_top_k,
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
