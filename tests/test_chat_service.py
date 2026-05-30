@@ -642,7 +642,7 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
 
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             assert query.text == "pháo binh"
-            assert top_k == 3
+            assert top_k == 2
             return RetrievalResult(
                 query=query,
                 hits=[
@@ -706,7 +706,7 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
         build_time_s = 0.0
 
         def search(self, query: Query, top_k: int) -> RetrievalResult:
-            assert top_k == 5
+            assert top_k == 6
             return RetrievalResult(
                 query=query,
                 hits=[
@@ -722,7 +722,7 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
                             "dictionary_match_mode": "strict",
                         },
                     )
-                    for index in range(1, 6)
+                    for index in range(1, 9)
                 ],
                 latency_s=0.01,
                 metadata={"kind": "dictionary"},
@@ -744,7 +744,7 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
     doc_ids = [source["doc_id"] for source in result.response["rag"]["retrieved"]]
 
     assert len(doc_ids) == 6
-    assert doc_ids == ["dict-1", "dict-2", "dict-3", "dict-4", "dict-5", "bench-good-1"]
+    assert doc_ids == ["dict-1", "dict-2", "dict-3", "dict-4", "dict-5", "dict-6"]
     assert "Tiny benchmark" not in llm.messages[1]["content"]
 
 

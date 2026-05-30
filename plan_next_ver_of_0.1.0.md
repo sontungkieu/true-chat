@@ -329,6 +329,7 @@ Status: implemented on `main`; the current working tree hardens the Kaggle full-
    - Keep the mobile composer above iOS-style keyboards without shrinking the whole app viewport.
    - Add an internal scroll area for long Local settings content.
    - Fix the sidebar settings panel to keep its own scroll container on mobile and desktop instead of extending past the viewport.
+   - Make text-mode dictionary fallback honor the requested `top_k` so `Nguồn tối đa` remains the final total source cap.
 
 ## Verification
 

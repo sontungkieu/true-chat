@@ -327,7 +327,7 @@ class RagChatService:
         )
         dictionary_fallback = self._text_dictionary_fallback(
             question,
-            top_k=self.config.dictionary_top_k,
+            top_k=request_top_k,
             primary_retriever=retriever,
             primary_retrieval=retrieval,
         )
@@ -336,7 +336,7 @@ class RagChatService:
             dictionary_fallback, dictionary_score_filter_metadata = _apply_retrieval_score_controls(
                 dictionary_fallback,
                 score_controls,
-                max_hits=self.config.dictionary_top_k,
+                max_hits=request_top_k,
             )
             if not dictionary_fallback.hits:
                 dictionary_fallback = None
