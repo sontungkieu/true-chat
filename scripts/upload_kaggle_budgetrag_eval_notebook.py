@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import shutil
 import sys
@@ -76,6 +77,13 @@ def main(argv: list[str] | None = None) -> int:
             max_action_rows=args.max_action_rows,
             ragas_samples_per_action=args.ragas_samples_per_action,
             mimo_secret_name=args.mimo_secret_name,
+            mimo_env_b64=read_mimo_env_b64(
+                repo_root,
+                args.mimo_env_file,
+                api_key_var=args.mimo_api_key_var,
+            )
+            if args.embed_mimo_env
+            else None,
             skip_ragas=args.skip_ragas,
         )
         if args.no_push:
@@ -123,6 +131,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-action-rows", type=int, default=None)
     parser.add_argument("--ragas-samples-per-action", type=int, default=5)
     parser.add_argument("--mimo-secret-name", default="MIMO_API_KEY")
+    parser.add_argument("--embed-mimo-env", action="store_true")
+    parser.add_argument("--mimo-env-file", default=".secrets/.env")
+    parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
     parser.add_argument("--skip-ragas", action="store_true")
     parser.add_argument("--local-output-dir", default=None)
     parser.add_argument("--poll-interval-s", type=int, default=60)
@@ -147,8 +158,10 @@ def write_staging_files(
     max_action_rows: int | None,
     ragas_samples_per_action: int,
     mimo_secret_name: str,
+    mimo_env_b64: str | None = None,
     skip_ragas: bool,
 ) -> None:
+    staging_dir.mkdir(parents=True, exist_ok=True)
     notebook_name = "hotpotqa_budgetrag_eval.ipynb"
     notebook = build_notebook(
         repo_url=repo_url,
@@ -160,6 +173,7 @@ def write_staging_files(
         max_action_rows=max_action_rows,
         ragas_samples_per_action=ragas_samples_per_action,
         mimo_secret_name=mimo_secret_name,
+        mimo_env_b64=mimo_env_b64,
         skip_ragas=skip_ragas,
     )
     (staging_dir / notebook_name).write_text(json.dumps(notebook, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -194,6 +208,7 @@ def build_notebook(
     max_action_rows: int | None,
     ragas_samples_per_action: int,
     mimo_secret_name: str,
+    mimo_env_b64: str | None,
     skip_ragas: bool,
 ) -> dict[str, Any]:
     command = [
@@ -234,6 +249,7 @@ def build_notebook(
             f"REPO_REF = {repo_ref!r}\n"
             f"EXPECTED_COMMIT = {expected_commit!r}\n"
             f"MIMO_SECRET_NAME = {mimo_secret_name!r}\n"
+            f"MIMO_ENV_B64 = {mimo_env_b64!r}\n"
             f"RUN_COMMAND = {command!r}\n"
             "WORKDIR = Path('/kaggle/working')\n"
             "REPO_DIR = WORKDIR / 'true-chat'\n"
@@ -262,15 +278,23 @@ def build_notebook(
         code_cell(
             "secrets_dir = REPO_DIR / '.secrets'\n"
             "secrets_dir.mkdir(exist_ok=True)\n"
-            "try:\n"
-            "    from kaggle_secrets import UserSecretsClient\n"
-            "    mimo_key = UserSecretsClient().get_secret(MIMO_SECRET_NAME)\n"
-            "except Exception as exc:\n"
-            "    raise RuntimeError(f'Add Kaggle secret {MIMO_SECRET_NAME} for MiMo eval.') from exc\n"
-            "if not mimo_key:\n"
-            "    raise RuntimeError(f'Kaggle secret {MIMO_SECRET_NAME} is empty.')\n"
-            "(secrets_dir / '.env').write_text('MIMO_API_KEY=' + mimo_key.strip() + '\\n')\n"
-            "print('Wrote MiMo secret to .secrets/.env without printing it')\n",
+            "if MIMO_ENV_B64:\n"
+            "    import base64\n"
+            "    mimo_env_text = base64.b64decode(MIMO_ENV_B64).decode('utf-8')\n"
+            "    if 'MIMO_API_KEY=' not in mimo_env_text:\n"
+            "        raise RuntimeError('Embedded MiMo env is missing MIMO_API_KEY.')\n"
+            "    (secrets_dir / '.env').write_text(mimo_env_text.rstrip() + '\\n')\n"
+            "    print('Wrote embedded MiMo env to .secrets/.env without printing it')\n"
+            "else:\n"
+            "    try:\n"
+            "        from kaggle_secrets import UserSecretsClient\n"
+            "        mimo_key = UserSecretsClient().get_secret(MIMO_SECRET_NAME)\n"
+            "    except Exception as exc:\n"
+            "        raise RuntimeError(f'Add Kaggle secret {MIMO_SECRET_NAME} for MiMo eval, or upload with --embed-mimo-env.') from exc\n"
+            "    if not mimo_key:\n"
+            "        raise RuntimeError(f'Kaggle secret {MIMO_SECRET_NAME} is empty.')\n"
+            "    (secrets_dir / '.env').write_text('MIMO_API_KEY=' + mimo_key.strip() + '\\n')\n"
+            "    print('Wrote MiMo secret to .secrets/.env without printing it')\n",
             cell_id="write-mimo-secret",
         ),
         code_cell(
@@ -290,6 +314,33 @@ def build_notebook(
         "nbformat": 4,
         "nbformat_minor": 5,
     }
+
+
+def read_mimo_env_b64(repo_root: Path, value: str | Path, *, api_key_var: str) -> str:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = repo_root / path
+    if not path.exists():
+        raise SystemExit(f"MiMo env file not found: {path}")
+    values = parse_env_file(path)
+    api_key = values.get(api_key_var, "").strip()
+    if not api_key:
+        raise SystemExit(f"MiMo env file is missing {api_key_var}: {path}")
+    lines = [f"MIMO_API_KEY={api_key}"]
+    if values.get("MIMO_BASE_URL", "").strip():
+        lines.append(f"MIMO_BASE_URL={values['MIMO_BASE_URL'].strip()}")
+    return base64.b64encode(("\n".join(lines) + "\n").encode("utf-8")).decode("ascii")
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key.strip()] = value.strip().strip("\"'")
+    return values
 
 
 def wait_for_kernel(

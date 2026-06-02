@@ -50,3 +50,34 @@ def test_kaggle_eval_staging_metadata_is_private_and_secret_free(tmp_path: Path)
     assert "MIMO_API_KEY" in notebook_text
     assert "mimo_secret_value" not in notebook_text
     assert "--max-action-rows" in notebook_text
+
+
+def test_kaggle_eval_can_embed_minimal_mimo_env_without_raw_secret(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("MIMO_API_KEY=secret-value\nOTHER_SECRET=do-not-copy\n", encoding="utf-8")
+    mimo_env_b64 = upload_eval.read_mimo_env_b64(tmp_path, env_file, api_key_var="MIMO_API_KEY")
+
+    upload_eval.write_staging_files(
+        tmp_path / "staging",
+        kernel_id="codemaivanngu/test-hotpotqa",
+        title="HotpotQA Test",
+        repo_url="https://example.com/repo.git",
+        repo_ref="main",
+        expected_commit="abc123",
+        run_name="fixture",
+        limit=5,
+        top_k=10,
+        max_action_rows=2,
+        ragas_samples_per_action=1,
+        mimo_secret_name="MIMO_API_KEY",
+        mimo_env_b64=mimo_env_b64,
+        skip_ragas=False,
+    )
+
+    notebook_text = (tmp_path / "staging" / "hotpotqa_budgetrag_eval.ipynb").read_text(encoding="utf-8")
+    metadata_text = (tmp_path / "staging" / "kernel-metadata.json").read_text(encoding="utf-8")
+
+    assert "MIMO_ENV_B64" in notebook_text
+    assert "secret-value" not in notebook_text
+    assert "OTHER_SECRET" not in notebook_text
+    assert "secret-value" not in metadata_text
