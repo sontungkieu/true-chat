@@ -33,6 +33,10 @@ DEFAULT_CREDENTIALS_PATH = Path("/home/tung/all-kaggle.json")
 DEFAULT_REPO_URL = "https://github.com/sontungkieu/true-chat.git"
 DEFAULT_OUTPUT_ROOT = Path("benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle")
 DEFAULT_POLL_TIMEOUT_S = 12 * 60 * 60
+DEFAULT_PROVIDER = "mimo"
+DEFAULT_MODEL = "mimo-v2.5-pro"
+DEFAULT_MODEL_ROLE = "long-context-upper-bound"
+DEFAULT_RAGAS_MODEL = "mimo-v2.5-pro"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,6 +68,24 @@ def main(argv: list[str] | None = None) -> int:
         staging_dir = Path(cleanup.name)
 
     try:
+        mimo_env_b64 = (
+            read_mimo_env_b64(
+                repo_root,
+                args.mimo_env_file,
+                api_key_var=args.mimo_api_key_var,
+            )
+            if args.embed_mimo_env or args.provider == "mimo" or not args.skip_ragas
+            else None
+        )
+        groq_env_b64 = (
+            read_groq_env_b64(
+                repo_root,
+                args.groq_keys_file,
+                key_alias=args.groq_key_alias,
+            )
+            if args.provider == "groq" or args.embed_groq_key
+            else None
+        )
         write_staging_files(
             staging_dir,
             kernel_id=kernel_id,
@@ -75,15 +97,17 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             top_k=args.top_k,
             max_action_rows=args.max_action_rows,
+            provider=args.provider,
+            model=args.model,
+            model_role=args.model_role,
+            key_tpm=args.key_tpm,
+            key_rpm=args.key_rpm,
+            ragas_model=args.ragas_model,
             ragas_samples_per_action=args.ragas_samples_per_action,
             mimo_secret_name=args.mimo_secret_name,
-            mimo_env_b64=read_mimo_env_b64(
-                repo_root,
-                args.mimo_env_file,
-                api_key_var=args.mimo_api_key_var,
-            )
-            if args.embed_mimo_env
-            else None,
+            mimo_env_b64=mimo_env_b64,
+            groq_key_alias=args.groq_key_alias,
+            groq_env_b64=groq_env_b64,
             skip_ragas=args.skip_ragas,
         )
         if args.no_push:
@@ -101,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
                 poll_timeout_s=args.poll_timeout_s,
                 no_wait=args.no_wait,
             )
+            if args.no_wait:
+                print(f"Uploaded Kaggle notebook: {kernel_id}")
+                return 0
             if status and is_success_status(status):
                 local_output_dir.mkdir(parents=True, exist_ok=True)
                 run_kaggle(["kernels", "output", kernel_id, "-p", str(local_output_dir)], kaggle_config_dir)
@@ -129,11 +156,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--max-action-rows", type=int, default=None)
+    parser.add_argument("--provider", choices=("mimo", "groq"), default=DEFAULT_PROVIDER)
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model-role", default=DEFAULT_MODEL_ROLE)
+    parser.add_argument("--key-tpm", type=int, default=0)
+    parser.add_argument("--key-rpm", type=int, default=0)
+    parser.add_argument("--ragas-model", default=DEFAULT_RAGAS_MODEL)
     parser.add_argument("--ragas-samples-per-action", type=int, default=5)
     parser.add_argument("--mimo-secret-name", default="MIMO_API_KEY")
     parser.add_argument("--embed-mimo-env", action="store_true")
     parser.add_argument("--mimo-env-file", default=".secrets/.env")
     parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
+    parser.add_argument("--embed-groq-key", action="store_true")
+    parser.add_argument("--groq-keys-file", default=".secrets/groq_key.env")
+    parser.add_argument("--groq-key-alias", default=None)
     parser.add_argument("--skip-ragas", action="store_true")
     parser.add_argument("--local-output-dir", default=None)
     parser.add_argument("--poll-interval-s", type=int, default=60)
@@ -156,9 +192,17 @@ def write_staging_files(
     limit: int,
     top_k: int,
     max_action_rows: int | None,
+    provider: str = DEFAULT_PROVIDER,
+    model: str = DEFAULT_MODEL,
+    model_role: str = DEFAULT_MODEL_ROLE,
+    key_tpm: int = 0,
+    key_rpm: int = 0,
+    ragas_model: str = DEFAULT_RAGAS_MODEL,
     ragas_samples_per_action: int,
     mimo_secret_name: str,
     mimo_env_b64: str | None = None,
+    groq_key_alias: str | None = None,
+    groq_env_b64: str | None = None,
     skip_ragas: bool,
 ) -> None:
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -171,9 +215,17 @@ def write_staging_files(
         limit=limit,
         top_k=top_k,
         max_action_rows=max_action_rows,
+        provider=provider,
+        model=model,
+        model_role=model_role,
+        key_tpm=key_tpm,
+        key_rpm=key_rpm,
+        ragas_model=ragas_model,
         ragas_samples_per_action=ragas_samples_per_action,
         mimo_secret_name=mimo_secret_name,
         mimo_env_b64=mimo_env_b64,
+        groq_key_alias=groq_key_alias,
+        groq_env_b64=groq_env_b64,
         skip_ragas=skip_ragas,
     )
     (staging_dir / notebook_name).write_text(json.dumps(notebook, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -206,9 +258,17 @@ def build_notebook(
     limit: int,
     top_k: int,
     max_action_rows: int | None,
+    provider: str,
+    model: str,
+    model_role: str,
+    key_tpm: int,
+    key_rpm: int,
+    ragas_model: str,
     ragas_samples_per_action: int,
     mimo_secret_name: str,
     mimo_env_b64: str | None,
+    groq_key_alias: str | None,
+    groq_env_b64: str | None,
     skip_ragas: bool,
 ) -> dict[str, Any]:
     command = [
@@ -229,9 +289,25 @@ def build_notebook(
         "/kaggle/working/phase1c3_hotpotqa_kaggle",
         "--run-name",
         run_name,
+        "--provider",
+        provider,
+        "--model",
+        model,
+        "--model-role",
+        model_role,
+        "--key-tpm",
+        str(key_tpm),
+        "--key-rpm",
+        str(key_rpm),
+        "--ragas-model",
+        ragas_model,
         "--ragas-samples-per-action",
         str(ragas_samples_per_action),
     ]
+    if provider == "groq":
+        command.extend(["--groq-keys-path", ".secrets/groq_key.env"])
+        if groq_key_alias:
+            command.extend(["--groq-key-alias", groq_key_alias])
     if max_action_rows is not None:
         command.extend(["--max-action-rows", str(max_action_rows)])
     if skip_ragas:
@@ -248,8 +324,10 @@ def build_notebook(
             f"REPO_URL = {repo_url!r}\n"
             f"REPO_REF = {repo_ref!r}\n"
             f"EXPECTED_COMMIT = {expected_commit!r}\n"
+            f"PROVIDER = {provider!r}\n"
             f"MIMO_SECRET_NAME = {mimo_secret_name!r}\n"
             f"MIMO_ENV_B64 = {mimo_env_b64!r}\n"
+            f"GROQ_ENV_B64 = {groq_env_b64!r}\n"
             f"RUN_COMMAND = {command!r}\n"
             "WORKDIR = Path('/kaggle/working')\n"
             "REPO_DIR = WORKDIR / 'true-chat'\n"
@@ -278,6 +356,17 @@ def build_notebook(
         code_cell(
             "secrets_dir = REPO_DIR / '.secrets'\n"
             "secrets_dir.mkdir(exist_ok=True)\n"
+            "needs_mimo_key = PROVIDER == 'mimo' or '--skip-ragas' not in RUN_COMMAND\n"
+            "if PROVIDER == 'groq':\n"
+            "    if not GROQ_ENV_B64:\n"
+            "        raise RuntimeError('Groq HotpotQA eval requires --embed-groq-key or a notebook-specific key writer.')\n"
+            "    import base64\n"
+            "    groq_env_text = base64.b64decode(GROQ_ENV_B64).decode('utf-8')\n"
+            "    active_lines = [line for line in groq_env_text.splitlines() if line.strip() and not line.strip().startswith('#')]\n"
+            "    if len(active_lines) != 1 or '=' not in active_lines[0]:\n"
+            "        raise RuntimeError('Embedded Groq env must contain exactly one alias=value key line.')\n"
+            "    (secrets_dir / 'groq_key.env').write_text(groq_env_text.rstrip() + '\\n')\n"
+            "    print('Wrote embedded Groq key env to .secrets/groq_key.env without printing it')\n"
             "if MIMO_ENV_B64:\n"
             "    import base64\n"
             "    mimo_env_text = base64.b64decode(MIMO_ENV_B64).decode('utf-8')\n"
@@ -285,16 +374,10 @@ def build_notebook(
             "        raise RuntimeError('Embedded MiMo env is missing MIMO_API_KEY.')\n"
             "    (secrets_dir / '.env').write_text(mimo_env_text.rstrip() + '\\n')\n"
             "    print('Wrote embedded MiMo env to .secrets/.env without printing it')\n"
+            "elif needs_mimo_key:\n"
+            "    raise RuntimeError('MiMo key is required for this run and must be injected before upload; Kaggle secrets are not used.')\n"
             "else:\n"
-            "    try:\n"
-            "        from kaggle_secrets import UserSecretsClient\n"
-            "        mimo_key = UserSecretsClient().get_secret(MIMO_SECRET_NAME)\n"
-            "    except Exception as exc:\n"
-            "        raise RuntimeError(f'Add Kaggle secret {MIMO_SECRET_NAME} for MiMo eval, or upload with --embed-mimo-env.') from exc\n"
-            "    if not mimo_key:\n"
-            "        raise RuntimeError(f'Kaggle secret {MIMO_SECRET_NAME} is empty.')\n"
-            "    (secrets_dir / '.env').write_text('MIMO_API_KEY=' + mimo_key.strip() + '\\n')\n"
-            "    print('Wrote MiMo secret to .secrets/.env without printing it')\n",
+            "    print('MiMo key not required for this run')\n",
             cell_id="write-mimo-secret",
         ),
         code_cell(
@@ -330,6 +413,29 @@ def read_mimo_env_b64(repo_root: Path, value: str | Path, *, api_key_var: str) -
     if values.get("MIMO_BASE_URL", "").strip():
         lines.append(f"MIMO_BASE_URL={values['MIMO_BASE_URL'].strip()}")
     return base64.b64encode(("\n".join(lines) + "\n").encode("utf-8")).decode("ascii")
+
+
+def read_groq_env_b64(repo_root: Path, value: str | Path, *, key_alias: str | None) -> str:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = repo_root / path
+    if not path.exists():
+        raise SystemExit(f"Groq key file not found: {path}")
+    values = parse_env_file(path)
+    if key_alias:
+        api_key = values.get(key_alias, "").strip()
+        if not api_key:
+            raise SystemExit(f"Groq key file is missing alias {key_alias}: {path}")
+        selected = {key_alias: api_key}
+    else:
+        selected = {alias: value for alias, value in values.items() if value.strip()}
+        if not selected:
+            raise SystemExit(f"Groq key file has no active key entries: {path}")
+        if len(selected) > 1:
+            first_alias = next(iter(selected))
+            selected = {first_alias: selected[first_alias]}
+    alias, api_key = next(iter(selected.items()))
+    return base64.b64encode((f"{alias}={api_key.strip()}\n").encode("utf-8")).decode("ascii")
 
 
 def parse_env_file(path: Path) -> dict[str, str]:

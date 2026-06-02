@@ -459,13 +459,13 @@ HotpotQA is much larger and must be enabled explicitly:
 uv run --frozen rag-bench run --bench hotpotqa --allow-large-bench --retrievers bm25,graph-bm25 --top-k 5 --limit 20 --skip-generation
 ```
 
-For BudgetRAG HotpotQA generation/RAGAS, prefer Kaggle instead of local matrix runs. The cached runner builds BM25 once, writes `retrieval_cache.jsonl`, replays the 16 MiMo context-policy action rows, joins HotpotQA gold answers from `hotpotqa/hotpot_qa`, and runs post-hoc RAGAS samples:
+For BudgetRAG HotpotQA generation/RAGAS, prefer Kaggle instead of local matrix runs. The cached runner builds BM25 once, writes `retrieval_cache.jsonl`, replays context-policy action rows, and joins HotpotQA gold answers from `hotpotqa/hotpot_qa` for EM/token-F1. The default upload remains MiMo-only and can run post-hoc RAGAS samples:
 
 ```bash
 uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py
 ```
 
-The upload script creates a private Kaggle notebook with internet enabled and CPU execution by default. It expects a Kaggle secret named `MIMO_API_KEY`, polls `kaggle kernels status`, and downloads outputs into `benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle/<timestamp>/`.
+The upload script creates a private Kaggle notebook with internet enabled and CPU execution by default. It injects local MiMo env data from `.secrets/.env` whenever MiMo generation or RAGAS judging is enabled, and Groq mode injects one local `.secrets/groq_key.env` alias for generation. RAGAS judging is MiMo-backed even when generation uses Groq; use `--ragas-model mimo-v2.5-pro` for that path. The script polls `kaggle kernels status`, downloads completed outputs into `benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle/<timestamp>/`, and treats `--no-wait` uploads as successful after the initial status check.
 Because the notebook clones GitHub and verifies the expected commit, commit and push local code before a real upload. Use `--no-push --allow-dirty --keep-staging-dir /tmp/hotpotqa-kaggle-dryrun` to inspect the generated notebook without uploading.
 
 Run a smaller Kaggle smoke first when validating the notebook path:
@@ -477,12 +477,33 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
   --ragas-samples-per-action 1
 ```
 
+Run a Groq Qwen3-32B HotpotQA smoke with one embedded key:
+
+```bash
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --repo-ref hotpotqa-kaggle-run \
+  --provider groq \
+  --model qwen/qwen3-32b \
+  --model-role stronger-baseline \
+  --embed-groq-key \
+  --groq-key-alias primary \
+  --limit 5 \
+  --max-action-rows 2 \
+  --key-tpm 6000 \
+  --key-rpm 20 \
+  --ragas-model mimo-v2.5-pro \
+  --ragas-samples-per-action 1 \
+  --no-wait
+```
+
 The Kaggle notebook calls:
 
 ```bash
 uv run --frozen --extra vector --extra ragas python scripts/run_hotpotqa_cached_budgetrag_eval.py \
   --limit 50 \
   --top-k 10 \
+  --provider mimo \
+  --ragas-model mimo-v2.5-pro \
   --ragas-samples-per-action 5
 ```
 

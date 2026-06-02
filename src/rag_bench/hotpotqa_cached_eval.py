@@ -4,6 +4,7 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
 import string
 import time
@@ -23,7 +24,7 @@ from rag_bench.metrics import aggregate_generation, aggregate_metric_dicts, exac
 from rag_bench.prompts import build_rag_messages_from_context
 from rag_bench.retriever_registry import create_retriever
 from rag_bench.runner import DEFAULT_MIMO_BASE_URL
-from rag_bench.secrets import ApiKey, load_env_api_key
+from rag_bench.secrets import ApiKey, SecretFormatError, load_env_api_key, load_groq_keys
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 
@@ -37,6 +38,7 @@ DEFAULT_ADAPTIVE_PROFILES = ("balanced", "aggressive")
 DEFAULT_REFERENCE_CONFIGS = ("fullwiki", "distractor")
 DEFAULT_REFERENCE_SPLITS = ("validation",)
 DEFAULT_OUTPUT_DIR = Path("benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle")
+DEFAULT_PROVIDER = "mimo"
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,7 @@ class HotpotqaCachedEvalConfig:
     context_budgets: tuple[int, ...] = DEFAULT_BUDGETS
     adaptive_profiles: tuple[str, ...] = DEFAULT_ADAPTIVE_PROFILES
     max_action_rows: int | None = None
+    provider: str = DEFAULT_PROVIDER
     model: str = DEFAULT_MODEL
     model_role: str = DEFAULT_MODEL_ROLE
     max_completion_tokens: int = 512
@@ -76,10 +79,13 @@ class HotpotqaCachedEvalConfig:
     mimo_env_file: Path = Path(".secrets/.env")
     mimo_api_key_var: str = "MIMO_API_KEY"
     mimo_base_url: str = DEFAULT_MIMO_BASE_URL
+    groq_keys_path: Path = Path(".secrets/groq_key.env")
+    groq_key_alias: str | None = None
     key_tokens_per_minute: int = 0
     key_requests_per_minute: int = 0
     skip_generation: bool = False
     skip_ragas: bool = False
+    ragas_model: str = DEFAULT_MODEL
     ragas_samples_per_action: int = 5
     ragas_seed: int = 20260529
     reference_configs: tuple[str, ...] = DEFAULT_REFERENCE_CONFIGS
@@ -118,7 +124,7 @@ def run_hotpotqa_cached_eval(
     retrieval_cache = build_retrieval_cache(data, top_k=config.top_k)
     write_jsonl(run_dir / "retrieval_cache.jsonl", retrieval_cache)
 
-    llm = None if config.skip_generation else (llm_factory() if llm_factory is not None else build_mimo_client(config))
+    llm = None if config.skip_generation else (llm_factory() if llm_factory is not None else build_generation_client(config))
     created_at = datetime.now(timezone.utc).isoformat()
     all_rows: list[dict[str, Any]] = []
     aggregate_rows: list[dict[str, Any]] = []
@@ -143,7 +149,7 @@ def run_hotpotqa_cached_eval(
             all_rows,
             samples_per_action=config.ragas_samples_per_action,
             seed=config.ragas_seed,
-            model=config.model,
+            model=config.ragas_model,
             mimo_env_file=config.mimo_env_file,
             mimo_api_key_var=config.mimo_api_key_var,
             mimo_base_url=config.mimo_base_url,
@@ -274,7 +280,7 @@ def run_action_from_cache(
         )
         generation_detail = (
             {
-                "provider": "mimo",
+                "provider": config.provider,
                 "model": config.model,
                 "model_role": config.model_role,
                 "max_completion_tokens": config.max_completion_tokens,
@@ -463,6 +469,8 @@ def evaluate_ragas_with_mimo(
             "skipped": False,
             "sample_count": 0,
             "samples_per_action": samples_per_action,
+            "judge_provider": "mimo",
+            "judge_model": model,
             "error": "no valid generated rows for RAGAS",
             "per_sample_rows": [],
         }
@@ -518,6 +526,8 @@ def evaluate_ragas_with_mimo(
 
     return {
         "skipped": False,
+        "judge_provider": "mimo",
+        "judge_model": model,
         "samples_per_action": samples_per_action,
         "sample_count": len(per_sample_rows),
         "metrics": _average_metrics(per_sample_rows),
@@ -625,6 +635,37 @@ def build_mimo_client(config: HotpotqaCachedEvalConfig) -> RoundRobinGroqClient:
     )
 
 
+def build_groq_client(config: HotpotqaCachedEvalConfig) -> RoundRobinGroqClient:
+    return RoundRobinGroqClient(
+        keys=_load_selected_groq_keys(config.groq_keys_path, config.groq_key_alias),
+        model=config.model,
+        max_retries=config.max_retries,
+        key_tokens_per_minute=config.key_tokens_per_minute,
+        key_requests_per_minute=config.key_requests_per_minute,
+        rate_limit_scope="per-key",
+        provider_name="Groq",
+    )
+
+
+def build_generation_client(config: HotpotqaCachedEvalConfig) -> RoundRobinGroqClient:
+    provider = config.provider.strip().lower()
+    if provider == "mimo":
+        return build_mimo_client(config)
+    if provider == "groq":
+        return build_groq_client(config)
+    raise ValueError(f"Unsupported HotpotQA generation provider: {config.provider}")
+
+
+def _load_selected_groq_keys(path: Path, alias: str | None) -> list[ApiKey]:
+    keys = load_groq_keys(path)
+    if alias is None:
+        return keys
+    selected = [key for key in keys if key.alias == alias]
+    if not selected:
+        raise SecretFormatError(f"Groq key alias was not found in {path}: {alias}")
+    return selected
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run cached HotpotQA BudgetRAG eval with one BM25 build.")
     parser.add_argument("--limit", type=int, default=50)
@@ -635,6 +676,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--context-budgets", default=",".join(str(value) for value in DEFAULT_BUDGETS))
     parser.add_argument("--adaptive-profiles", default=",".join(DEFAULT_ADAPTIVE_PROFILES))
     parser.add_argument("--max-action-rows", type=int, default=None)
+    parser.add_argument("--provider", choices=("mimo", "groq"), default=DEFAULT_PROVIDER)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--model-role", default=DEFAULT_MODEL_ROLE)
     parser.add_argument("--max-completion-tokens", type=int, default=512)
@@ -650,10 +692,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"))
     parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
     parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
+    parser.add_argument("--groq-keys-path", type=Path, default=Path(".secrets/groq_key.env"))
+    parser.add_argument("--groq-key-alias", default=None)
     parser.add_argument("--key-tpm", type=int, default=0)
     parser.add_argument("--key-rpm", type=int, default=0)
     parser.add_argument("--skip-generation", action="store_true")
     parser.add_argument("--skip-ragas", action="store_true")
+    parser.add_argument("--ragas-model", default=DEFAULT_MODEL)
     parser.add_argument("--ragas-samples-per-action", type=int, default=5)
     parser.add_argument("--ragas-seed", type=int, default=20260529)
     parser.add_argument("--reference-configs", default=",".join(DEFAULT_REFERENCE_CONFIGS))
@@ -671,6 +716,7 @@ def config_from_args(args: argparse.Namespace) -> HotpotqaCachedEvalConfig:
         context_budgets=tuple(int(value) for value in _split_csv(args.context_budgets)),
         adaptive_profiles=tuple(_split_csv(args.adaptive_profiles)),
         max_action_rows=args.max_action_rows,
+        provider=args.provider,
         model=args.model,
         model_role=args.model_role,
         max_completion_tokens=args.max_completion_tokens,
@@ -686,10 +732,13 @@ def config_from_args(args: argparse.Namespace) -> HotpotqaCachedEvalConfig:
         mimo_env_file=args.mimo_env_file,
         mimo_api_key_var=args.mimo_api_key_var,
         mimo_base_url=args.mimo_base_url,
+        groq_keys_path=args.groq_keys_path,
+        groq_key_alias=args.groq_key_alias,
         key_tokens_per_minute=args.key_tpm,
         key_requests_per_minute=args.key_rpm,
         skip_generation=args.skip_generation,
         skip_ragas=args.skip_ragas,
+        ragas_model=args.ragas_model,
         ragas_samples_per_action=args.ragas_samples_per_action,
         ragas_seed=args.ragas_seed,
         reference_configs=tuple(_split_csv(args.reference_configs)),
@@ -745,7 +794,7 @@ def _experiment_metadata(
         "context_budget_chars": action.context_budget_chars,
         "adaptive_profile": action.adaptive_profile,
         "skip_generation": config.skip_generation,
-        "generation_provider": None if config.skip_generation else "mimo",
+        "generation_provider": None if config.skip_generation else config.provider,
         "generation_model": None if config.skip_generation else config.model,
         "generation_model_role": None if config.skip_generation else config.model_role,
         "kv_profile": None if config.disable_kv_estimate else config.kv_profile,
@@ -822,6 +871,7 @@ def _serializable_config(config: HotpotqaCachedEvalConfig) -> dict[str, Any]:
     data = asdict(config)
     data["output_dir"] = str(config.output_dir)
     data["mimo_env_file"] = str(config.mimo_env_file)
+    data["groq_keys_path"] = str(config.groq_keys_path)
     data["policies"] = list(config.policies)
     data["context_budgets"] = list(config.context_budgets)
     data["adaptive_profiles"] = list(config.adaptive_profiles)
@@ -849,7 +899,7 @@ def _fmt(value: Any) -> str:
 
 def _is_number(value: Any) -> bool:
     try:
-        float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return False
-    return True
+    return math.isfinite(number)

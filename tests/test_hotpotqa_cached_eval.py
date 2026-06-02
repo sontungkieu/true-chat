@@ -7,6 +7,7 @@ from pathlib import Path
 from rag_bench.groq_client import GenerationResult
 from rag_bench.hotpotqa_cached_eval import (
     HotpotqaCachedEvalConfig,
+    build_groq_client,
     build_reference_lookup_from_records,
     normalize_question,
     run_hotpotqa_cached_eval,
@@ -83,6 +84,29 @@ def test_ragas_sampling_is_deterministic_and_per_action() -> None:
     assert selected_once == selected_twice
     assert Counter(row["action_id"] for row in selected_once) == {"a": 5, "b": 5}
     assert all(row["query_id"] != "bad" for row in selected_once)
+
+
+def test_hotpotqa_groq_provider_selects_single_key_alias(tmp_path: Path) -> None:
+    key_file = tmp_path / "groq_key.env"
+    key_file.write_text("primary=secret-one\nbackup=secret-two\n", encoding="utf-8")
+
+    config = HotpotqaCachedEvalConfig(
+        provider="groq",
+        model="qwen/qwen3-32b",
+        model_role="stronger-baseline",
+        groq_keys_path=key_file,
+        groq_key_alias="primary",
+        key_tokens_per_minute=6000,
+        key_requests_per_minute=20,
+    )
+
+    client = build_groq_client(config)
+
+    assert client.provider_name == "Groq"
+    assert client.model == "qwen/qwen3-32b"
+    assert [key.alias for key in client.keys] == ["primary"]
+    assert client.scheduler.tokens_per_minute == 6000
+    assert client.scheduler.requests_per_minute == 20
 
 
 def test_cached_eval_writes_outputs_and_answer_accuracy(tmp_path: Path) -> None:
