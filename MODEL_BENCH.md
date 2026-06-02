@@ -12,16 +12,44 @@ cd true-chat
 git checkout bench/vllm-model-bench
 ```
 
-Setup Python env và cài vLLM:
+Setup Python env và cài vLLM. Với RTX 5060 Ti 16GB đang dùng torch CUDA 12.9, ưu tiên script CUDA 12.9:
+
+```bash
+scripts/setup_vllm_bench_cuda129.sh
+```
+
+Nếu máy/driver đã được chuẩn bị cho CUDA 13.0 và cần vLLM/PyTorch backend CUDA 13:
+
+```bash
+scripts/setup_vllm_bench_cuda130.sh
+```
+
+Script tự chọn backend theo `uv` cũng vẫn có sẵn:
 
 ```bash
 scripts/setup_vllm_bench.sh
 ```
 
-Script setup chỉ cài dependency Python và vLLM trong `.venv`. Script không cài hoặc sửa driver NVIDIA, CUDA, package hệ thống, hay cấu hình GPU. Nếu máy cần version vLLM cụ thể:
+Script setup chỉ cài dependency Python và vLLM trong `.venv`. Script không cài hoặc sửa driver NVIDIA, CUDA, package hệ thống, hay cấu hình GPU. Hai script CUDA-specific sẽ gỡ stack vLLM/PyTorch CUDA hiện có trong `.venv` trước khi cài lại để tránh lẫn wheel CUDA 13 với torch CUDA 12.9.
+
+Ghi chú quan trọng: dòng `CUDA Version` trong `nvidia-smi` là mức CUDA runtime tối đa mà driver hỗ trợ, không phải version CUDA mà Python package đang dùng. Version cần kiểm tra sau setup là:
 
 ```bash
-VLLM_VERSION=0.21.0 scripts/setup_vllm_bench.sh
+.venv/bin/python - <<'PY'
+import torch, vllm
+print("torch", torch.__version__)
+print("torch cuda", torch.version.cuda)
+print("vllm", vllm.__version__)
+print("cuda available", torch.cuda.is_available())
+PY
+```
+
+Nếu log lỗi có `libcudart.so.13`, env đang có binary CUDA 13. Nếu `torch.version.cuda` là `12.9`, cài lại bằng `scripts/setup_vllm_bench_cuda129.sh`.
+
+Nếu máy cần version vLLM cụ thể:
+
+```bash
+VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda129.sh
 ```
 
 Kiểm tra nhanh GPU trước khi chạy:
@@ -176,6 +204,13 @@ Model không load được:
 - thử giảm `--max-model-len`;
 - thử thêm vLLM arg như `--vllm-arg=--dtype --vllm-arg auto`;
 - chạy `--preset smoke` trước.
+
+Import lỗi `libcudart.so.13` hoặc mismatch CUDA:
+
+- nếu muốn chạy CUDA 12.9, dùng `scripts/setup_vllm_bench_cuda129.sh`;
+- nếu muốn chạy CUDA 13.0, dùng `scripts/setup_vllm_bench_cuda130.sh`;
+- không dùng `uv pip uninstall -y`; `uv pip uninstall` không có flag `-y`;
+- sau setup, kiểm tra `torch.version.cuda` bằng đoạn Python ở phần chuẩn bị.
 
 Server không healthy trong thời gian chờ:
 

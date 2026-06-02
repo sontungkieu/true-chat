@@ -34,13 +34,27 @@ Use the bench branch when comparing one model across multiple manually prepared 
 git clone <repo-url> true-chat
 cd true-chat
 git checkout bench/vllm-model-bench
-scripts/setup_vllm_bench.sh
+scripts/setup_vllm_bench_cuda129.sh
 ```
 
-The setup script only prepares the Python environment and installs vLLM into `.venv`. It does not install or change NVIDIA drivers, CUDA, or system packages. Set `VLLM_VERSION=...` when a machine needs a specific vLLM build:
+Use `scripts/setup_vllm_bench_cuda129.sh` for machines that should run the CUDA 12.9 vLLM/PyTorch stack, which is the first target for RTX 5060 Ti 16GB testing. Use `scripts/setup_vllm_bench_cuda130.sh` only when the machine/driver is prepared for the CUDA 13.0 backend. The generic `scripts/setup_vllm_bench.sh` keeps `uv` backend auto-selection.
+
+The setup scripts only prepare the Python environment and install vLLM into `.venv`. They do not install or change NVIDIA drivers, CUDA, or system packages. The CUDA-specific wrappers remove the existing vLLM/PyTorch CUDA stack inside `.venv` before reinstalling so a CUDA 13 wheel is not mixed with a CUDA 12.9 torch build. Set `VLLM_VERSION=...` when a machine needs a specific vLLM build:
 
 ```bash
-VLLM_VERSION=0.21.0 scripts/setup_vllm_bench.sh
+VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda129.sh
+```
+
+After setup, verify the runtime packages, not just the `CUDA Version` printed by `nvidia-smi`:
+
+```bash
+.venv/bin/python - <<'PY'
+import torch, vllm
+print("torch", torch.__version__)
+print("torch cuda", torch.version.cuda)
+print("vllm", vllm.__version__)
+print("cuda available", torch.cuda.is_available())
+PY
 ```
 
 Run a quick local smoke benchmark. The command starts `vllm serve`, waits for `/health`, runs warmup plus benchmark prompts, samples hardware with `nvidia-smi`, writes artifacts, and stops the server:
