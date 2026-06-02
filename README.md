@@ -496,6 +496,37 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
   --no-wait
 ```
 
+To shard MiMo HotpotQA action rows across multiple Kaggle accounts, pass explicit policy/profile groups. For example:
+
+```bash
+# Fixed-policy rows: 8 actions.
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --account kieutung \
+  --repo-ref hotpotqa-kaggle-run \
+  --provider mimo \
+  --model mimo-v2.5-pro \
+  --model-role long-context-upper-bound \
+  --context-policies legacy,evidence-aware \
+  --context-budgets 4000,8000,16000,32000 \
+  --ragas-model mimo-v2.5-pro \
+  --ragas-samples-per-action 5 \
+  --no-wait
+
+# Adaptive balanced rows: 4 actions.
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --account hoanganpham123 \
+  --repo-ref hotpotqa-kaggle-run \
+  --provider mimo \
+  --model mimo-v2.5-pro \
+  --model-role long-context-upper-bound \
+  --context-policies adaptive-heuristic \
+  --adaptive-profiles balanced \
+  --context-budgets 4000,8000,16000,32000 \
+  --ragas-model mimo-v2.5-pro \
+  --ragas-samples-per-action 5 \
+  --no-wait
+```
+
 The Kaggle notebook calls:
 
 ```bash

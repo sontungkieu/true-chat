@@ -37,6 +37,9 @@ DEFAULT_PROVIDER = "mimo"
 DEFAULT_MODEL = "mimo-v2.5-pro"
 DEFAULT_MODEL_ROLE = "long-context-upper-bound"
 DEFAULT_RAGAS_MODEL = "mimo-v2.5-pro"
+DEFAULT_CONTEXT_POLICIES = "legacy,evidence-aware,adaptive-heuristic"
+DEFAULT_CONTEXT_BUDGETS = "4000,8000,16000,32000"
+DEFAULT_ADAPTIVE_PROFILES = "balanced,aggressive"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -97,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             top_k=args.top_k,
             max_action_rows=args.max_action_rows,
+            context_policies=args.context_policies,
+            context_budgets=args.context_budgets,
+            adaptive_profiles=args.adaptive_profiles,
             provider=args.provider,
             model=args.model,
             model_role=args.model_role,
@@ -156,6 +162,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=50)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--max-action-rows", type=int, default=None)
+    parser.add_argument("--context-policies", default=DEFAULT_CONTEXT_POLICIES)
+    parser.add_argument("--context-budgets", default=DEFAULT_CONTEXT_BUDGETS)
+    parser.add_argument("--adaptive-profiles", default=DEFAULT_ADAPTIVE_PROFILES)
     parser.add_argument("--provider", choices=("mimo", "groq"), default=DEFAULT_PROVIDER)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--model-role", default=DEFAULT_MODEL_ROLE)
@@ -192,6 +201,9 @@ def write_staging_files(
     limit: int,
     top_k: int,
     max_action_rows: int | None,
+    context_policies: str = DEFAULT_CONTEXT_POLICIES,
+    context_budgets: str = DEFAULT_CONTEXT_BUDGETS,
+    adaptive_profiles: str = DEFAULT_ADAPTIVE_PROFILES,
     provider: str = DEFAULT_PROVIDER,
     model: str = DEFAULT_MODEL,
     model_role: str = DEFAULT_MODEL_ROLE,
@@ -215,6 +227,9 @@ def write_staging_files(
         limit=limit,
         top_k=top_k,
         max_action_rows=max_action_rows,
+        context_policies=context_policies,
+        context_budgets=context_budgets,
+        adaptive_profiles=adaptive_profiles,
         provider=provider,
         model=model,
         model_role=model_role,
@@ -258,6 +273,9 @@ def build_notebook(
     limit: int,
     top_k: int,
     max_action_rows: int | None,
+    context_policies: str,
+    context_budgets: str,
+    adaptive_profiles: str,
     provider: str,
     model: str,
     model_role: str,
@@ -289,6 +307,12 @@ def build_notebook(
         "/kaggle/working/phase1c3_hotpotqa_kaggle",
         "--run-name",
         run_name,
+        "--context-policies",
+        context_policies,
+        "--context-budgets",
+        context_budgets,
+        "--adaptive-profiles",
+        adaptive_profiles,
         "--provider",
         provider,
         "--model",

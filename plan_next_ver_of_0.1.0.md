@@ -38,6 +38,7 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c3`; pendi
    - Full SciFact BM25 generation matrix completed with `limit 50` for Groq Llama 8B, Groq Qwen 32B, and MiMo v2.5 Pro.
    - MiMo long-context matrix completed with `limit 30`, `top-k 10`, and budgets up to 32000 characters.
    - HotpotQA Kaggle path now supports Groq generation smoke runs with one injected key and separate MiMo-backed RAGAS judging via `--ragas-model`.
+   - HotpotQA Kaggle upload now supports policy/profile sharding so MiMo fixed-policy, adaptive-balanced, and adaptive-aggressive jobs can run on separate Kaggle accounts.
    - Optional NFCorpus follow-up remains deferred; SciFact full generation and MiMo long-context cover the required Phase 1C.3 validation.
 
 5. Document findings

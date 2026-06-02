@@ -51,6 +51,8 @@ def test_kaggle_eval_staging_metadata_is_private_and_secret_free(tmp_path: Path)
     assert "UserSecretsClient" not in notebook_text
     assert "mimo_secret_value" not in notebook_text
     assert "--max-action-rows" in notebook_text
+    assert "--context-policies" in notebook_text
+    assert "legacy,evidence-aware,adaptive-heuristic" in notebook_text
 
 
 def test_kaggle_eval_can_embed_minimal_mimo_env_without_raw_secret(tmp_path: Path) -> None:
@@ -103,6 +105,9 @@ def test_kaggle_eval_can_embed_single_groq_key_without_raw_secret(tmp_path: Path
         limit=5,
         top_k=10,
         max_action_rows=2,
+        context_policies="adaptive-heuristic",
+        context_budgets="4000,8000",
+        adaptive_profiles="balanced",
         provider="groq",
         model="qwen/qwen3-32b",
         model_role="stronger-baseline",
@@ -124,6 +129,9 @@ def test_kaggle_eval_can_embed_single_groq_key_without_raw_secret(tmp_path: Path
     assert "UserSecretsClient" not in notebook_text
     assert "--provider" in notebook_text
     assert "groq" in notebook_text
+    assert "adaptive-heuristic" in notebook_text
+    assert "4000,8000" in notebook_text
+    assert "balanced" in notebook_text
     assert "qwen/qwen3-32b" in notebook_text
     assert "--ragas-model" in notebook_text
     assert "mimo-v2.5-pro" in notebook_text
