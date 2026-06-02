@@ -24,6 +24,76 @@ uv sync --frozen --extra vector --extra ragas --group dev
 
 Direct runtime, optional, and test dependencies are pinned exactly in `pyproject.toml`, with `numpy` and `scikit-learn` pinned by Python-version markers to preserve Python 3.10 compatibility. `uv.lock` pins the full transitive environment; use `--frozen` for reproducible installs and runs.
 
+## vLLM Model Benchmark
+
+Detailed operator guide: [`MODEL_BENCH.md`](MODEL_BENCH.md).
+
+Use the bench branch when comparing one model across multiple manually prepared machines:
+
+```bash
+git clone <repo-url> true-chat
+cd true-chat
+git checkout bench/vllm-model-bench
+scripts/setup_vllm_bench.sh
+```
+
+The setup script only prepares the Python environment and installs vLLM into `.venv`. It does not install or change NVIDIA drivers, CUDA, or system packages. Set `VLLM_VERSION=...` when a machine needs a specific vLLM build:
+
+```bash
+VLLM_VERSION=0.21.0 scripts/setup_vllm_bench.sh
+```
+
+Run a quick local smoke benchmark. The command starts `vllm serve`, waits for `/health`, runs warmup plus benchmark prompts, samples hardware with `nvidia-smi`, writes artifacts, and stops the server:
+
+```bash
+uv run --frozen --no-sync rag-bench model-bench \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --preset smoke \
+  --tensor-parallel-size auto
+```
+
+Use the full synthetic plus chat suite when the model fits and the machine is stable:
+
+```bash
+uv run --frozen --no-sync rag-bench model-bench \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --preset all \
+  --tensor-parallel-size auto \
+  --max-model-len 8192
+```
+
+If a vLLM/OpenAI-compatible server is already running, benchmark it without starting a new process:
+
+```bash
+uv run --frozen --no-sync rag-bench model-bench \
+  --endpoint http://127.0.0.1:8000/v1 \
+  --served-model-name my-model \
+  --preset standard
+```
+
+Preset behavior:
+
+- `smoke`: one short synthetic scenario at concurrency `1`.
+- `standard`: short, medium, and long synthetic scenarios at concurrency `1,2,4,8`.
+- `all`: `standard` plus an 8k-ish long-context synthetic case and chat-style prompts, including Vietnamese and multi-turn prompts.
+
+Useful overrides:
+
+- `--concurrency 1,4,16`: replace preset concurrency values.
+- `--requests-per-scenario 12`: replace preset request count per scenario/concurrency.
+- `--warmup-requests 2`: run unrecorded warmup calls before each scenario.
+- `--max-output-tokens 256`: use one completion cap for every scenario.
+- `--vllm-arg=--dtype --vllm-arg auto`: pass raw extra arguments through to `vllm serve`.
+
+Results are written under ignored `runs/model_bench/<timestamp>_<hostname>_<model>/`:
+
+- `manifest.json`: command config, git branch/commit/dirty flag, endpoint, vLLM command, and hardware snapshot.
+- `requests.jsonl`: per-request latency, TTFT, usage tokens, output tok/s, generated size, and error.
+- `scenario_metrics.json` / `scenario_metrics.csv`: p50/p95/p99 latency, p50/p95 TTFT, tok/s, requests/s, completion tokens/s, and error rate.
+- `hardware_samples.csv`: sampled CPU/RAM and GPU utilization, memory, power, and temperature where `nvidia-smi` is available.
+- `server.log`: local vLLM process output, or a note that an existing endpoint was used.
+- `summary.md`: compact comparison table for copying between machines.
+
 ## Retrieval Strategies
 
 Search behavior is registered centrally as retrieval strategies. The active strategies are `bm25`, `tfidf`, `keyword-match`, `multi-query`, `graph-bm25`, `llm-query-rewrite`, `llm-multi-query`, `image-digits`, `dictionary-graph`, `vector`, `hybrid-rrf`, and `vector-rerank`. Aliases include `lexical -> bm25`, `find -> keyword-match`, `graph -> graph-bm25`, `graph-rag -> graph-bm25`, `img -> image-digits`, `dict -> dictionary-graph`, `dense -> vector`, `hybrid -> hybrid-rrf`, and `rerank -> vector-rerank`. The benchmark CLI, chat proxy, and built-in UI all use the same registry so new search behavior can be added without wiring it separately through each surface.

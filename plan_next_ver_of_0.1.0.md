@@ -6,6 +6,8 @@ Make the built-in FastAPI chat UI the primary temporary frontend for the RAG pro
 
 Status: implemented on `main`; the current working tree hardens the Kaggle full-dictionary deploy path and local settings scrolling.
 
+Bench branch update: `bench/vllm-model-bench` adds a separate manual multi-machine vLLM benchmarking workflow. Operators clone the repo on each machine, run `scripts/setup_vllm_bench.sh`, then run `rag-bench model-bench` for one model. The benchmark starts/stops vLLM by default, supports existing OpenAI-compatible endpoints, records synthetic and chat workloads, captures latency/TTFT/tok/s plus hardware samples, writes artifacts under ignored `runs/model_bench/`, and now has a dedicated `MODEL_BENCH.md` operator guide.
+
 ## Constraints
 
 - No frontend framework, bundler, CDN dependency, or Docker requirement.

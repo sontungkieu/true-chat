@@ -156,3 +156,93 @@ def test_cli_serve_defaults_use_qwen_and_long_completion(monkeypatch) -> None:
     assert seen["config"].chat.model == "qwen/qwen3-32b"
     assert seen["config"].chat.max_completion_tokens == 4096
     assert seen["config"].chat.available_models[0] == "qwen/qwen3-32b"
+
+
+def test_cli_model_bench_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_run_model_benchmark(config):
+        seen["config"] = config
+        return {
+            "run_id": "bench-1",
+            "output_dir": str(tmp_path / "runs" / "bench-1"),
+            "scenario_count": 1,
+            "request_count": 2,
+        }
+
+    monkeypatch.setattr(cli, "run_model_benchmark", fake_run_model_benchmark)
+
+    exit_code = cli.main(
+        [
+            "model-bench",
+            "--model",
+            "Qwen/Qwen2.5-7B-Instruct",
+            "--preset",
+            "all",
+            "--tensor-parallel-size",
+            "auto",
+            "--concurrency",
+            "1,4,16",
+            "--requests-per-scenario",
+            "3",
+            "--warmup-requests",
+            "1",
+            "--output-dir",
+            str(tmp_path / "model_bench"),
+            "--max-model-len",
+            "8192",
+            "--max-output-tokens",
+            "128",
+            "--vllm-arg=--dtype",
+            "--vllm-arg",
+            "auto",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"run_id": "bench-1"' in captured.out
+    assert seen["config"].model == "Qwen/Qwen2.5-7B-Instruct"
+    assert seen["config"].preset == "all"
+    assert seen["config"].tensor_parallel_size == "auto"
+    assert seen["config"].concurrency == (1, 4, 16)
+    assert seen["config"].requests_per_scenario == 3
+    assert seen["config"].max_model_len == 8192
+    assert seen["config"].max_output_tokens == 128
+    assert seen["config"].vllm_args == ("--dtype", "auto")
+
+
+def test_cli_model_bench_accepts_existing_endpoint(monkeypatch) -> None:
+    seen = {}
+
+    def fake_run_model_benchmark(config):
+        seen["config"] = config
+        return {"run_id": "bench-1", "output_dir": "runs/model_bench/bench-1", "scenario_count": 1, "request_count": 1}
+
+    monkeypatch.setattr(cli, "run_model_benchmark", fake_run_model_benchmark)
+
+    exit_code = cli.main(
+        [
+            "model-bench",
+            "--endpoint",
+            "http://127.0.0.1:8000/v1",
+            "--served-model-name",
+            "my-model",
+            "--preset",
+            "standard",
+            "--no-stream",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen["config"].endpoint == "http://127.0.0.1:8000/v1"
+    assert seen["config"].served_model_name == "my-model"
+    assert seen["config"].stream is False
+
+
+def test_cli_model_bench_rejects_invalid_numeric_args(capsys) -> None:
+    exit_code = cli.main(["model-bench", "--model", "m", "--requests-per-scenario", "0"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--requests-per-scenario must be positive" in captured.err
