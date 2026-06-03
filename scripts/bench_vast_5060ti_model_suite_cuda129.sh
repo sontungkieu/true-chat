@@ -8,6 +8,11 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 
+export BENCH_MAX_MODEL_LEN="${BENCH_MAX_MODEL_LEN:-2048}"
+export BENCH_MAX_NUM_SEQS="${BENCH_MAX_NUM_SEQS:-1}"
+export BENCH_MAX_NUM_BATCHED_TOKENS="${BENCH_MAX_NUM_BATCHED_TOKENS:-$BENCH_MAX_MODEL_LEN}"
+export BENCH_ENFORCE_EAGER="${BENCH_ENFORCE_EAGER:-1}"
+
 models=(
   "cyankiwi/Qwen3.5-9B-AWQ-4bit"
 )

@@ -69,7 +69,6 @@ Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và L
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda129.sh smoke
-scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
 ```
 
 Nếu muốn xác nhận lỗi AWQ Marlin, có thể ép kernel AWQ thường:
@@ -116,7 +115,6 @@ Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và L
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
-scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 ### Model suite 5060 Ti
@@ -128,6 +126,35 @@ Các suite script mặc định chạy:
 | Qwen3.5 9B AWQ | `cyankiwi/Qwen3.5-9B-AWQ-4bit` | Bản AWQ 4-bit, hợp lý hơn bản full cho VRAM 16GB. |
 | Qwen3.5 9B AWQ 8-bit | `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8` | Bản 8-bit để so với 4-bit; nếu sát VRAM, tắt bằng `BENCH_INCLUDE_QWEN35_8BIT=0`. |
 | Llama-3 16B AWQ | `solidrust/Llama-3-16B-Instruct-v0.1-AWQ` | Community merge AWQ, có thể sát VRAM hơn; bắt đầu bằng `smoke`. |
+
+Suite model lớn dùng defaults an toàn hơn wrapper single-model:
+
+- `BENCH_MAX_MODEL_LEN=2048`;
+- `BENCH_MAX_NUM_SEQS=1`;
+- `BENCH_MAX_NUM_BATCHED_TOKENS=2048`;
+- `BENCH_ENFORCE_EAGER=1`;
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+
+Trước mỗi model, Vast wrapper cũng:
+
+- kill stale GPU process có tên chứa `VLLM`/`vllm` nếu `BENCH_KILL_STALE_VLLM=1` (default);
+- chờ tổng `memory.used` của GPU xuống dưới `BENCH_GPU_READY_MAX_USED_MB=512`;
+- timeout sau `BENCH_GPU_READY_TIMEOUT_S=90`;
+- có thể bỏ qua check bằng `BENCH_SKIP_GPU_READY_CHECK=1` nếu cần debug thủ công.
+
+Lý do: Qwen3.5 9B AWQ 4-bit có thể OOM ở `max_model_len=4096` khi vLLM profile CUDA graph/KV cache trên RTX 5060 Ti 16GB. Nếu `smoke` đã qua và muốn đo aggressive hơn, tăng dần:
+
+```bash
+BENCH_MAX_MODEL_LEN=3072 \
+BENCH_MAX_NUM_BATCHED_TOKENS=3072 \
+scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+```
+
+Nếu bản Qwen3.5 9B 8-bit OOM, tắt riêng nó:
+
+```bash
+BENCH_INCLUDE_QWEN35_8BIT=0 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+```
 
 Llama 4 Scout 17B:
 
