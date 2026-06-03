@@ -15,6 +15,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from statistics import mean
 from typing import Any, Callable
@@ -900,9 +901,179 @@ def build_manifest(
         "served_model_name": served_model_name,
         "tensor_parallel_size": tensor_parallel_size,
         "vllm_command": vllm_command,
+        "inference_engine": build_inference_engine_metadata(
+            config,
+            endpoint=endpoint,
+            vllm_command=vllm_command,
+        ),
+        "serving_config": build_serving_config_metadata(
+            config,
+            tensor_parallel_size=tensor_parallel_size,
+            served_model_name=served_model_name,
+        ),
         "git": git_metadata(),
         "hardware": hardware_snapshot,
     }
+
+
+def build_inference_engine_metadata(
+    config: ModelBenchConfig,
+    *,
+    endpoint: str,
+    vllm_command: list[str] | None,
+) -> dict[str, Any]:
+    local_vllm = vllm_command is not None
+    return {
+        "name": "vllm" if local_vllm else "openai-compatible",
+        "version": package_version("vllm") if local_vllm else None,
+        "mode": "local_vllm" if local_vllm else "external_endpoint",
+        "endpoint": endpoint,
+        "openai_compatible": True,
+        "streaming": config.stream,
+        "command": vllm_command,
+    }
+
+
+def build_serving_config_metadata(
+    config: ModelBenchConfig,
+    *,
+    tensor_parallel_size: int,
+    served_model_name: str,
+) -> dict[str, Any]:
+    vllm_options = parse_vllm_options(config.vllm_args)
+    model_hint = model_quantization_hint(config.model or served_model_name)
+    quantization_arg = vllm_options.get("quantization")
+    quantization = quantization_arg if quantization_arg not in {None, "", "auto"} else "auto/model-config"
+    return {
+        "served_model_name": served_model_name,
+        "model": config.model,
+        "tensor_parallel_size": tensor_parallel_size,
+        "max_model_len": config.max_model_len,
+        "max_output_tokens_override": config.max_output_tokens,
+        "temperature": config.temperature,
+        "vllm_args": list(config.vllm_args),
+        "vllm_options": vllm_options,
+        "quantization": {
+            "argument": quantization_arg,
+            "effective": quantization,
+            "model_hint": model_hint,
+        },
+        "dtype": vllm_options.get("dtype", "auto"),
+        "kv_cache_dtype": vllm_options.get("kv_cache_dtype", "auto"),
+        "attention_backend": vllm_options.get("attention_backend", "auto"),
+        "speculative_decoding": speculative_decoding_metadata(vllm_options),
+        "cpu_offload_gb": vllm_options.get("cpu_offload_gb", 0),
+        "gpu_memory_utilization": vllm_options.get("gpu_memory_utilization"),
+        "max_num_seqs": vllm_options.get("max_num_seqs"),
+        "max_num_batched_tokens": vllm_options.get("max_num_batched_tokens"),
+        "enforce_eager": bool(vllm_options.get("enforce_eager", False)),
+    }
+
+
+def parse_vllm_options(args: tuple[str, ...] | list[str]) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if not arg.startswith("--") or arg == "--":
+            index += 1
+            continue
+        key_value = arg[2:]
+        if "=" in key_value:
+            key, raw_value = key_value.split("=", 1)
+            value: Any = parse_scalar(raw_value)
+        elif index + 1 < len(args) and not args[index + 1].startswith("--"):
+            key = key_value
+            value = parse_scalar(args[index + 1])
+            index += 1
+        else:
+            key = key_value
+            value = True
+        options[normalize_cli_key(key)] = value
+        index += 1
+    return options
+
+
+def parse_scalar(value: str) -> Any:
+    stripped = value.strip()
+    lowered = stripped.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in {"none", "null"}:
+        return None
+    try:
+        if re.fullmatch(r"[-+]?\d+", stripped):
+            return int(stripped)
+        if re.fullmatch(r"[-+]?\d+\.\d+", stripped):
+            return float(stripped)
+    except ValueError:
+        pass
+    return value
+
+
+def normalize_cli_key(key: str) -> str:
+    return key.strip().lstrip("-").replace("-", "_")
+
+
+def speculative_decoding_metadata(vllm_options: dict[str, Any]) -> dict[str, Any]:
+    raw_config = vllm_options.get("speculative_config")
+    if raw_config is None or raw_config is False or raw_config == "" or (
+        isinstance(raw_config, str) and raw_config.lower() in {"off", "none"}
+    ):
+        return {
+            "enabled": False,
+            "method": "none",
+            "config": None,
+            "raw": raw_config,
+        }
+
+    parsed_config: Any = raw_config
+    if isinstance(raw_config, str):
+        try:
+            parsed_config = json.loads(raw_config)
+        except json.JSONDecodeError:
+            parsed_config = raw_config
+
+    method = "configured"
+    num_speculative_tokens = None
+    draft_model = None
+    if isinstance(parsed_config, dict):
+        method = str(parsed_config.get("method") or parsed_config.get("type") or method)
+        num_speculative_tokens = parsed_config.get("num_speculative_tokens")
+        draft_model = parsed_config.get("model") or parsed_config.get("draft_model")
+
+    return {
+        "enabled": True,
+        "method": method,
+        "num_speculative_tokens": num_speculative_tokens,
+        "draft_model": draft_model,
+        "config": parsed_config,
+        "raw": raw_config,
+    }
+
+
+def model_quantization_hint(model_name: str | None) -> str | None:
+    if not model_name:
+        return None
+    lowered = model_name.lower()
+    if "awq" in lowered:
+        return "awq"
+    if "gptq" in lowered:
+        return "gptq"
+    if "int8" in lowered or "8bit" in lowered or "8-bit" in lowered:
+        return "int8"
+    if "4bit" in lowered or "4-bit" in lowered:
+        return "4bit"
+    return None
+
+
+def package_version(package_name: str) -> str | None:
+    try:
+        return version(package_name)
+    except PackageNotFoundError:
+        return None
 
 
 def write_outputs(
@@ -922,6 +1093,10 @@ def write_outputs(
 
 
 def render_summary(manifest: dict[str, Any], scenario_rows: list[dict[str, Any]]) -> str:
+    engine = manifest.get("inference_engine", {})
+    serving = manifest.get("serving_config", {})
+    quantization = serving.get("quantization", {})
+    speculative = serving.get("speculative_decoding", {})
     lines = [
         f"# Model Benchmark {manifest['run_id']}",
         "",
@@ -929,6 +1104,13 @@ def render_summary(manifest: dict[str, Any], scenario_rows: list[dict[str, Any]]
         f"- Endpoint: `{manifest['endpoint']}`",
         f"- Host: `{manifest['hardware'].get('hostname')}`",
         f"- Git: `{manifest['git'].get('commit')}` dirty={manifest['git'].get('dirty')}",
+        f"- Inference engine: `{engine.get('name')}` version=`{engine.get('version') or 'unknown'}` mode=`{engine.get('mode')}`",
+        f"- Streaming: `{engine.get('streaming')}`",
+        f"- Quantization: `{quantization.get('effective')}` model_hint=`{quantization.get('model_hint') or 'none'}` argument=`{quantization.get('argument') or 'auto'}`",
+        f"- dtype: `{serving.get('dtype')}` kv_cache_dtype=`{serving.get('kv_cache_dtype')}` attention_backend=`{serving.get('attention_backend')}`",
+        f"- Speculative decoding: enabled=`{speculative.get('enabled')}` method=`{speculative.get('method')}` num_tokens=`{speculative.get('num_speculative_tokens') or 'n/a'}` draft_model=`{speculative.get('draft_model') or 'n/a'}`",
+        f"- vLLM execution: tensor_parallel_size=`{serving.get('tensor_parallel_size')}` max_model_len=`{serving.get('max_model_len')}` max_num_seqs=`{serving.get('max_num_seqs') or 'auto'}` max_num_batched_tokens=`{serving.get('max_num_batched_tokens') or 'auto'}` enforce_eager=`{serving.get('enforce_eager')}`",
+        f"- GPU memory utilization: `{serving.get('gpu_memory_utilization') or 'auto'}` CPU offload GB: `{serving.get('cpu_offload_gb') or 0}`",
         "",
         "| Scenario | Suite | Concurrency | Success | Error % | p50 latency | p95 latency | p50 TTFT | avg tok/s | req/s | peak VRAM MB | peak GPU % | peak W | peak C |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",

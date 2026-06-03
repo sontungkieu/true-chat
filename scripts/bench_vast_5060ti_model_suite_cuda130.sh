@@ -33,6 +33,7 @@ kv_cache_dtype_for_model() {
 
 models=(
   "cyankiwi/Qwen3.5-9B-AWQ-4bit"
+  "Qwen/Qwen2.5-14B-Instruct-AWQ"
 )
 
 if [[ "${BENCH_INCLUDE_QWEN35_8BIT:-0}" == "1" ]]; then

@@ -50,13 +50,13 @@ scripts/setup_vast_5060ti_cuda129.sh
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Run the main 5060 Ti model suite for Qwen3.5 9B 4-bit and Llama-3 16B:
+Run the main 5060 Ti model suite for Qwen3.5 9B 4-bit, Qwen2.5 14B AWQ, and Llama-3 16B:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
-The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit` and `solidrust/Llama-3-16B-Instruct-v0.1-AWQ`. Suite runs use 16GB long-prompt defaults: `BENCH_MAX_MODEL_LEN=4096`, `BENCH_MAX_NUM_SEQS=1`, `BENCH_MAX_NUM_BATCHED_TOKENS=4096`, and `BENCH_ENFORCE_EAGER=1`, with preset `standard` so synthetic long is included. Qwen3.5 9B 8-bit is opt-in with `BENCH_INCLUDE_QWEN35_8BIT=1`; it uses `BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=turboquant_4bit_nc`, `BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.94`, and `BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=2` by default to fit long context on 16GB, so it can be much slower because it measures CPU/PCIe offload rather than clean GPU throughput. Before each model, Vast wrappers kill stale vLLM GPU processes and wait for GPU memory to drop under `BENCH_GPU_READY_MAX_USED_MB=512`. Suite scripts also check Hugging Face cache free space before moving to the next model and delete the previous model cache when `BENCH_MODEL_CACHE_CLEANUP=auto` sees less than `BENCH_MIN_CACHE_FREE_GB=35` available; use `BENCH_MODEL_CACHE_CLEANUP=always` on small disks. Llama 4 Scout 17B is optional because it is a large gated MoE model and is not 16GB-safe by default:
+The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit`, `Qwen/Qwen2.5-14B-Instruct-AWQ`, and `solidrust/Llama-3-16B-Instruct-v0.1-AWQ`. Suite runs use vLLM as the inference engine and 16GB long-prompt defaults: `BENCH_MAX_MODEL_LEN=4096`, `BENCH_MAX_NUM_SEQS=1`, `BENCH_MAX_NUM_BATCHED_TOKENS=4096`, and `BENCH_ENFORCE_EAGER=1`, with preset `standard` so synthetic long is included. Speculative decoding is off by default, attention backend is vLLM auto-selection, and quantization is read from the AWQ model config unless `BENCH_VLLM_QUANTIZATION` is set. Use `BENCH_VLLM_ATTENTION_BACKEND` or `BENCH_VLLM_SPECULATIVE_CONFIG` for explicit A/B runs; `manifest.json` and `summary.md` record the engine, vLLM version, quantization, KV-cache dtype, attention backend, speculative method, and execution limits for each run. Qwen3.5 9B 8-bit is opt-in with `BENCH_INCLUDE_QWEN35_8BIT=1`; it uses `BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=turboquant_4bit_nc`, `BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.94`, and `BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=2` by default to fit long context on 16GB, so it can be much slower because it measures CPU/PCIe offload rather than clean GPU throughput. Before each model, Vast wrappers kill stale vLLM GPU processes and wait for GPU memory to drop under `BENCH_GPU_READY_MAX_USED_MB=512`. Suite scripts also check Hugging Face cache free space before moving to the next model and delete the previous model cache when `BENCH_MODEL_CACHE_CLEANUP=auto` sees less than `BENCH_MIN_CACHE_FREE_GB=35` available; use `BENCH_MODEL_CACHE_CLEANUP=always` on small disks. Llama 4 Scout 17B is optional because it is a large gated MoE model and is not 16GB-safe by default:
 
 ```bash
 BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
@@ -141,12 +141,12 @@ Useful overrides:
 
 Results are written under ignored `runs/model_bench/<timestamp>_<hostname>_<model>/`:
 
-- `manifest.json`: command config, git branch/commit/dirty flag, endpoint, vLLM command, and hardware snapshot.
+- `manifest.json`: command config, git branch/commit/dirty flag, endpoint, vLLM command, hardware snapshot, inference engine, vLLM version, quantization, KV-cache dtype, attention backend, speculative decoding config, eager/CUDA graph mode, batch/cache limits, GPU utilization, and CPU offload.
 - `requests.jsonl`: per-request latency, TTFT, usage tokens, output tok/s, generated size, and error.
 - `scenario_metrics.json` / `scenario_metrics.csv`: p50/p95/p99 latency, p50/p95 TTFT, tok/s, requests/s, completion tokens/s, error rate, and per-scenario hardware aggregates such as peak VRAM, peak/avg GPU utilization, peak/avg power, peak temperature, peak RAM, and CPU load.
 - `hardware_samples.csv`: raw sampled CPU/RAM and GPU utilization, memory, power, and temperature where `nvidia-smi` is available.
 - `server.log`: local vLLM process output, or a note that an existing endpoint was used.
-- `summary.md`: compact comparison table for copying between machines.
+- `summary.md`: compact comparison table plus the inference engine/config fields needed to compare machines and decoding methods.
 
 ## Retrieval Strategies
 

@@ -28,6 +28,15 @@ git checkout bench/vllm-model-bench
 
 Sau khi chọn đúng setup CUDA cho máy, các lệnh bench model nằm cùng một chỗ ở đây. Các lệnh chuẩn dùng `standard`, tức chạy synthetic short/medium/long ở concurrency `1,2,4,8`. Với model lớn trên RTX 5060 Ti 16GB, dùng `max_model_len=4096` để `synthetic_long` không bị reject. Chỉ đổi preset thành `smoke` khi cần health check nhanh xem model có load được không.
 
+Mặc định các lệnh Vast chạy:
+
+- inference engine: vLLM OpenAI-compatible server qua `vllm serve`;
+- speculative decoding: tắt, trừ khi set `BENCH_VLLM_SPECULATIVE_CONFIG`;
+- attention backend: vLLM auto-selection, trừ khi set `BENCH_VLLM_ATTENTION_BACKEND`;
+- quantization: đọc theo model config, ví dụ model id AWQ sẽ được ghi `model_hint=awq`; set `BENCH_VLLM_QUANTIZATION=awq` nếu muốn ép explicit arg;
+- serving: local vLLM process tự start/stop, không dùng server ngoài;
+- output: `manifest.json` và `summary.md` ghi rõ engine, version vLLM, quantization, KV cache dtype, attention backend, speculative method, `max_model_len`, `max_num_seqs`, `max_num_batched_tokens`, `enforce_eager`, GPU utilization, và CPU offload.
+
 Setup CUDA 13.0:
 
 ```bash
@@ -44,6 +53,10 @@ scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
+# Qwen 2.5 14B AWQ 4-bit, không offload theo mặc định
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
+
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc BENCH_VLLM_CPU_OFFLOAD_GB=2 \
   scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
@@ -52,11 +65,27 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
-# Chạy suite chính: 4-bit + Llama-3 16B AWQ
+# Chạy suite chính: Qwen3.5 9B 4-bit + Qwen2.5 14B AWQ + Llama-3 16B AWQ
 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 
 # Opt-in Qwen 3.5 9B 8-bit, chậm vì cần CPU offload trên 16GB
 BENCH_INCLUDE_QWEN35_8BIT=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+```
+
+A/B speculative decoding nhẹ nhất bằng n-gram, không cần draft model:
+
+```bash
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=0 \
+  BENCH_VLLM_SPECULATIVE_CONFIG='{"method":"ngram","num_speculative_tokens":4,"prompt_lookup_min":2,"prompt_lookup_max":5}' \
+  scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
+```
+
+A/B attention backend, chỉ dùng khi muốn so auto-selection với backend cụ thể:
+
+```bash
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=0 \
+  BENCH_VLLM_ATTENTION_BACKEND=FLASHINFER \
+  scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
 ```
 
 Fallback CUDA 12.9 nếu driver chưa đủ cho CUDA 13:
@@ -75,6 +104,10 @@ scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
+# Qwen 2.5 14B AWQ 4-bit, không offload theo mặc định
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
+
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc BENCH_VLLM_CPU_OFFLOAD_GB=2 \
   scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
@@ -83,7 +116,7 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
-# Chạy suite chính: 4-bit + Llama-3 16B AWQ
+# Chạy suite chính: Qwen3.5 9B 4-bit + Qwen2.5 14B AWQ + Llama-3 16B AWQ
 scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
 
 # Opt-in Qwen 3.5 9B 8-bit, chậm vì cần CPU offload trên 16GB
@@ -149,7 +182,7 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite chính gồm Qwen3.5 9B AWQ 4-bit và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
+Chạy suite chính gồm Qwen3.5 9B AWQ 4-bit, Qwen2.5 14B AWQ, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda130.sh
@@ -191,7 +224,7 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite chính gồm Qwen3.5 9B AWQ 4-bit và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
+Chạy suite chính gồm Qwen3.5 9B AWQ 4-bit, Qwen2.5 14B AWQ, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda129.sh
@@ -218,6 +251,7 @@ Các suite script mặc định chạy:
 | Nhãn | Model id | Ghi chú |
 | --- | --- | --- |
 | Qwen3.5 9B AWQ | `cyankiwi/Qwen3.5-9B-AWQ-4bit` | Bản AWQ 4-bit, hợp lý hơn bản full cho VRAM 16GB. |
+| Qwen2.5 14B AWQ | `Qwen/Qwen2.5-14B-Instruct-AWQ` | Bản official AWQ 4-bit, dùng để đo model 14B không CPU offload trên 16GB trước khi thử quant nhỏ hơn. |
 | Llama-3 16B AWQ | `solidrust/Llama-3-16B-Instruct-v0.1-AWQ` | Community merge AWQ, có thể sát VRAM hơn; lệnh đo chính dùng `standard`, đổi về `smoke` khi chỉ cần debug load. |
 
 Qwen3.5 9B AWQ 8-bit `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8` không chạy mặc định. Bật bằng `BENCH_INCLUDE_QWEN35_8BIT=1` khi cần kiểm tra riêng; kết quả này đo cả CPU/PCIe offload nên không nên trộn với bảng tốc độ GPU sạch.
@@ -228,10 +262,21 @@ Suite model lớn dùng defaults an toàn hơn wrapper single-model:
 - `BENCH_MAX_NUM_SEQS=1`;
 - `BENCH_MAX_NUM_BATCHED_TOKENS=4096`;
 - `BENCH_ENFORCE_EAGER=1`;
+- `BENCH_VLLM_ATTENTION_BACKEND` bỏ trống, nghĩa là để vLLM tự chọn backend;
+- `BENCH_VLLM_SPECULATIVE_CONFIG` bỏ trống, nghĩa là không dùng speculative decoding;
 - `BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=turboquant_4bit_nc` cho riêng Qwen3.5 9B 8-bit khi opt-in;
 - `BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.94` cho riêng Qwen3.5 9B 8-bit khi opt-in nếu không set global `BENCH_GPU_MEMORY_UTILIZATION`;
 - `BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=2` cho riêng Qwen3.5 9B 8-bit khi opt-in nếu không set global `BENCH_VLLM_CPU_OFFLOAD_GB`;
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
+
+Nếu bật speculative decoding, truyền JSON thẳng qua env để wrapper đưa vào `vllm serve --speculative-config`:
+
+```bash
+BENCH_VLLM_SPECULATIVE_CONFIG='{"method":"ngram","num_speculative_tokens":4,"prompt_lookup_min":2,"prompt_lookup_max":5}' \
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
+```
+
+Với draft model/MTP/DFlash, chỉ bật khi model/speculator thật sự tương thích và còn VRAM. Trên RTX 5060 Ti 16GB, thử `ngram` trước vì không tải thêm draft model; Qwen3.5 9B 8-bit có CPU offload thì không nên dùng làm baseline speculative.
 
 Trước mỗi model, Vast wrapper cũng:
 
@@ -262,6 +307,13 @@ BENCH_INCLUDE_QWEN35_8BIT=1 BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=4 scripts/bench_vas
 ```
 
 RAM không đầy không có nghĩa offload nhanh. `cpu_offload_gb` chỉ cho phép một phần weight đi qua CPU/RAM; tốc độ thường bị giới hạn bởi CPU/PCIe và kernel scheduling, nên tok/s thấp là kỳ vọng trên 5060 Ti 16GB.
+
+Với Qwen2.5 14B AWQ và Llama-3 16B AWQ, ưu tiên giữ không offload. Nếu 4096 context bị cache-block/OOM, giảm context trước:
+
+```bash
+env BENCH_MAX_MODEL_LEN=3072 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=3072 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
+```
 
 Nếu muốn so sánh Qwen3.5 9B 8-bit bằng KV-cache dtype khác, override riêng biến này:
 
@@ -473,12 +525,12 @@ runs/model_bench/<timestamp>_<hostname>_<model_slug>/
 
 Các file chính:
 
-- `summary.md`: bảng ngắn để copy so sánh giữa máy, gồm latency/tok/s và peak VRAM/GPU/power/temp.
+- `summary.md`: bảng ngắn để copy so sánh giữa máy, gồm engine/config inference, latency/tok/s và peak VRAM/GPU/power/temp.
 - `scenario_metrics.csv`: số aggregate dễ mở bằng spreadsheet, gồm cả hardware aggregate theo scenario.
 - `scenario_metrics.json`: số aggregate dạng JSON, gồm cả hardware aggregate theo scenario.
 - `requests.jsonl`: từng request riêng lẻ, gồm latency, TTFT, token usage, tok/s, lỗi.
 - `hardware_samples.csv`: raw samples GPU util, VRAM, power, temperature, CPU load, RAM trong lúc chạy.
-- `manifest.json`: model, command, git commit, dirty flag, platform, hardware snapshot.
+- `manifest.json`: model, command, git commit, dirty flag, platform, hardware snapshot, `inference_engine`, và `serving_config` gồm quantization, KV-cache dtype, attention backend, speculative decoding, eager/CUDA graph mode, batch/cache limits, GPU utilization, CPU offload.
 - `server.log`: log vLLM khi benchmark tự start server.
 
 Metric nên nhìn đầu tiên:

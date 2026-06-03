@@ -11,9 +11,11 @@ from rag_bench.model_bench import (
     OpenAICompletionClient,
     Scenario,
     aggregate_scenario,
+    build_manifest,
     collect_hardware_samples,
     collect_hardware_snapshot,
     enrich_scenario_rows_with_hardware,
+    parse_vllm_options,
     parse_nvidia_gpu_samples,
     parse_nvidia_gpu_snapshot,
     run_model_benchmark,
@@ -175,6 +177,77 @@ def test_run_model_benchmark_emits_progress_for_existing_endpoint(tmp_path: Path
     assert "using existing OpenAI-compatible endpoint" in captured.err
     assert "run 1/1: scenario=synthetic_short concurrency=1 requests=1" in captured.err
     assert "writing benchmark artifacts" in captured.err
+
+
+def test_manifest_records_inference_and_vllm_serving_config(tmp_path: Path) -> None:
+    config = ModelBenchConfig(
+        model="Qwen/Qwen2.5-14B-Instruct-AWQ",
+        endpoint=None,
+        served_model_name=None,
+        preset="smoke",
+        concurrency=(1,),
+        requests_per_scenario=1,
+        warmup_requests=0,
+        output_dir=tmp_path,
+        host="127.0.0.1",
+        port=8000,
+        tensor_parallel_size="auto",
+        max_model_len=4096,
+        max_output_tokens=None,
+        temperature=0.0,
+        startup_timeout_s=1,
+        sample_interval_s=1.0,
+        stream=True,
+        vllm_args=(
+            "--gpu-memory-utilization",
+            "0.85",
+            "--quantization",
+            "awq",
+            "--kv-cache-dtype",
+            "fp8",
+            "--attention-backend",
+            "FLASHINFER",
+            "--speculative-config",
+            '{"method":"ngram","num_speculative_tokens":4,"prompt_lookup_min":2}',
+            "--max-num-seqs",
+            "1",
+            "--max-num-batched-tokens",
+            "4096",
+            "--enforce-eager",
+        ),
+    )
+
+    manifest = build_manifest(
+        config,
+        run_id="run-1",
+        endpoint="http://127.0.0.1:8000/v1",
+        served_model_name="Qwen/Qwen2.5-14B-Instruct-AWQ",
+        tensor_parallel_size=1,
+        vllm_command=["vllm", "serve", "Qwen/Qwen2.5-14B-Instruct-AWQ"],
+        hardware_snapshot={"hostname": "host"},
+        elapsed_s=1.0,
+    )
+
+    assert manifest["inference_engine"]["name"] == "vllm"
+    assert manifest["inference_engine"]["mode"] == "local_vllm"
+    serving = manifest["serving_config"]
+    assert serving["quantization"]["effective"] == "awq"
+    assert serving["quantization"]["model_hint"] == "awq"
+    assert serving["kv_cache_dtype"] == "fp8"
+    assert serving["attention_backend"] == "FLASHINFER"
+    assert serving["gpu_memory_utilization"] == 0.85
+    assert serving["max_num_seqs"] == 1
+    assert serving["max_num_batched_tokens"] == 4096
+    assert serving["enforce_eager"] is True
+    assert serving["speculative_decoding"]["enabled"] is True
+    assert serving["speculative_decoding"]["method"] == "ngram"
+    assert serving["speculative_decoding"]["num_speculative_tokens"] == 4
+
+
+def test_parse_vllm_options_marks_missing_speculative_decoding_as_off() -> None:
+    options = parse_vllm_options(("--dtype=auto", "--enforce-eager"))
+
+    assert options == {"dtype": "auto", "enforce_eager": True}
 
 
 def test_aggregate_scenario_records_error_rate_and_percentiles() -> None:
