@@ -12,9 +12,9 @@ nvidia-smi
 
 Chọn profile theo `Driver Version`:
 
-- Driver Linux `>= 575.57.08`: dùng profile CUDA 12.9.
-- Driver Linux `>= 580.65.06`: có thể dùng profile CUDA 13.0.
-- Nếu Vast không cố định được CUDA 13, dùng CUDA 12.9 là default an toàn hơn.
+- Driver Linux `>= 580.65.06`: ưu tiên profile CUDA 13.0.
+- Driver Linux `>= 575.57.08` nhưng `< 580.65.06`: dùng fallback CUDA 12.9.
+- Nếu Vast không thuê được host đủ driver cho CUDA 13, chuyển sang CUDA 12.9.
 
 Clone repo:
 
@@ -27,34 +27,6 @@ git checkout bench/vllm-model-bench
 ## Copy/Paste Lệnh Bench Theo Model
 
 Sau khi chọn đúng setup CUDA cho máy, các lệnh bench model nằm cùng một chỗ ở đây. Các lệnh chuẩn dùng `standard`, tức chạy synthetic short/medium/long ở concurrency `1,2,4,8`. Với model lớn trên RTX 5060 Ti 16GB, dùng `max_model_len=4096` để `synthetic_long` không bị reject. Chỉ đổi preset thành `smoke` khi cần health check nhanh xem model có load được không.
-
-Setup CUDA 12.9:
-
-```bash
-scripts/setup_vast_5060ti_cuda129.sh
-```
-
-Bench từng model trên CUDA 12.9:
-
-```bash
-# Qwen 2.5 7B AWQ, baseline 16GB dễ chạy nhất
-scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
-
-# Qwen 3.5 9B AWQ 4-bit
-env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
-
-# Qwen 3.5 9B AWQ 8-bit/BF16-INT8
-env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc \
-  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
-
-# Llama-3 16B AWQ
-env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
-
-# Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
-scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
-```
 
 Setup CUDA 13.0:
 
@@ -84,6 +56,34 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
+Fallback CUDA 12.9 nếu driver chưa đủ cho CUDA 13:
+
+```bash
+scripts/setup_vast_5060ti_cuda129.sh
+```
+
+Bench từng model trên CUDA 12.9:
+
+```bash
+# Qwen 2.5 7B AWQ, baseline 16GB dễ chạy nhất
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+
+# Qwen 3.5 9B AWQ 4-bit
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
+
+# Qwen 3.5 9B AWQ 8-bit/BF16-INT8
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc \
+  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
+
+# Llama-3 16B AWQ
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
+
+# Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
+scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
+```
+
 Llama 4 Scout 17B không bật mặc định vì thường cần HF access token và không 16GB-safe. Nếu vẫn muốn thử có kiểm soát:
 
 ```bash
@@ -102,7 +102,54 @@ BENCH_MODEL_CACHE_CLEANUP=always scripts/bench_vast_5060ti_model_suite_cuda130.s
 
 Mặc định suite dùng `BENCH_MODEL_CACHE_CLEANUP=auto`: trước mỗi model kế tiếp, script kiểm tra dung lượng trống trong `HF_HOME`; nếu thấp hơn `BENCH_MIN_CACHE_FREE_GB=35`, nó xoá Hugging Face cache của model vừa bench. Đặt `BENCH_MODEL_CACHE_CLEANUP=never` nếu muốn giữ toàn bộ model cache.
 
-### Profile CUDA 12.9
+### Profile CUDA 13.0
+
+Setup:
+
+```bash
+scripts/setup_vast_5060ti_cuda130.sh
+```
+
+Script CUDA 13.0 sẽ:
+
+- dùng `HF_HOME=/workspace/hf-cache` nếu `/workspace` ghi được;
+- dùng `XDG_CACHE_HOME=/workspace/vllm-cache` nếu `/workspace` ghi được;
+- ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`;
+- pin mặc định `VLLM_VERSION=0.22.0`;
+- ép backend `cu130`;
+- clean stack `vllm/torch/...` cũ trong `.venv`;
+- cài vLLM với backend `cu130`, để resolver chọn đúng PyTorch build một lần;
+- fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0;
+- verify `torch.version.cuda == 13.0`.
+
+Chạy health check mặc định, model AWQ phù hợp hơn với VRAM 16GB:
+
+```bash
+scripts/bench_vast_5060ti_cuda130.sh
+```
+
+Chạy model/preset cụ thể:
+
+```bash
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Override cấu hình an toàn bằng env:
+
+```bash
+BENCH_MAX_MODEL_LEN=6144 \
+BENCH_GPU_MEMORY_UTILIZATION=0.88 \
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
+
+```bash
+scripts/bench_vast_5060ti_model_suite_cuda130.sh
+```
+
+### Fallback CUDA 12.9
 
 Setup:
 
@@ -110,32 +157,21 @@ Setup:
 scripts/setup_vast_5060ti_cuda129.sh
 ```
 
-Script CUDA 12.9 sẽ:
+Script CUDA 12.9 dùng cùng cache `/workspace`, ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu129`, clean stack cũ trong `.venv`, cài vLLM với backend `cu129` để resolver chọn đúng PyTorch build một lần, fail sớm nếu driver thấp hơn mức cần cho CUDA 12.9, và verify `torch.version.cuda == 12.9`.
 
-- dùng `HF_HOME=/workspace/hf-cache` nếu `/workspace` ghi được;
-- dùng `XDG_CACHE_HOME=/workspace/vllm-cache` nếu `/workspace` ghi được;
-- ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`;
-- pin mặc định `VLLM_VERSION=0.22.0`;
-- ép backend `cu129`;
-- clean stack `vllm/torch/...` cũ trong `.venv`;
-- cài vLLM với backend `cu129`, để resolver chọn đúng PyTorch build một lần;
-- fail sớm nếu driver thấp hơn mức cần cho CUDA 12.9;
-- verify `torch.version.cuda == 12.9`.
-
-Chạy health check mặc định, model AWQ phù hợp hơn với VRAM 16GB:
+Chạy health check mặc định:
 
 ```bash
 scripts/bench_vast_5060ti_cuda129.sh
 ```
 
-Chạy model/preset cụ thể:
+Chạy benchmark chuẩn:
 
 ```bash
-scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Override cấu hình an toàn bằng env:
+Override cấu hình giống profile CUDA 13.0:
 
 ```bash
 BENCH_MAX_MODEL_LEN=6144 \
@@ -149,51 +185,13 @@ Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và L
 scripts/bench_vast_5060ti_model_suite_cuda129.sh
 ```
 
-Nếu muốn xác nhận lỗi AWQ Marlin, có thể ép kernel AWQ thường:
+Nếu muốn xác nhận lỗi AWQ Marlin trên fallback CUDA 12.9, có thể ép kernel AWQ thường:
 
 ```bash
 BENCH_VLLM_QUANTIZATION=awq scripts/bench_vast_5060ti_cuda129.sh
 ```
 
 Không dùng flag này cho số benchmark chuẩn nếu driver đã đúng; để vLLM tự chọn kernel thường cho tốc độ tốt hơn.
-
-### Profile CUDA 13.0
-
-Chỉ dùng khi `nvidia-smi` cho thấy driver Linux `>= 580.65.06`.
-
-Setup:
-
-```bash
-scripts/setup_vast_5060ti_cuda130.sh
-```
-
-Script CUDA 13.0 dùng cùng cache `/workspace`, ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, cài vLLM với backend `cu130` để resolver chọn đúng PyTorch build một lần, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
-
-Chạy health check mặc định:
-
-```bash
-scripts/bench_vast_5060ti_cuda130.sh
-```
-
-Chạy benchmark chuẩn:
-
-```bash
-scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
-```
-
-Override cấu hình giống profile CUDA 12.9:
-
-```bash
-BENCH_MAX_MODEL_LEN=6144 \
-BENCH_GPU_MEMORY_UTILIZATION=0.88 \
-scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
-```
-
-Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
-
-```bash
-scripts/bench_vast_5060ti_model_suite_cuda130.sh
-```
 
 ### Model suite 5060 Ti
 
@@ -285,16 +283,16 @@ cd true-chat
 git checkout bench/vllm-model-bench
 ```
 
-Setup Python env và cài vLLM. Với RTX 5060 Ti 16GB đang dùng torch CUDA 12.9, ưu tiên script CUDA 12.9:
-
-```bash
-scripts/setup_vllm_bench_cuda129.sh
-```
-
-Nếu máy/driver đã được chuẩn bị cho CUDA 13.0 và cần vLLM/PyTorch backend CUDA 13:
+Setup Python env và cài vLLM. Với RTX 5060 Ti 16GB, ưu tiên script CUDA 13.0 khi driver đủ mới:
 
 ```bash
 scripts/setup_vllm_bench_cuda130.sh
+```
+
+Nếu máy/driver chưa đủ cho CUDA 13.0, dùng fallback CUDA 12.9:
+
+```bash
+scripts/setup_vllm_bench_cuda129.sh
 ```
 
 Script tự chọn backend theo `uv` cũng vẫn có sẵn:
@@ -324,12 +322,12 @@ print("cuda available", torch.cuda.is_available())
 PY
 ```
 
-Nếu log lỗi có `libcudart.so.13`, env đang có binary CUDA 13. Nếu `torch.version.cuda` là `12.9`, cài lại bằng `scripts/setup_vllm_bench_cuda129.sh`.
+Nếu log lỗi có `libcudart.so.13`, env đang có binary CUDA 13 nhưng runtime chưa khớp. Cài lại đúng backend bằng `scripts/setup_vllm_bench_cuda130.sh` nếu driver đủ mới; nếu không, fallback bằng `scripts/setup_vllm_bench_cuda129.sh`.
 
 Nếu máy cần version vLLM cụ thể:
 
 ```bash
-VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda129.sh
+VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda130.sh
 ```
 
 Kiểm tra nhanh GPU trước khi chạy:
@@ -500,8 +498,8 @@ Model không load được:
 
 Import lỗi `libcudart.so.13` hoặc mismatch CUDA:
 
-- nếu muốn chạy CUDA 12.9, dùng `scripts/setup_vllm_bench_cuda129.sh`;
 - nếu muốn chạy CUDA 13.0, dùng `scripts/setup_vllm_bench_cuda130.sh`;
+- nếu driver chưa đủ CUDA 13.0, dùng fallback `scripts/setup_vllm_bench_cuda129.sh`;
 - không dùng `uv pip uninstall -y`; `uv pip uninstall` không có flag `-y`;
 - sau setup, kiểm tra `torch.version.cuda` bằng đoạn Python ở phần chuẩn bị.
 

@@ -36,18 +36,18 @@ cd true-chat
 git checkout bench/vllm-model-bench
 ```
 
-Use the CUDA 12.9 profile when the Vast host driver is `>= 575.57.08`:
-
-```bash
-scripts/setup_vast_5060ti_cuda129.sh
-scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
-```
-
-Use the CUDA 13.0 profile when the Vast host driver is `>= 580.65.06`:
+Use the CUDA 13.0 profile first when the Vast host driver is `>= 580.65.06`:
 
 ```bash
 scripts/setup_vast_5060ti_cuda130.sh
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Fallback to CUDA 12.9 when the driver is `>= 575.57.08` but not CUDA 13-ready:
+
+```bash
+scripts/setup_vast_5060ti_cuda129.sh
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
 Run the extra 5060 Ti model suite for Qwen3.5 9B and Llama-3 16B:
@@ -62,7 +62,7 @@ The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit`, `cyankiwi/Qwen3.5-9B-AWQ-B
 BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
-Both profiles use `/workspace` caches when available, force `UV_PROJECT_ENVIRONMENT=$PWD/.venv` so an active `(main)` environment cannot capture installs, install vLLM with the selected CUDA backend so its resolver picks the matching PyTorch build once, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. CUDA 12.9 is the safer default when Vast does not expose a CUDA 13-ready host; CUDA 13.0 is available for hosts with newer drivers.
+Both profiles use `/workspace` caches when available, force `UV_PROJECT_ENVIRONMENT=$PWD/.venv` so an active `(main)` environment cannot capture installs, install vLLM with the selected CUDA backend so its resolver picks the matching PyTorch build once, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. Prefer CUDA 13.0 on hosts with driver `>= 580.65.06`; keep CUDA 12.9 as the fallback when Vast does not expose a CUDA 13-ready host.
 
 Use the bench branch when comparing one model across multiple manually prepared machines:
 
@@ -70,15 +70,15 @@ Use the bench branch when comparing one model across multiple manually prepared 
 git clone <repo-url> true-chat
 cd true-chat
 git checkout bench/vllm-model-bench
-scripts/setup_vllm_bench_cuda129.sh
+scripts/setup_vllm_bench_cuda130.sh
 ```
 
-Use `scripts/setup_vllm_bench_cuda129.sh` for machines that should run the CUDA 12.9 vLLM/PyTorch stack, which is the first target for RTX 5060 Ti 16GB testing. Use `scripts/setup_vllm_bench_cuda130.sh` only when the machine/driver is prepared for the CUDA 13.0 backend. The generic `scripts/setup_vllm_bench.sh` keeps `uv` backend auto-selection.
+Use `scripts/setup_vllm_bench_cuda130.sh` for machines that should run the CUDA 13.0 vLLM/PyTorch stack. Use `scripts/setup_vllm_bench_cuda129.sh` only when the machine/driver is not prepared for the CUDA 13.0 backend. The generic `scripts/setup_vllm_bench.sh` keeps `uv` backend auto-selection.
 
 The setup scripts only prepare the Python environment and install vLLM into `.venv`. They do not install or change NVIDIA drivers, CUDA, or system packages. The CUDA-specific wrappers remove the existing vLLM/PyTorch CUDA stack inside `.venv` before reinstalling so a CUDA 13 wheel is not mixed with a CUDA 12.9 torch build. Set `VLLM_VERSION=...` when a machine needs a specific vLLM build:
 
 ```bash
-VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda129.sh
+VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda130.sh
 ```
 
 The CUDA-specific setup wrappers fail fast when the installed NVIDIA driver is too old for the selected backend: CUDA 12.9 requires Linux driver `>= 575.57.08`, and CUDA 13.0 requires Linux driver `>= 580.65.06`. This prevents later model-load failures such as `cudaErrorUnsupportedPtxVersion`.
