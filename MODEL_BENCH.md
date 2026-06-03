@@ -36,6 +36,7 @@ Script CUDA 12.9 sẽ:
 
 - dùng `HF_HOME=/workspace/hf-cache` nếu `/workspace` ghi được;
 - dùng `XDG_CACHE_HOME=/workspace/vllm-cache` nếu `/workspace` ghi được;
+- ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`;
 - pin mặc định `VLLM_VERSION=0.22.0`;
 - ép backend `cu129`;
 - clean stack `vllm/torch/...` cũ trong `.venv`;
@@ -89,7 +90,7 @@ Setup:
 scripts/setup_vast_5060ti_cuda130.sh
 ```
 
-Script CUDA 13.0 dùng cùng cache `/workspace`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, cài `torch` explicit theo backend `cu130` trước khi cài vLLM, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
+Script CUDA 13.0 dùng cùng cache `/workspace`, ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, cài `torch` explicit theo backend `cu130` trước khi cài vLLM, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
 
 Chạy smoke mặc định:
 

@@ -11,6 +11,8 @@ fi
 VLLM_TORCH_BACKEND="${VLLM_TORCH_BACKEND:-auto}"
 VLLM_CLEAN="${VLLM_CLEAN:-0}"
 VLLM_SKIP_DRIVER_CHECK="${VLLM_SKIP_DRIVER_CHECK:-0}"
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$PWD/.venv}"
+PROJECT_PYTHON="${UV_PROJECT_ENVIRONMENT}/bin/python"
 
 version_ge() {
   test "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" = "$2"
@@ -36,7 +38,7 @@ install_torch_for_backend() {
   case "$1" in
     cu129 | cu130)
       echo "Installing PyTorch for backend $1..."
-      uv pip install torch --torch-backend="$1"
+      uv pip install --python "$PROJECT_PYTHON" torch --torch-backend="$1"
       ;;
   esac
 }
@@ -60,24 +62,29 @@ fi
 
 uv sync --frozen --group dev
 
+if [[ ! -x "$PROJECT_PYTHON" ]]; then
+  echo "error: expected project Python at ${PROJECT_PYTHON}, but it was not created by uv sync." >&2
+  exit 1
+fi
+
 if [[ "$VLLM_CLEAN" == "1" ]]; then
   echo "Removing existing vLLM/PyTorch CUDA packages before installing backend ${VLLM_TORCH_BACKEND}..."
   for package in vllm torch torchvision torchaudio xformers triton; do
-    uv pip uninstall "$package" || true
+    uv pip uninstall --python "$PROJECT_PYTHON" "$package" || true
   done
 fi
 
 install_torch_for_backend "$VLLM_TORCH_BACKEND"
 
 if [[ -n "${VLLM_VERSION:-}" ]]; then
-  uv pip install "vllm==${VLLM_VERSION}" --torch-backend="${VLLM_TORCH_BACKEND}"
+  uv pip install --python "$PROJECT_PYTHON" "vllm==${VLLM_VERSION}" --torch-backend="${VLLM_TORCH_BACKEND}"
 else
-  uv pip install vllm --torch-backend="${VLLM_TORCH_BACKEND}"
+  uv pip install --python "$PROJECT_PYTHON" vllm --torch-backend="${VLLM_TORCH_BACKEND}"
 fi
 
 echo "Verifying vLLM/PyTorch import..."
 expected_torch_cuda="$(expected_torch_cuda_for_backend "$VLLM_TORCH_BACKEND")"
-VLLM_EXPECTED_TORCH_CUDA="$expected_torch_cuda" .venv/bin/python - <<'PY'
+VLLM_EXPECTED_TORCH_CUDA="$expected_torch_cuda" "$PROJECT_PYTHON" - <<'PY'
 import os
 
 import torch

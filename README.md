@@ -62,7 +62,7 @@ The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit` and `solidrust/Llama-3-16B-
 BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
 ```
 
-Both profiles use `/workspace` caches when available, install PyTorch explicitly for the selected CUDA backend, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. CUDA 12.9 is the safer default when Vast does not expose a CUDA 13-ready host; CUDA 13.0 is available for hosts with newer drivers.
+Both profiles use `/workspace` caches when available, force `UV_PROJECT_ENVIRONMENT=$PWD/.venv` so an active `(main)` environment cannot capture installs, install PyTorch explicitly for the selected CUDA backend, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. CUDA 12.9 is the safer default when Vast does not expose a CUDA 13-ready host; CUDA 13.0 is available for hosts with newer drivers.
 
 Use the bench branch when comparing one model across multiple manually prepared machines:
 
