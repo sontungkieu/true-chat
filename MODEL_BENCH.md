@@ -24,6 +24,76 @@ cd true-chat
 git checkout bench/vllm-model-bench
 ```
 
+## Copy/Paste Lệnh Bench Theo Model
+
+Sau khi chọn đúng setup CUDA cho máy, các lệnh bench model nằm cùng một chỗ ở đây. Bắt đầu bằng `smoke`; khi model đã load ổn, thay đối số cuối từ `smoke` sang `standard` để đo nhiều scenario/concurrency hơn.
+
+Setup CUDA 12.9:
+
+```bash
+scripts/setup_vast_5060ti_cuda129.sh
+```
+
+Bench từng model trên CUDA 12.9:
+
+```bash
+# Qwen 2.5 7B AWQ, baseline 16GB dễ chạy nhất
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+
+# Qwen 3.5 9B AWQ 4-bit
+env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit smoke
+
+# Qwen 3.5 9B AWQ 8-bit/BF16-INT8
+env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 smoke
+
+# Llama-3 16B AWQ
+env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ smoke
+
+# Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
+scripts/bench_vast_5060ti_model_suite_cuda129.sh smoke
+```
+
+Setup CUDA 13.0:
+
+```bash
+scripts/setup_vast_5060ti_cuda130.sh
+```
+
+Bench từng model trên CUDA 13.0:
+
+```bash
+# Qwen 2.5 7B AWQ, baseline 16GB dễ chạy nhất
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+
+# Qwen 3.5 9B AWQ 4-bit
+env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit smoke
+
+# Qwen 3.5 9B AWQ 8-bit/BF16-INT8
+env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 smoke
+
+# Llama-3 16B AWQ
+env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ smoke
+
+# Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
+scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+```
+
+Llama 4 Scout 17B không bật mặc định vì thường cần HF access token và không 16GB-safe. Nếu vẫn muốn thử có kiểm soát:
+
+```bash
+BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+
+BENCH_INCLUDE_LLAMA4=1 \
+BENCH_LLAMA4_MODEL=unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit \
+scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+```
+
 ### Profile CUDA 12.9
 
 Setup:

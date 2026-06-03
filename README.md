@@ -26,7 +26,7 @@ Direct runtime, optional, and test dependencies are pinned exactly in `pyproject
 
 ## vLLM Model Benchmark
 
-Detailed operator guide: [`MODEL_BENCH.md`](MODEL_BENCH.md).
+Detailed operator guide and one-place per-model command list: [`MODEL_BENCH.md`](MODEL_BENCH.md).
 
 Vast AI RTX 5060 Ti 16GB quick paths:
 
