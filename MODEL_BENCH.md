@@ -2,30 +2,37 @@
 
 File này hướng dẫn chạy benchmark một model trên từng máy theo workflow thủ công: mở máy, clone repo, setup môi trường, nhập tên model, chạy benchmark, rồi so sánh kết quả giữa các máy.
 
-## Quickstart Vast AI RTX 5060 Ti 16GB CUDA 12.9
+## Quickstart Vast AI RTX 5060 Ti 16GB
 
-Khi thuê Vast AI, ưu tiên chọn instance RTX 5060 Ti 16GB có driver đủ mới cho CUDA 12.9. Trong container, kiểm tra:
+Khi thuê Vast AI, ưu tiên chọn instance RTX 5060 Ti 16GB có driver đủ mới. Trong container, kiểm tra:
 
 ```bash
 nvidia-smi
 ```
 
-Yêu cầu tối thiểu cho profile này:
+Chọn profile theo `Driver Version`:
 
-- GPU: RTX 5060 Ti 16GB.
-- Driver Linux: `>= 575.57.08`.
-- Không cần cố định CUDA 13; profile này dùng vLLM/PyTorch CUDA 12.9.
+- Driver Linux `>= 575.57.08`: dùng profile CUDA 12.9.
+- Driver Linux `>= 580.65.06`: có thể dùng profile CUDA 13.0.
+- Nếu Vast không cố định được CUDA 13, dùng CUDA 12.9 là default an toàn hơn.
 
-Clone repo và setup:
+Clone repo:
 
 ```bash
 git clone <repo-url> true-chat
 cd true-chat
 git checkout bench/vllm-model-bench
+```
+
+### Profile CUDA 12.9
+
+Setup:
+
+```bash
 scripts/setup_vast_5060ti_cuda129.sh
 ```
 
-Script Vast sẽ:
+Script CUDA 12.9 sẽ:
 
 - dùng `HF_HOME=/workspace/hf-cache` nếu `/workspace` ghi được;
 - dùng `XDG_CACHE_HOME=/workspace/vllm-cache` nếu `/workspace` ghi được;
@@ -63,6 +70,38 @@ BENCH_VLLM_QUANTIZATION=awq scripts/bench_vast_5060ti_cuda129.sh
 ```
 
 Không dùng flag này cho số benchmark chuẩn nếu driver đã đúng; để vLLM tự chọn kernel thường cho tốc độ tốt hơn.
+
+### Profile CUDA 13.0
+
+Chỉ dùng khi `nvidia-smi` cho thấy driver Linux `>= 580.65.06`.
+
+Setup:
+
+```bash
+scripts/setup_vast_5060ti_cuda130.sh
+```
+
+Script CUDA 13.0 dùng cùng cache `/workspace`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
+
+Chạy smoke mặc định:
+
+```bash
+scripts/bench_vast_5060ti_cuda130.sh
+```
+
+Chạy benchmark chuẩn:
+
+```bash
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Override cấu hình giống profile CUDA 12.9:
+
+```bash
+BENCH_MAX_MODEL_LEN=6144 \
+BENCH_GPU_MEMORY_UTILIZATION=0.88 \
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
 
 ## 1. Chuẩn bị trên mỗi máy
 

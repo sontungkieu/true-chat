@@ -28,17 +28,29 @@ Direct runtime, optional, and test dependencies are pinned exactly in `pyproject
 
 Detailed operator guide: [`MODEL_BENCH.md`](MODEL_BENCH.md).
 
-Vast AI RTX 5060 Ti 16GB CUDA 12.9 quick path:
+Vast AI RTX 5060 Ti 16GB quick paths:
 
 ```bash
 git clone <repo-url> true-chat
 cd true-chat
 git checkout bench/vllm-model-bench
+```
+
+Use the CUDA 12.9 profile when the Vast host driver is `>= 575.57.08`:
+
+```bash
 scripts/setup_vast_5060ti_cuda129.sh
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
 ```
 
-This profile uses `/workspace` caches when available, pins vLLM `0.22.0` by default, installs the CUDA 12.9 vLLM/PyTorch backend, verifies `torch.version.cuda == 12.9`, and uses 16GB-safe defaults for the benchmark runner. The Vast host driver still needs to be new enough for CUDA 12.9.
+Use the CUDA 13.0 profile when the Vast host driver is `>= 580.65.06`:
+
+```bash
+scripts/setup_vast_5060ti_cuda130.sh
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+```
+
+Both profiles use `/workspace` caches when available, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. CUDA 12.9 is the safer default when Vast does not expose a CUDA 13-ready host; CUDA 13.0 is available for hosts with newer drivers.
 
 Use the bench branch when comparing one model across multiple manually prepared machines:
 
