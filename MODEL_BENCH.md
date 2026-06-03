@@ -26,7 +26,7 @@ git checkout bench/vllm-model-bench
 
 ## Copy/Paste Lệnh Bench Theo Model
 
-Sau khi chọn đúng setup CUDA cho máy, các lệnh bench model nằm cùng một chỗ ở đây. Các lệnh chính bên dưới dùng `standard` để đo thật nhiều scenario/concurrency; chỉ đổi `standard` thành `smoke` khi cần health check nhanh xem model có load được không.
+Sau khi chọn đúng setup CUDA cho máy, các lệnh bench model nằm cùng một chỗ ở đây. Các lệnh chuẩn dùng `standard`, tức chạy synthetic short/medium/long ở concurrency `1,2,4,8`. Với model lớn trên RTX 5060 Ti 16GB, dùng `max_model_len=4096` để `synthetic_long` không bị reject. Chỉ đổi preset thành `smoke` khi cần health check nhanh xem model có load được không.
 
 Setup CUDA 12.9:
 
@@ -41,15 +41,15 @@ Bench từng model trên CUDA 12.9:
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 
 # Qwen 3.5 9B AWQ 4-bit
-env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
-env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
 
 # Llama-3 16B AWQ
-env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
 # Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
@@ -69,15 +69,15 @@ Bench từng model trên CUDA 13.0:
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 
 # Qwen 3.5 9B AWQ 4-bit
-env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
-env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
 
 # Llama-3 16B AWQ
-env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
 # Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
@@ -143,7 +143,7 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard`:
+Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda129.sh
@@ -189,7 +189,7 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard`:
+Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda130.sh
@@ -207,9 +207,9 @@ Các suite script mặc định chạy:
 
 Suite model lớn dùng defaults an toàn hơn wrapper single-model:
 
-- `BENCH_MAX_MODEL_LEN=2048`;
+- `BENCH_MAX_MODEL_LEN=4096`;
 - `BENCH_MAX_NUM_SEQS=1`;
-- `BENCH_MAX_NUM_BATCHED_TOKENS=2048`;
+- `BENCH_MAX_NUM_BATCHED_TOKENS=4096`;
 - `BENCH_ENFORCE_EAGER=1`;
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 
@@ -227,12 +227,12 @@ Suite còn quản lý disk cache khi chạy nhiều model:
 - `BENCH_MODEL_CACHE_CLEANUP=always` xoá cache model vừa chạy trước mỗi model kế tiếp;
 - `BENCH_MODEL_CACHE_CLEANUP=never` giữ toàn bộ cache.
 
-Lý do: Qwen3.5 9B AWQ 4-bit có thể OOM ở `max_model_len=4096` khi vLLM profile CUDA graph/KV cache trên RTX 5060 Ti 16GB. Nếu `standard` ở `2048` đã ổn và muốn đo aggressive hơn, tăng dần:
+Lý do: preset `standard` có `synthetic_long` khoảng 3000 prompt tokens, nên default suite dùng `max_model_len=4096`. Nếu model lớn bị OOM ở 4096, fallback về 2048 để chạy short/medium/smoke trước, nhưng khi đó `synthetic_long` sẽ không còn hợp lệ:
 
 ```bash
-BENCH_MAX_MODEL_LEN=3072 \
-BENCH_MAX_NUM_BATCHED_TOKENS=3072 \
-scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+BENCH_MAX_MODEL_LEN=2048 \
+BENCH_MAX_NUM_BATCHED_TOKENS=2048 \
+scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit smoke
 ```
 
 Nếu bản Qwen3.5 9B 8-bit OOM, tắt riêng nó:
