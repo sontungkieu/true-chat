@@ -38,12 +38,13 @@ vast_hf_model_cache_name() {
 
 vast_remove_hf_model_cache() {
   local model="$1"
-  local cache_name cache_dir lock_dir size_mb
+  local cache_name cache_dir lock_dir legacy_lock_dir size_mb
   cache_name="$(vast_hf_model_cache_name "$model")"
   cache_dir="${HF_HOME}/hub/${cache_name}"
-  lock_dir="${HF_HOME}/.locks/${cache_name}"
+  lock_dir="${HF_HOME}/hub/.locks/${cache_name}"
+  legacy_lock_dir="${HF_HOME}/.locks/${cache_name}"
 
-  if [[ ! -e "$cache_dir" && ! -e "$lock_dir" ]]; then
+  if [[ ! -e "$cache_dir" && ! -e "$lock_dir" && ! -e "$legacy_lock_dir" ]]; then
     vast_log_step "no local Hugging Face cache found for ${model}"
     return 0
   fi
@@ -53,7 +54,7 @@ vast_remove_hf_model_cache() {
     size_mb="$(du -sm "$cache_dir" 2>/dev/null | awk '{print $1 + 0}')"
   fi
   vast_log_step "deleting Hugging Face cache for ${model} (${size_mb} MiB): ${cache_dir}"
-  rm -rf -- "$cache_dir" "$lock_dir"
+  rm -rf -- "$cache_dir" "$lock_dir" "$legacy_lock_dir"
 }
 
 vast_prune_previous_model_cache_if_needed() {
@@ -92,6 +93,123 @@ vast_prune_previous_model_cache_if_needed() {
     free_mb="$(vast_disk_free_mb "$HF_HOME")"
     vast_log_step "HF cache free after cleanup: ${free_mb} MiB"
   fi
+}
+
+vast_prune_other_model_caches_if_needed() {
+  local current_model="$1"
+  local mode="${BENCH_MODEL_CACHE_CLEANUP:-auto}"
+
+  case "$mode" in
+    never | 0 | false)
+      return 0
+      ;;
+    always | 1 | true | auto)
+      ;;
+    *)
+      echo "warning: unknown BENCH_MODEL_CACHE_CLEANUP=${mode}; using auto." >&2
+      mode="auto"
+      ;;
+  esac
+
+  local min_free_gb="${BENCH_MIN_CACHE_FREE_GB:-35}"
+  local min_free_mb free_mb
+  min_free_mb="$(awk -v gb="$min_free_gb" 'BEGIN {printf "%.0f", gb * 1024}')"
+  free_mb="$(vast_disk_free_mb "$HF_HOME")"
+
+  if [[ -z "$free_mb" || -z "$min_free_mb" ]]; then
+    echo "warning: could not check free disk space for ${HF_HOME}; skipping cache cleanup." >&2
+    return 0
+  fi
+
+  vast_log_step "HF cache free before model prefetch: ${free_mb} MiB (cleanup threshold: ${min_free_mb} MiB)"
+  if [[ "$mode" == "auto" && "$free_mb" -ge "$min_free_mb" ]]; then
+    return 0
+  fi
+
+  local current_cache_name
+  current_cache_name="$(vast_hf_model_cache_name "$current_model")"
+
+  local cache_dirs=()
+  shopt -s nullglob
+  cache_dirs=("${HF_HOME}/hub"/models--*)
+  shopt -u nullglob
+
+  if [[ "${#cache_dirs[@]}" -eq 0 ]]; then
+    vast_log_step "no Hugging Face model caches found to prune"
+    return 0
+  fi
+
+  local removed_any=0
+  local size_mb cache_dir cache_name lock_dir legacy_lock_dir
+  while read -r size_mb cache_dir; do
+    cache_name="${cache_dir##*/}"
+    if [[ "$cache_name" == "$current_cache_name" ]]; then
+      continue
+    fi
+
+    lock_dir="${HF_HOME}/hub/.locks/${cache_name}"
+    legacy_lock_dir="${HF_HOME}/.locks/${cache_name}"
+    vast_log_step "deleting other Hugging Face cache (${size_mb} MiB): ${cache_dir}"
+    rm -rf -- "$cache_dir" "$lock_dir" "$legacy_lock_dir"
+    removed_any=1
+
+    free_mb="$(vast_disk_free_mb "$HF_HOME")"
+    if [[ "$mode" == "auto" && "$free_mb" -ge "$min_free_mb" ]]; then
+      break
+    fi
+  done < <(for cache_dir in "${cache_dirs[@]}"; do du -sm "$cache_dir" 2>/dev/null || true; done | sort -nr)
+
+  if [[ "$removed_any" -eq 0 ]]; then
+    vast_log_step "no removable Hugging Face model cache found; keeping current model cache"
+  else
+    free_mb="$(vast_disk_free_mb "$HF_HOME")"
+    vast_log_step "HF cache free after cleanup: ${free_mb} MiB"
+  fi
+}
+
+vast_prefetch_hf_model() {
+  local model="$1"
+  local mode="${BENCH_PREFETCH_MODEL:-1}"
+
+  case "$mode" in
+    never | 0 | false)
+      vast_log_step "model prefetch disabled by BENCH_PREFETCH_MODEL=${mode}"
+      return 0
+      ;;
+    always | 1 | true | auto)
+      ;;
+    *)
+      echo "warning: unknown BENCH_PREFETCH_MODEL=${mode}; using enabled prefetch." >&2
+      ;;
+  esac
+
+  if [[ -d "$model" ]]; then
+    vast_log_step "model points to local directory; skipping Hugging Face prefetch: ${model}"
+    return 0
+  fi
+
+  local python_bin="${BENCH_PYTHON:-$PWD/.venv/bin/python}"
+  if [[ ! -x "$python_bin" ]]; then
+    python_bin="$(command -v python3 || command -v python || true)"
+  fi
+  if [[ -z "$python_bin" ]]; then
+    echo "error: could not find Python for model prefetch." >&2
+    return 1
+  fi
+
+  vast_log_step "prefetching Hugging Face model before vLLM startup: ${model}"
+  HF_XET_HIGH_PERFORMANCE="${HF_XET_HIGH_PERFORMANCE:-1}" "$python_bin" - "$model" <<'PY'
+import sys
+from huggingface_hub import snapshot_download
+
+repo_id = sys.argv[1]
+path = snapshot_download(repo_id=repo_id)
+print(f"prefetched {repo_id} -> {path}", flush=True)
+PY
+
+  local free_mb
+  free_mb="$(vast_disk_free_mb "$HF_HOME")"
+  vast_log_step "HF cache free after prefetch: ${free_mb} MiB"
 }
 
 vast_gpu_memory_used_mb() {

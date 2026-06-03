@@ -36,6 +36,7 @@ Mặc định các lệnh Vast chạy:
 - quantization: đọc theo model config, ví dụ model id AWQ sẽ được ghi `model_hint=awq`; set `BENCH_VLLM_QUANTIZATION=awq` nếu muốn ép explicit arg;
 - serving: local vLLM process tự start/stop, không dùng server ngoài;
 - output: `manifest.json` và `summary.md` ghi rõ engine, version vLLM, quantization, KV cache dtype, attention backend, speculative method, `max_model_len`, `max_num_seqs`, `max_num_batched_tokens`, `enforce_eager`, GPU utilization, và CPU offload.
+- cache flow: kiểm tra dung lượng trống trong `HF_HOME`, dọn cache model khác nếu thiếu disk, prefetch/resume model đích trước khi start vLLM, rồi mới kiểm tra VRAM và chạy benchmark.
 
 Setup CUDA 13.0:
 
@@ -154,13 +155,14 @@ BENCH_LLAMA4_MODEL=unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit \
 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
-Nếu storage `/workspace` nhỏ, ép suite xoá cache model vừa chạy trước khi tải model kế tiếp:
+Nếu storage `/workspace` nhỏ, ép wrapper xoá cache trước khi tải model kế tiếp:
 
 ```bash
 BENCH_MODEL_CACHE_CLEANUP=always scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+BENCH_MODEL_CACHE_CLEANUP=always scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
 ```
 
-Mặc định suite dùng `BENCH_MODEL_CACHE_CLEANUP=auto`: trước mỗi model kế tiếp, script kiểm tra dung lượng trống trong `HF_HOME`; nếu thấp hơn `BENCH_MIN_CACHE_FREE_GB=35`, nó xoá Hugging Face cache của model vừa bench. Đặt `BENCH_MODEL_CACHE_CLEANUP=never` nếu muốn giữ toàn bộ model cache.
+Mặc định wrapper dùng `BENCH_MODEL_CACHE_CLEANUP=auto`: trước mỗi model, script kiểm tra dung lượng trống trong `HF_HOME`; nếu thấp hơn `BENCH_MIN_CACHE_FREE_GB=35`, single-model script xoá cache của các model khác nhưng giữ cache model đích, còn suite script xoá cache của model vừa bench trước đó. Đặt `BENCH_MODEL_CACHE_CLEANUP=never` nếu muốn giữ toàn bộ model cache, hoặc `BENCH_PREFETCH_MODEL=0` nếu muốn để vLLM tự tải model khi debug startup.
 
 ### Profile CUDA 13.0
 
@@ -318,12 +320,13 @@ Trước mỗi model, Vast wrapper cũng:
 - timeout sau `BENCH_GPU_READY_TIMEOUT_S=90`;
 - có thể bỏ qua check bằng `BENCH_SKIP_GPU_READY_CHECK=1` nếu cần debug thủ công.
 
-Suite còn quản lý disk cache khi chạy nhiều model:
+Wrapper còn quản lý disk cache khi chạy model:
 
-- `BENCH_MODEL_CACHE_CLEANUP=auto` là default, chỉ xoá cache model vừa chạy nếu dung lượng trống trong `HF_HOME` thấp hơn ngưỡng;
+- `BENCH_MODEL_CACHE_CLEANUP=auto` là default, chỉ xoá cache khi dung lượng trống trong `HF_HOME` thấp hơn ngưỡng;
 - `BENCH_MIN_CACHE_FREE_GB=35` là ngưỡng default;
-- `BENCH_MODEL_CACHE_CLEANUP=always` xoá cache model vừa chạy trước mỗi model kế tiếp;
+- `BENCH_MODEL_CACHE_CLEANUP=always` xoá cache model khác trước mỗi single-model run hoặc cache model vừa chạy trước model kế tiếp trong suite;
 - `BENCH_MODEL_CACHE_CLEANUP=never` giữ toàn bộ cache.
+- `BENCH_PREFETCH_MODEL=1` là default, tải/resume model đích trước khi start vLLM; dùng `BENCH_PREFETCH_MODEL=0` nếu muốn để vLLM tự tải.
 
 Lý do: preset `standard` có `synthetic_long` khoảng 3000 prompt tokens, nên default suite dùng `max_model_len=4096`. Nếu model lớn bị OOM ở 4096, fallback về 2048 để chạy short/medium/smoke trước, nhưng khi đó `synthetic_long` sẽ không còn hợp lệ:
 
@@ -489,7 +492,7 @@ Trong lúc chạy, terminal sẽ hiện progress theo từng bước:
 
 - `[vast-setup ...]`: setup profile Vast, cache, backend CUDA;
 - `[vllm-setup ...]`: tạo/sync `.venv`, clean package cũ, cài vLLM, verify Torch CUDA;
-- `[vast-bench ...]`: wrapper Vast, kiểm tra cache/disk, dọn VRAM, chạy từng model trong suite;
+- `[vast-bench ...]`: wrapper Vast, kiểm tra cache/disk, prefetch model, dọn VRAM, chạy từng model hoặc từng suite;
 - `[model-bench ...]`: core benchmark, start/chờ vLLM, warmup, từng scenario/concurrency, ghi artifact.
 
 JSON kết quả cuối vẫn in ở stdout; progress log của core benchmark in ở stderr để dễ theo dõi khi chạy dài mà không phá output JSON.

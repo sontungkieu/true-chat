@@ -98,7 +98,9 @@ fi
 cmd+=("$@")
 
 vast_log_step "single-model bench: cuda=12.9 model=$model preset=$preset max_model_len=$max_model_len gpu_memory_utilization=$gpu_memory_utilization startup_timeout_s=$startup_timeout_s"
-vast_log_step "vLLM options: BENCH_MAX_NUM_SEQS=${BENCH_MAX_NUM_SEQS:-unset} BENCH_MAX_NUM_BATCHED_TOKENS=${BENCH_MAX_NUM_BATCHED_TOKENS:-unset} BENCH_ENFORCE_EAGER=${BENCH_ENFORCE_EAGER:-0} BENCH_VLLM_QUANTIZATION=${BENCH_VLLM_QUANTIZATION:-auto} BENCH_VLLM_KV_CACHE_DTYPE=${kv_cache_dtype:-auto} BENCH_VLLM_ATTENTION_BACKEND=${attention_backend:-auto} BENCH_VLLM_SPECULATIVE_CONFIG=${speculative_config:-off} BENCH_VLLM_CPU_OFFLOAD_GB=${cpu_offload_gb:-0}"
+vast_log_step "vLLM options: BENCH_MAX_NUM_SEQS=${BENCH_MAX_NUM_SEQS:-unset} BENCH_MAX_NUM_BATCHED_TOKENS=${BENCH_MAX_NUM_BATCHED_TOKENS:-unset} BENCH_ENFORCE_EAGER=${BENCH_ENFORCE_EAGER:-0} BENCH_VLLM_QUANTIZATION=${BENCH_VLLM_QUANTIZATION:-auto} BENCH_VLLM_KV_CACHE_DTYPE=${kv_cache_dtype:-auto} BENCH_VLLM_ATTENTION_BACKEND=${attention_backend:-auto} BENCH_VLLM_SPECULATIVE_CONFIG=${speculative_config:-off} BENCH_VLLM_CPU_OFFLOAD_GB=${cpu_offload_gb:-0} BENCH_PREFETCH_MODEL=${BENCH_PREFETCH_MODEL:-1} BENCH_MODEL_CACHE_CLEANUP=${BENCH_MODEL_CACHE_CLEANUP:-auto}"
+vast_prune_other_model_caches_if_needed "$model"
+vast_prefetch_hf_model "$model"
 vast_wait_for_gpu_ready
 vast_log_step "running 5060 Ti CUDA 12.9 benchmark command:"
 printf ' %q' "${cmd[@]}"
