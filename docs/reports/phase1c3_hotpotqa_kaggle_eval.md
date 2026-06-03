@@ -73,3 +73,68 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
 ```
 
 Raw outputs remain under ignored `benchmark_results/budgetrag/`.
+
+## Completed Runs
+
+### Groq Qwen3-32B full sampled run
+
+Kernel: `codemaivanngu/hp-groq-qwen32b-full-r16-0603`
+
+URL: <https://www.kaggle.com/code/codemaivanngu/hp-groq-qwen32b-full-r16-0603>
+
+Local output:
+
+```text
+benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle_downloads_20260603/
+  codemaivanngu__hp-groq-qwen32b-full-r16-0603/
+    20260603_hotpotqa_groq_qwen32b_full_ragas16/
+```
+
+Configuration:
+
+- Generation provider/model: Groq `qwen/qwen3-32b`.
+- Judge provider/model: MiMo `mimo-v2.5-pro`.
+- HotpotQA sampled eval: `limit=50`, `top-k=10`, 50/50 reference joins.
+- Action rows: 16 rows across `legacy`, `evidence-aware`, and `adaptive-heuristic` balanced/aggressive profiles.
+- RAGAS: `n=1/action`, 16 selected samples total.
+- Pacing: one Groq key with `--key-rpm 10`.
+
+Outcome:
+
+- Retrieval/gold join completed and output shape is valid: 800/800 query-action rows, 16/16 summary rows, 16 RAGAS rows.
+- Generation was quota-contaminated: 383/800 successful generations, 417/800 Groq `429` rate-limit errors.
+- All generation errors were Groq organization/model rate limits, not retrieval, reference join, or writer failures.
+- RAGAS values are diagnostic only because `n=1/action` is sparse and some evaluator metrics returned missing values.
+- The run is useful for validating the Groq full matrix path, but should not be presented as a clean answer-quality benchmark.
+
+| action | ok/50 | EM | token-F1 | RAGAS rel | RAGAS faith | latency |
+|---|---:|---:|---:|---:|---:|---:|
+| `legacy__4000` | 38/50 | 0.000 | 0.011 | 0.000 | - | 9.832s |
+| `legacy__8000` | 35/50 | 0.000 | 0.010 | 0.991 | - | 9.705s |
+| `legacy__16000` | 39/50 | 0.000 | 0.010 | - | 0.500 | 10.693s |
+| `legacy__32000` | 39/50 | 0.000 | 0.010 | 0.000 | - | 10.918s |
+| `evidence-aware__4000` | 35/50 | 0.000 | 0.009 | - | - | 10.796s |
+| `evidence-aware__8000` | 35/50 | 0.000 | 0.010 | - | 1.000 | 11.752s |
+| `evidence-aware__16000` | 33/50 | 0.000 | 0.007 | 0.000 | - | 11.010s |
+| `evidence-aware__32000` | 35/50 | 0.000 | 0.009 | 0.000 | - | 12.113s |
+| `adaptive-heuristic__balanced__4000` | 37/50 | 0.000 | 0.010 | 0.000 | 0.833 | 11.588s |
+| `adaptive-heuristic__aggressive__4000` | 31/50 | 0.000 | 0.010 | 0.989 | - | 12.124s |
+| `adaptive-heuristic__balanced__8000` | 3/50 | 0.000 | 0.001 | 0.989 | - | 16.990s |
+| `adaptive-heuristic__aggressive__8000` | 6/50 | 0.000 | 0.002 | 0.000 | - | 17.643s |
+| `adaptive-heuristic__balanced__16000` | 4/50 | 0.000 | 0.001 | 0.000 | - | 16.998s |
+| `adaptive-heuristic__aggressive__16000` | 5/50 | 0.000 | 0.001 | - | - | 17.040s |
+| `adaptive-heuristic__balanced__32000` | 3/50 | 0.000 | 0.001 | 0.000 | - | 17.621s |
+| `adaptive-heuristic__aggressive__32000` | 5/50 | 0.000 | 0.001 | 0.000 | - | 17.168s |
+
+Interpretation:
+
+- Fixed-policy rows kept 33-39 successful generations per action under the one-key Groq quota.
+- Adaptive high-budget rows ran later in the same 800-call job and were heavily rate-limited, with only 3-6 successful generations per action for 8k-32k balanced/aggressive rows.
+- The action-level quality numbers are therefore biased by run order and quota exhaustion. Use the row counts and error counts as the primary signal for this run.
+
+Retry path:
+
+- Use `scripts/run_hotpotqa_retry_failed_rows.py` against the downloaded Groq run directory to rerun only `error_status_code=429` rows.
+- The retry path reuses `query_results.jsonl` and retrieved contexts, so it does not rebuild the 5.23M-document BM25 index.
+- Recommended one-key Groq pacing for retry is `--key-tpm 5000 --key-rpm 3`.
+- RAGAS should remain disabled during generation retry; rerun RAGAS separately after the merged generation file has fewer missing answers.

@@ -540,6 +540,24 @@ uv run --frozen --extra vector --extra ragas python scripts/run_hotpotqa_cached_
 
 Expected artifacts are `retrieval_cache.jsonl`, `query_results.jsonl`, `metrics.json`, `hotpotqa_summary.csv`, `hotpotqa_summary.md`, and `ragas_per_sample.csv`.
 
+If a HotpotQA run is quota-contaminated, retry only failed rows from the downloaded artifact instead of rebuilding BM25:
+
+```bash
+uv run --frozen python scripts/run_hotpotqa_retry_failed_rows.py \
+  --original-run-dir benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle_downloads_20260603/codemaivanngu__hp-groq-qwen32b-full-r16-0603/20260603_hotpotqa_groq_qwen32b_full_ragas16 \
+  --output-dir benchmark_results/budgetrag/phase1c3_hotpotqa_retry_20260603 \
+  --run-name groq_qwen32b_retry_failed_429 \
+  --provider groq \
+  --model qwen/qwen3-32b \
+  --model-role stronger-baseline \
+  --groq-keys-path .secrets/groq_key.env \
+  --groq-key-alias primary \
+  --key-tpm 5000 \
+  --key-rpm 3
+```
+
+The retry script reads the original `query_results.jsonl`, reruns only rows matching `--failed-status-code` (default `429`), merges successful original rows with retried rows, and writes a fresh `query_results.jsonl`, `retry_rows.jsonl`, `metrics.json`, and summary table. It does not rebuild HotpotQA BM25. RAGAS is skipped by default; add `--run-ragas` after generation is clean enough to judge.
+
 Optional RAGAS mode:
 
 ```bash
