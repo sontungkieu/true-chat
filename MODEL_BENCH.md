@@ -39,6 +39,7 @@ Script CUDA 12.9 sẽ:
 - pin mặc định `VLLM_VERSION=0.22.0`;
 - ép backend `cu129`;
 - clean stack `vllm/torch/...` cũ trong `.venv`;
+- cài `torch` explicit theo backend `cu129` trước khi cài vLLM;
 - fail sớm nếu driver thấp hơn mức cần cho CUDA 12.9;
 - verify `torch.version.cuda == 12.9`.
 
@@ -88,7 +89,7 @@ Setup:
 scripts/setup_vast_5060ti_cuda130.sh
 ```
 
-Script CUDA 13.0 dùng cùng cache `/workspace`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
+Script CUDA 13.0 dùng cùng cache `/workspace`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, cài `torch` explicit theo backend `cu130` trước khi cài vLLM, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
 
 Chạy smoke mặc định:
 
