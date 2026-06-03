@@ -20,7 +20,14 @@ if [[ $# -gt 0 ]]; then
 fi
 
 max_model_len="${BENCH_MAX_MODEL_LEN:-4096}"
-gpu_memory_utilization="${BENCH_GPU_MEMORY_UTILIZATION:-0.85}"
+qwen35_8bit_model="cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8"
+if [[ -n "${BENCH_GPU_MEMORY_UTILIZATION:-}" ]]; then
+  gpu_memory_utilization="$BENCH_GPU_MEMORY_UTILIZATION"
+elif [[ "$model" == "$qwen35_8bit_model" ]]; then
+  gpu_memory_utilization="${BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION:-0.94}"
+else
+  gpu_memory_utilization="0.85"
+fi
 startup_timeout_s="${BENCH_STARTUP_TIMEOUT_S:-1800}"
 kv_cache_dtype="${BENCH_VLLM_KV_CACHE_DTYPE:-}"
 

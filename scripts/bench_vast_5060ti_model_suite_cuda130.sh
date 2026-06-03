@@ -49,7 +49,7 @@ failures=0
 previous_model=""
 total_models="${#models[@]}"
 model_index=0
-vast_log_step "model suite plan: cuda=13.0 preset=$preset total_models=$total_models max_model_len=$BENCH_MAX_MODEL_LEN max_num_seqs=$BENCH_MAX_NUM_SEQS max_num_batched_tokens=$BENCH_MAX_NUM_BATCHED_TOKENS enforce_eager=$BENCH_ENFORCE_EAGER cache_cleanup=${BENCH_MODEL_CACHE_CLEANUP:-auto} global_kv_cache_dtype=${BENCH_VLLM_KV_CACHE_DTYPE:-auto} qwen35_8bit_kv_cache_dtype=${BENCH_QWEN35_8BIT_KV_CACHE_DTYPE:-turboquant_4bit_nc}"
+vast_log_step "model suite plan: cuda=13.0 preset=$preset total_models=$total_models max_model_len=$BENCH_MAX_MODEL_LEN max_num_seqs=$BENCH_MAX_NUM_SEQS max_num_batched_tokens=$BENCH_MAX_NUM_BATCHED_TOKENS enforce_eager=$BENCH_ENFORCE_EAGER cache_cleanup=${BENCH_MODEL_CACHE_CLEANUP:-auto} global_kv_cache_dtype=${BENCH_VLLM_KV_CACHE_DTYPE:-auto} qwen35_8bit_kv_cache_dtype=${BENCH_QWEN35_8BIT_KV_CACHE_DTYPE:-turboquant_4bit_nc} qwen35_8bit_gpu_memory_utilization=${BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION:-0.94}"
 
 for model in "${models[@]}"; do
   model_index=$((model_index + 1))
