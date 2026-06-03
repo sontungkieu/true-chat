@@ -62,6 +62,20 @@ The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit`, `Qwen/Qwen2.5-14B-Instruct
 BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
+Run a no-draft speculative decoding sweep for one model. It starts a local vLLM server per case and compares baseline no-SD with n-gram SD using 2 and 4 speculative tokens by default:
+
+```bash
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_sd_sweep_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
+```
+
+If a baseline run already exists, skip the duplicate baseline:
+
+```bash
+env BENCH_SD_INCLUDE_BASELINE=0 BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_sd_sweep_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
+```
+
 Both profiles use `/workspace` caches when available, force `UV_PROJECT_ENVIRONMENT=$PWD/.venv` so an active `(main)` environment cannot capture installs, install vLLM with the selected CUDA backend so its resolver picks the matching PyTorch build once, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. Prefer CUDA 13.0 on hosts with driver `>= 580.65.06`; keep CUDA 12.9 as the fallback when Vast does not expose a CUDA 13-ready host.
 
 Use the bench branch when comparing one model across multiple manually prepared machines:

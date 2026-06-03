@@ -80,6 +80,20 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
   scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
 ```
 
+A/B sweep speculative decoding cho Llama-3 16B AWQ, mặc định chạy baseline no-SD rồi n-gram SD 2 và 4 token:
+
+```bash
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_sd_sweep_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
+```
+
+Nếu baseline đang hoặc đã chạy riêng rồi, bỏ baseline trong sweep để chỉ chạy SD:
+
+```bash
+env BENCH_SD_INCLUDE_BASELINE=0 BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_sd_sweep_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
+```
+
 A/B attention backend, chỉ dùng khi muốn so auto-selection với backend cụ thể:
 
 ```bash
@@ -121,6 +135,13 @@ scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
 
 # Opt-in Qwen 3.5 9B 8-bit, chậm vì cần CPU offload trên 16GB
 BENCH_INCLUDE_QWEN35_8BIT=1 scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
+```
+
+A/B sweep speculative decoding CUDA 12.9 tương tự CUDA 13.0:
+
+```bash
+env BENCH_SD_INCLUDE_BASELINE=0 BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_sd_sweep_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 ```
 
 Llama 4 Scout 17B không bật mặc định vì thường cần HF access token và không 16GB-safe. Nếu vẫn muốn thử có kiểm soát:
@@ -276,7 +297,19 @@ BENCH_VLLM_SPECULATIVE_CONFIG='{"method":"ngram","num_speculative_tokens":4,"pro
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
 ```
 
-Với draft model/MTP/DFlash, chỉ bật khi model/speculator thật sự tương thích và còn VRAM. Trên RTX 5060 Ti 16GB, thử `ngram` trước vì không tải thêm draft model; Qwen3.5 9B 8-bit có CPU offload thì không nên dùng làm baseline speculative.
+Hoặc chạy sweep n-gram có sẵn:
+
+```bash
+scripts/bench_vast_5060ti_sd_sweep_cuda130.sh Qwen/Qwen2.5-14B-Instruct-AWQ standard
+```
+
+Các biến cho SD sweep:
+
+- `BENCH_SD_INCLUDE_BASELINE=0` nếu đã có baseline và chỉ muốn chạy SD;
+- `BENCH_SD_NGRAM_TOKENS="2 4"` để chọn số token speculative cần thử;
+- `BENCH_SD_PROMPT_LOOKUP_MIN=2` và `BENCH_SD_PROMPT_LOOKUP_MAX=5` cho prompt lookup n-gram.
+
+Với draft model/MTP/DFlash, chỉ bật khi model/speculator thật sự tương thích và còn VRAM. Trên RTX 5060 Ti 16GB, sweep mặc định chỉ dùng `ngram` vì không tải thêm draft model; Qwen3.5 9B 8-bit có CPU offload thì không nên dùng làm baseline speculative.
 
 Trước mỗi model, Vast wrapper cũng:
 
