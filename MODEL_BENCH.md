@@ -52,8 +52,11 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
-# Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
+# Chạy suite chính: 4-bit + Llama-3 16B AWQ
 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+
+# Opt-in Qwen 3.5 9B 8-bit, chậm vì cần CPU offload trên 16GB
+BENCH_INCLUDE_QWEN35_8BIT=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Fallback CUDA 12.9 nếu driver chưa đủ cho CUDA 13:
@@ -80,8 +83,11 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
 env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
   scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
-# Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
+# Chạy suite chính: 4-bit + Llama-3 16B AWQ
 scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
+
+# Opt-in Qwen 3.5 9B 8-bit, chậm vì cần CPU offload trên 16GB
+BENCH_INCLUDE_QWEN35_8BIT=1 scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
 ```
 
 Llama 4 Scout 17B không bật mặc định vì thường cần HF access token và không 16GB-safe. Nếu vẫn muốn thử có kiểm soát:
@@ -143,10 +149,16 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
+Chạy suite chính gồm Qwen3.5 9B AWQ 4-bit và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda130.sh
+```
+
+Qwen3.5 9B 8-bit là case opt-in vì trên 16GB nó cần CPU offload và rất chậm:
+
+```bash
+BENCH_INCLUDE_QWEN35_8BIT=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh
 ```
 
 ### Fallback CUDA 12.9
@@ -179,10 +191,16 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
+Chạy suite chính gồm Qwen3.5 9B AWQ 4-bit và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard` với `max_model_len=4096` để có synthetic long:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda129.sh
+```
+
+Qwen3.5 9B 8-bit là case opt-in vì trên 16GB nó cần CPU offload và rất chậm:
+
+```bash
+BENCH_INCLUDE_QWEN35_8BIT=1 scripts/bench_vast_5060ti_model_suite_cuda129.sh
 ```
 
 Nếu muốn xác nhận lỗi AWQ Marlin trên fallback CUDA 12.9, có thể ép kernel AWQ thường:
@@ -200,8 +218,9 @@ Các suite script mặc định chạy:
 | Nhãn | Model id | Ghi chú |
 | --- | --- | --- |
 | Qwen3.5 9B AWQ | `cyankiwi/Qwen3.5-9B-AWQ-4bit` | Bản AWQ 4-bit, hợp lý hơn bản full cho VRAM 16GB. |
-| Qwen3.5 9B AWQ 8-bit | `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8` | Bản 8-bit để so với 4-bit; suite tự bật `turboquant_4bit_nc` cho KV cache để giữ context dài trên 16GB. |
 | Llama-3 16B AWQ | `solidrust/Llama-3-16B-Instruct-v0.1-AWQ` | Community merge AWQ, có thể sát VRAM hơn; lệnh đo chính dùng `standard`, đổi về `smoke` khi chỉ cần debug load. |
+
+Qwen3.5 9B AWQ 8-bit `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8` không chạy mặc định. Bật bằng `BENCH_INCLUDE_QWEN35_8BIT=1` khi cần kiểm tra riêng; kết quả này đo cả CPU/PCIe offload nên không nên trộn với bảng tốc độ GPU sạch.
 
 Suite model lớn dùng defaults an toàn hơn wrapper single-model:
 
@@ -209,9 +228,9 @@ Suite model lớn dùng defaults an toàn hơn wrapper single-model:
 - `BENCH_MAX_NUM_SEQS=1`;
 - `BENCH_MAX_NUM_BATCHED_TOKENS=4096`;
 - `BENCH_ENFORCE_EAGER=1`;
-- `BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=turboquant_4bit_nc` cho riêng Qwen3.5 9B 8-bit;
-- `BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.94` cho riêng Qwen3.5 9B 8-bit nếu không set global `BENCH_GPU_MEMORY_UTILIZATION`;
-- `BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=2` cho riêng Qwen3.5 9B 8-bit nếu không set global `BENCH_VLLM_CPU_OFFLOAD_GB`;
+- `BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=turboquant_4bit_nc` cho riêng Qwen3.5 9B 8-bit khi opt-in;
+- `BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.94` cho riêng Qwen3.5 9B 8-bit khi opt-in nếu không set global `BENCH_GPU_MEMORY_UTILIZATION`;
+- `BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=2` cho riêng Qwen3.5 9B 8-bit khi opt-in nếu không set global `BENCH_VLLM_CPU_OFFLOAD_GB`;
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 
 Trước mỗi model, Vast wrapper cũng:
@@ -236,23 +255,19 @@ BENCH_MAX_NUM_BATCHED_TOKENS=2048 \
 scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit smoke
 ```
 
-Nếu log vLLM báo `No available memory for the cache blocks`, nghĩa là sau khi load/profile model vẫn không còn đủ chỗ tạo KV cache block. Qwen3.5 9B 8-bit mặc định dùng `gpu_memory_utilization=0.94`, `turboquant_4bit_nc`, và `cpu_offload_gb=2`; nếu vẫn gặp lỗi này trên máy sạch VRAM, tăng offload trước khi tăng `gpu_memory_utilization`:
+Nếu log vLLM báo `No available memory for the cache blocks`, nghĩa là sau khi load/profile model vẫn không còn đủ chỗ tạo KV cache block. Qwen3.5 9B 8-bit khi opt-in dùng `gpu_memory_utilization=0.94`, `turboquant_4bit_nc`, và `cpu_offload_gb=2`; nếu vẫn gặp lỗi này trên máy sạch VRAM, tăng offload trước khi tăng `gpu_memory_utilization`:
 
 ```bash
-BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=4 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+BENCH_INCLUDE_QWEN35_8BIT=1 BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=4 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
+
+RAM không đầy không có nghĩa offload nhanh. `cpu_offload_gb` chỉ cho phép một phần weight đi qua CPU/RAM; tốc độ thường bị giới hạn bởi CPU/PCIe và kernel scheduling, nên tok/s thấp là kỳ vọng trên 5060 Ti 16GB.
 
 Nếu muốn so sánh Qwen3.5 9B 8-bit bằng KV-cache dtype khác, override riêng biến này:
 
 ```bash
-BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=fp8 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
-BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=none scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
-```
-
-Nếu bản Qwen3.5 9B 8-bit vẫn OOM cả với TurboQuant, tắt riêng nó:
-
-```bash
-BENCH_INCLUDE_QWEN35_8BIT=0 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+BENCH_INCLUDE_QWEN35_8BIT=1 BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=fp8 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+BENCH_INCLUDE_QWEN35_8BIT=1 BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=none scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Llama 4 Scout 17B:

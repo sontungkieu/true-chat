@@ -35,7 +35,7 @@ models=(
   "cyankiwi/Qwen3.5-9B-AWQ-4bit"
 )
 
-if [[ "${BENCH_INCLUDE_QWEN35_8BIT:-1}" == "1" ]]; then
+if [[ "${BENCH_INCLUDE_QWEN35_8BIT:-0}" == "1" ]]; then
   models+=("$qwen35_8bit_model")
 fi
 
