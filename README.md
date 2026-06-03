@@ -28,6 +28,18 @@ Direct runtime, optional, and test dependencies are pinned exactly in `pyproject
 
 Detailed operator guide: [`MODEL_BENCH.md`](MODEL_BENCH.md).
 
+Vast AI RTX 5060 Ti 16GB CUDA 12.9 quick path:
+
+```bash
+git clone <repo-url> true-chat
+cd true-chat
+git checkout bench/vllm-model-bench
+scripts/setup_vast_5060ti_cuda129.sh
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+```
+
+This profile uses `/workspace` caches when available, pins vLLM `0.22.0` by default, installs the CUDA 12.9 vLLM/PyTorch backend, verifies `torch.version.cuda == 12.9`, and uses 16GB-safe defaults for the benchmark runner. The Vast host driver still needs to be new enough for CUDA 12.9.
+
 Use the bench branch when comparing one model across multiple manually prepared machines:
 
 ```bash
@@ -44,6 +56,8 @@ The setup scripts only prepare the Python environment and install vLLM into `.ve
 ```bash
 VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda129.sh
 ```
+
+The CUDA-specific setup wrappers fail fast when the installed NVIDIA driver is too old for the selected backend: CUDA 12.9 requires Linux driver `>= 575.57.08`, and CUDA 13.0 requires Linux driver `>= 580.65.06`. This prevents later model-load failures such as `cudaErrorUnsupportedPtxVersion`.
 
 After setup, verify the runtime packages, not just the `CUDA Version` printed by `nvidia-smi`:
 

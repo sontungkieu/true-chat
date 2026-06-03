@@ -2,6 +2,68 @@
 
 File này hướng dẫn chạy benchmark một model trên từng máy theo workflow thủ công: mở máy, clone repo, setup môi trường, nhập tên model, chạy benchmark, rồi so sánh kết quả giữa các máy.
 
+## Quickstart Vast AI RTX 5060 Ti 16GB CUDA 12.9
+
+Khi thuê Vast AI, ưu tiên chọn instance RTX 5060 Ti 16GB có driver đủ mới cho CUDA 12.9. Trong container, kiểm tra:
+
+```bash
+nvidia-smi
+```
+
+Yêu cầu tối thiểu cho profile này:
+
+- GPU: RTX 5060 Ti 16GB.
+- Driver Linux: `>= 575.57.08`.
+- Không cần cố định CUDA 13; profile này dùng vLLM/PyTorch CUDA 12.9.
+
+Clone repo và setup:
+
+```bash
+git clone <repo-url> true-chat
+cd true-chat
+git checkout bench/vllm-model-bench
+scripts/setup_vast_5060ti_cuda129.sh
+```
+
+Script Vast sẽ:
+
+- dùng `HF_HOME=/workspace/hf-cache` nếu `/workspace` ghi được;
+- dùng `XDG_CACHE_HOME=/workspace/vllm-cache` nếu `/workspace` ghi được;
+- pin mặc định `VLLM_VERSION=0.22.0`;
+- ép backend `cu129`;
+- clean stack `vllm/torch/...` cũ trong `.venv`;
+- fail sớm nếu driver thấp hơn mức cần cho CUDA 12.9;
+- verify `torch.version.cuda == 12.9`.
+
+Chạy smoke mặc định, model AWQ phù hợp hơn với VRAM 16GB:
+
+```bash
+scripts/bench_vast_5060ti_cuda129.sh
+```
+
+Chạy model/preset cụ thể:
+
+```bash
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Override cấu hình an toàn bằng env:
+
+```bash
+BENCH_MAX_MODEL_LEN=6144 \
+BENCH_GPU_MEMORY_UTILIZATION=0.88 \
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Nếu muốn xác nhận lỗi AWQ Marlin, có thể ép kernel AWQ thường:
+
+```bash
+BENCH_VLLM_QUANTIZATION=awq scripts/bench_vast_5060ti_cuda129.sh
+```
+
+Không dùng flag này cho số benchmark chuẩn nếu driver đã đúng; để vLLM tự chọn kernel thường cho tốc độ tốt hơn.
+
 ## 1. Chuẩn bị trên mỗi máy
 
 Clone repo và chuyển sang branch benchmark:
@@ -31,6 +93,13 @@ scripts/setup_vllm_bench.sh
 ```
 
 Script setup chỉ cài dependency Python và vLLM trong `.venv`. Script không cài hoặc sửa driver NVIDIA, CUDA, package hệ thống, hay cấu hình GPU. Hai script CUDA-specific sẽ gỡ stack vLLM/PyTorch CUDA hiện có trong `.venv` trước khi cài lại để tránh lẫn wheel CUDA 13 với torch CUDA 12.9.
+
+Các script CUDA-specific kiểm tra driver tối thiểu trước khi cài:
+
+- CUDA 12.9: driver Linux `>= 575.57.08`.
+- CUDA 13.0: driver Linux `>= 580.65.06`.
+
+Nếu driver thấp hơn, script sẽ dừng sớm. Có thể override bằng `VLLM_SKIP_DRIVER_CHECK=1` cho môi trường đặc biệt, nhưng không nên dùng để chạy benchmark chuẩn vì lỗi kernel như `cudaErrorUnsupportedPtxVersion` thường sẽ xuất hiện khi load model.
 
 Ghi chú quan trọng: dòng `CUDA Version` trong `nvidia-smi` là mức CUDA runtime tối đa mà driver hỗ trợ, không phải version CUDA mà Python package đang dùng. Version cần kiểm tra sau setup là:
 
@@ -211,6 +280,27 @@ Import lỗi `libcudart.so.13` hoặc mismatch CUDA:
 - nếu muốn chạy CUDA 13.0, dùng `scripts/setup_vllm_bench_cuda130.sh`;
 - không dùng `uv pip uninstall -y`; `uv pip uninstall` không có flag `-y`;
 - sau setup, kiểm tra `torch.version.cuda` bằng đoạn Python ở phần chuẩn bị.
+
+Lỗi `CUDA error: the provided PTX was compiled with an unsupported toolchain`:
+
+- đây thường là driver quá cũ so với CUDA backend/kernel mà vLLM đang dùng;
+- với CUDA 12.9, cập nhật driver lên ít nhất `575.57.08`;
+- với CUDA 13.0, cập nhật driver lên ít nhất `580.65.06`;
+- nếu đang dùng AWQ và muốn thử workaround tạm, ép vLLM không tự chọn AWQ Marlin:
+
+```bash
+uv run --frozen --no-sync rag-bench model-bench \
+  --model Qwen/Qwen2.5-7B-Instruct-AWQ \
+  --preset smoke \
+  --tensor-parallel-size auto \
+  --max-model-len 4096 \
+  --vllm-arg=--gpu-memory-utilization \
+  --vllm-arg 0.85 \
+  --vllm-arg=--quantization \
+  --vllm-arg awq
+```
+
+Workaround này chỉ để xác nhận lỗi nằm ở kernel quantization; benchmark chuẩn vẫn nên chạy trên driver đúng.
 
 Server không healthy trong thời gian chờ:
 
