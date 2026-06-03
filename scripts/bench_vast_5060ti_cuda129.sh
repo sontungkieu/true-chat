@@ -6,16 +6,8 @@ cd "$(dirname "$0")/.."
 export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$PWD/.venv}"
 source "$PWD/scripts/vast_bench_lib.sh"
 
-if [[ -d /workspace && -w /workspace ]]; then
-  cache_root="/workspace"
-else
-  cache_root="$PWD/.cache/vast-vllm-bench"
-fi
-
-export HF_HOME="${HF_HOME:-${cache_root}/hf-cache}"
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${cache_root}/vllm-cache}"
+vast_configure_cache_env
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
-mkdir -p "$HF_HOME" "$XDG_CACHE_HOME"
 
 model="${1:-Qwen/Qwen2.5-7B-Instruct-AWQ}"
 if [[ $# -gt 0 ]]; then

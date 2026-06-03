@@ -3,7 +3,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-preset="${1:-smoke}"
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$PWD/.venv}"
+source "$PWD/scripts/vast_bench_lib.sh"
+vast_configure_cache_env
+
+preset="${1:-standard}"
 if [[ $# -gt 0 ]]; then
   shift
 fi
@@ -28,8 +32,13 @@ if [[ "${BENCH_INCLUDE_LLAMA4:-0}" == "1" ]]; then
 fi
 
 failures=0
+previous_model=""
 
 for model in "${models[@]}"; do
+  if [[ -n "$previous_model" ]]; then
+    vast_prune_previous_model_cache_if_needed "$previous_model"
+  fi
+
   echo
   echo "=== Benchmarking ${model} with preset ${preset} on Vast 5060 Ti CUDA 13.0 ==="
   if ! scripts/bench_vast_5060ti_cuda130.sh "$model" "$preset" "$@"; then
@@ -39,6 +48,7 @@ for model in "${models[@]}"; do
       exit 1
     fi
   fi
+  previous_model="$model"
 done
 
 if [[ "$failures" -gt 0 ]]; then

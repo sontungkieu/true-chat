@@ -7,6 +7,88 @@ vast_trim() {
   printf '%s' "$value"
 }
 
+vast_configure_cache_env() {
+  local cache_root
+  if [[ -d /workspace && -w /workspace ]]; then
+    cache_root="/workspace"
+  else
+    cache_root="$PWD/.cache/vast-vllm-bench"
+  fi
+
+  export HF_HOME="${HF_HOME:-${cache_root}/hf-cache}"
+  export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${cache_root}/vllm-cache}"
+  mkdir -p "$HF_HOME" "$XDG_CACHE_HOME"
+}
+
+vast_disk_free_mb() {
+  local path="$1"
+  mkdir -p "$path"
+  df -Pm "$path" 2>/dev/null | awk 'NR == 2 {print $4 + 0}'
+}
+
+vast_hf_model_cache_name() {
+  local model="$1"
+  printf 'models--%s' "${model//\//--}"
+}
+
+vast_remove_hf_model_cache() {
+  local model="$1"
+  local cache_name cache_dir lock_dir size_mb
+  cache_name="$(vast_hf_model_cache_name "$model")"
+  cache_dir="${HF_HOME}/hub/${cache_name}"
+  lock_dir="${HF_HOME}/.locks/${cache_name}"
+
+  if [[ ! -e "$cache_dir" && ! -e "$lock_dir" ]]; then
+    echo "No local Hugging Face cache found for ${model}."
+    return 0
+  fi
+
+  size_mb=0
+  if [[ -e "$cache_dir" ]]; then
+    size_mb="$(du -sm "$cache_dir" 2>/dev/null | awk '{print $1 + 0}')"
+  fi
+  echo "Deleting Hugging Face cache for ${model} (${size_mb} MiB): ${cache_dir}"
+  rm -rf -- "$cache_dir" "$lock_dir"
+}
+
+vast_prune_previous_model_cache_if_needed() {
+  local previous_model="$1"
+  local mode="${BENCH_MODEL_CACHE_CLEANUP:-auto}"
+
+  case "$mode" in
+    never | 0 | false)
+      return 0
+      ;;
+    always | 1 | true)
+      vast_remove_hf_model_cache "$previous_model"
+      return 0
+      ;;
+    auto)
+      ;;
+    *)
+      echo "warning: unknown BENCH_MODEL_CACHE_CLEANUP=${mode}; using auto." >&2
+      mode="auto"
+      ;;
+  esac
+
+  local min_free_gb="${BENCH_MIN_CACHE_FREE_GB:-35}"
+  local min_free_mb free_mb
+  min_free_mb="$(awk -v gb="$min_free_gb" 'BEGIN {printf "%.0f", gb * 1024}')"
+  free_mb="$(vast_disk_free_mb "$HF_HOME")"
+
+  if [[ -z "$free_mb" || -z "$min_free_mb" ]]; then
+    echo "warning: could not check free disk space for ${HF_HOME}; skipping cache cleanup." >&2
+    return 0
+  fi
+
+  echo "HF cache free before next model: ${free_mb} MiB (cleanup threshold: ${min_free_mb} MiB)."
+  if [[ "$free_mb" -lt "$min_free_mb" ]]; then
+    vast_remove_hf_model_cache "$previous_model"
+    free_mb="$(vast_disk_free_mb "$HF_HOME")"
+    echo "HF cache free after cleanup: ${free_mb} MiB."
+  fi
+}
+
 vast_gpu_memory_used_mb() {
   nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
     | awk '{gsub(/ /, "", $1); sum += $1} END {print sum + 0}'

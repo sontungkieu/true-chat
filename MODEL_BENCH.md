@@ -26,7 +26,7 @@ git checkout bench/vllm-model-bench
 
 ## Copy/Paste Lệnh Bench Theo Model
 
-Sau khi chọn đúng setup CUDA cho máy, các lệnh bench model nằm cùng một chỗ ở đây. Bắt đầu bằng `smoke`; khi model đã load ổn, thay đối số cuối từ `smoke` sang `standard` để đo nhiều scenario/concurrency hơn.
+Sau khi chọn đúng setup CUDA cho máy, các lệnh bench model nằm cùng một chỗ ở đây. Các lệnh chính bên dưới dùng `standard` để đo thật nhiều scenario/concurrency; chỉ đổi `standard` thành `smoke` khi cần health check nhanh xem model có load được không.
 
 Setup CUDA 12.9:
 
@@ -38,22 +38,22 @@ Bench từng model trên CUDA 12.9:
 
 ```bash
 # Qwen 2.5 7B AWQ, baseline 16GB dễ chạy nhất
-scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 
 # Qwen 3.5 9B AWQ 4-bit
 env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit smoke
+  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
 env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 smoke
+  scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
 
 # Llama-3 16B AWQ
 env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ smoke
+  scripts/bench_vast_5060ti_cuda129.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
 # Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
-scripts/bench_vast_5060ti_model_suite_cuda129.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
 ```
 
 Setup CUDA 13.0:
@@ -66,33 +66,41 @@ Bench từng model trên CUDA 13.0:
 
 ```bash
 # Qwen 2.5 7B AWQ, baseline 16GB dễ chạy nhất
-scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 
 # Qwen 3.5 9B AWQ 4-bit
 env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit smoke
+  scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
 env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 smoke
+  scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
 
 # Llama-3 16B AWQ
 env BENCH_MAX_MODEL_LEN=2048 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=2048 BENCH_ENFORCE_EAGER=1 \
-  scripts/bench_vast_5060ti_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ smoke
+  scripts/bench_vast_5060ti_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
 
 # Chạy suite 4-bit + 8-bit + Llama-3 16B AWQ
-scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Llama 4 Scout 17B không bật mặc định vì thường cần HF access token và không 16GB-safe. Nếu vẫn muốn thử có kiểm soát:
 
 ```bash
-BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 
 BENCH_INCLUDE_LLAMA4=1 \
 BENCH_LLAMA4_MODEL=unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit \
-scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
+
+Nếu storage `/workspace` nhỏ, ép suite xoá cache model vừa chạy trước khi tải model kế tiếp:
+
+```bash
+BENCH_MODEL_CACHE_CLEANUP=always scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+```
+
+Mặc định suite dùng `BENCH_MODEL_CACHE_CLEANUP=auto`: trước mỗi model kế tiếp, script kiểm tra dung lượng trống trong `HF_HOME`; nếu thấp hơn `BENCH_MIN_CACHE_FREE_GB=35`, nó xoá Hugging Face cache của model vừa bench. Đặt `BENCH_MODEL_CACHE_CLEANUP=never` nếu muốn giữ toàn bộ model cache.
 
 ### Profile CUDA 12.9
 
@@ -114,7 +122,7 @@ Script CUDA 12.9 sẽ:
 - fail sớm nếu driver thấp hơn mức cần cho CUDA 12.9;
 - verify `torch.version.cuda == 12.9`.
 
-Chạy smoke mặc định, model AWQ phù hợp hơn với VRAM 16GB:
+Chạy health check mặc định, model AWQ phù hợp hơn với VRAM 16GB:
 
 ```bash
 scripts/bench_vast_5060ti_cuda129.sh
@@ -135,10 +143,10 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ:
+Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard`:
 
 ```bash
-scripts/bench_vast_5060ti_model_suite_cuda129.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda129.sh
 ```
 
 Nếu muốn xác nhận lỗi AWQ Marlin, có thể ép kernel AWQ thường:
@@ -161,7 +169,7 @@ scripts/setup_vast_5060ti_cuda130.sh
 
 Script CUDA 13.0 dùng cùng cache `/workspace`, ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, cài vLLM với backend `cu130` để resolver chọn đúng PyTorch build một lần, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
 
-Chạy smoke mặc định:
+Chạy health check mặc định:
 
 ```bash
 scripts/bench_vast_5060ti_cuda130.sh
@@ -181,10 +189,10 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ:
+Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ. Không truyền preset thì suite mặc định chạy `standard`:
 
 ```bash
-scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda130.sh
 ```
 
 ### Model suite 5060 Ti
@@ -195,7 +203,7 @@ Các suite script mặc định chạy:
 | --- | --- | --- |
 | Qwen3.5 9B AWQ | `cyankiwi/Qwen3.5-9B-AWQ-4bit` | Bản AWQ 4-bit, hợp lý hơn bản full cho VRAM 16GB. |
 | Qwen3.5 9B AWQ 8-bit | `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8` | Bản 8-bit để so với 4-bit; nếu sát VRAM, tắt bằng `BENCH_INCLUDE_QWEN35_8BIT=0`. |
-| Llama-3 16B AWQ | `solidrust/Llama-3-16B-Instruct-v0.1-AWQ` | Community merge AWQ, có thể sát VRAM hơn; bắt đầu bằng `smoke`. |
+| Llama-3 16B AWQ | `solidrust/Llama-3-16B-Instruct-v0.1-AWQ` | Community merge AWQ, có thể sát VRAM hơn; lệnh đo chính dùng `standard`, đổi về `smoke` khi chỉ cần debug load. |
 
 Suite model lớn dùng defaults an toàn hơn wrapper single-model:
 
@@ -212,18 +220,25 @@ Trước mỗi model, Vast wrapper cũng:
 - timeout sau `BENCH_GPU_READY_TIMEOUT_S=90`;
 - có thể bỏ qua check bằng `BENCH_SKIP_GPU_READY_CHECK=1` nếu cần debug thủ công.
 
-Lý do: Qwen3.5 9B AWQ 4-bit có thể OOM ở `max_model_len=4096` khi vLLM profile CUDA graph/KV cache trên RTX 5060 Ti 16GB. Nếu `smoke` đã qua và muốn đo aggressive hơn, tăng dần:
+Suite còn quản lý disk cache khi chạy nhiều model:
+
+- `BENCH_MODEL_CACHE_CLEANUP=auto` là default, chỉ xoá cache model vừa chạy nếu dung lượng trống trong `HF_HOME` thấp hơn ngưỡng;
+- `BENCH_MIN_CACHE_FREE_GB=35` là ngưỡng default;
+- `BENCH_MODEL_CACHE_CLEANUP=always` xoá cache model vừa chạy trước mỗi model kế tiếp;
+- `BENCH_MODEL_CACHE_CLEANUP=never` giữ toàn bộ cache.
+
+Lý do: Qwen3.5 9B AWQ 4-bit có thể OOM ở `max_model_len=4096` khi vLLM profile CUDA graph/KV cache trên RTX 5060 Ti 16GB. Nếu `standard` ở `2048` đã ổn và muốn đo aggressive hơn, tăng dần:
 
 ```bash
 BENCH_MAX_MODEL_LEN=3072 \
 BENCH_MAX_NUM_BATCHED_TOKENS=3072 \
-scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Nếu bản Qwen3.5 9B 8-bit OOM, tắt riêng nó:
 
 ```bash
-BENCH_INCLUDE_QWEN35_8BIT=0 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+BENCH_INCLUDE_QWEN35_8BIT=0 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Llama 4 Scout 17B:
@@ -234,7 +249,7 @@ Llama 4 Scout 17B:
 - chỉ bật khi muốn thử có kiểm soát:
 
 ```bash
-BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Nếu muốn thử repo Llama 4 khác, override:
@@ -242,7 +257,7 @@ Nếu muốn thử repo Llama 4 khác, override:
 ```bash
 BENCH_INCLUDE_LLAMA4=1 \
 BENCH_LLAMA4_MODEL=unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit \
-scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 ## 1. Chuẩn bị trên mỗi máy

@@ -40,26 +40,26 @@ Use the CUDA 12.9 profile when the Vast host driver is `>= 575.57.08`:
 
 ```bash
 scripts/setup_vast_5060ti_cuda129.sh
-scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
 Use the CUDA 13.0 profile when the Vast host driver is `>= 580.65.06`:
 
 ```bash
 scripts/setup_vast_5060ti_cuda130.sh
-scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ smoke
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
 Run the extra 5060 Ti model suite for Qwen3.5 9B and Llama-3 16B:
 
 ```bash
-scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
-The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit`, `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8`, and `solidrust/Llama-3-16B-Instruct-v0.1-AWQ`. Suite runs use safer 16GB defaults: `BENCH_MAX_MODEL_LEN=2048`, `BENCH_MAX_NUM_SEQS=1`, `BENCH_MAX_NUM_BATCHED_TOKENS=2048`, and `BENCH_ENFORCE_EAGER=1`. Before each model, Vast wrappers kill stale vLLM GPU processes and wait for GPU memory to drop under `BENCH_GPU_READY_MAX_USED_MB=512`. If the Qwen3.5 9B 8-bit run is too tight on a 16GB instance, disable it with `BENCH_INCLUDE_QWEN35_8BIT=0`. Llama 4 Scout 17B is optional because it is a large gated MoE model and is not 16GB-safe by default:
+The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit`, `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8`, and `solidrust/Llama-3-16B-Instruct-v0.1-AWQ`. Suite runs use safer 16GB defaults: `BENCH_MAX_MODEL_LEN=2048`, `BENCH_MAX_NUM_SEQS=1`, `BENCH_MAX_NUM_BATCHED_TOKENS=2048`, and `BENCH_ENFORCE_EAGER=1`. Before each model, Vast wrappers kill stale vLLM GPU processes and wait for GPU memory to drop under `BENCH_GPU_READY_MAX_USED_MB=512`. Suite scripts also check Hugging Face cache free space before moving to the next model and delete the previous model cache when `BENCH_MODEL_CACHE_CLEANUP=auto` sees less than `BENCH_MIN_CACHE_FREE_GB=35` available; use `BENCH_MODEL_CACHE_CLEANUP=always` on small disks. If the Qwen3.5 9B 8-bit run is too tight on a 16GB instance, disable it with `BENCH_INCLUDE_QWEN35_8BIT=0`. Llama 4 Scout 17B is optional because it is a large gated MoE model and is not 16GB-safe by default:
 
 ```bash
-BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Both profiles use `/workspace` caches when available, force `UV_PROJECT_ENVIRONMENT=$PWD/.venv` so an active `(main)` environment cannot capture installs, install vLLM with the selected CUDA backend so its resolver picks the matching PyTorch build once, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. CUDA 12.9 is the safer default when Vast does not expose a CUDA 13-ready host; CUDA 13.0 is available for hosts with newer drivers.
