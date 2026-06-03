@@ -40,7 +40,7 @@ Script CUDA 12.9 sẽ:
 - pin mặc định `VLLM_VERSION=0.22.0`;
 - ép backend `cu129`;
 - clean stack `vllm/torch/...` cũ trong `.venv`;
-- cài `torch` explicit theo backend `cu129` trước khi cài vLLM;
+- cài vLLM với backend `cu129`, để resolver chọn đúng PyTorch build một lần;
 - fail sớm nếu driver thấp hơn mức cần cho CUDA 12.9;
 - verify `torch.version.cuda == 12.9`.
 
@@ -89,7 +89,7 @@ Setup:
 scripts/setup_vast_5060ti_cuda130.sh
 ```
 
-Script CUDA 13.0 dùng cùng cache `/workspace`, ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, cài `torch` explicit theo backend `cu130` trước khi cài vLLM, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
+Script CUDA 13.0 dùng cùng cache `/workspace`, ép `UV_PROJECT_ENVIRONMENT=$PWD/.venv` để không bị shell active `(main)` cài nhầm vào `/venv/main`, pin mặc định `VLLM_VERSION=0.22.0`, ép backend `cu130`, clean stack cũ trong `.venv`, cài vLLM với backend `cu130` để resolver chọn đúng PyTorch build một lần, fail sớm nếu driver thấp hơn mức cần cho CUDA 13.0, và verify `torch.version.cuda == 13.0`.
 
 Chạy smoke mặc định:
 
@@ -203,7 +203,7 @@ Script tự chọn backend theo `uv` cũng vẫn có sẵn:
 scripts/setup_vllm_bench.sh
 ```
 
-Script setup chỉ cài dependency Python và vLLM trong `.venv`. Script không cài hoặc sửa driver NVIDIA, CUDA, package hệ thống, hay cấu hình GPU. Hai script CUDA-specific sẽ gỡ stack vLLM/PyTorch CUDA hiện có trong `.venv` trước khi cài lại để tránh lẫn wheel CUDA 13 với torch CUDA 12.9.
+Script setup chỉ cài dependency Python và vLLM trong `.venv`. Script không cài hoặc sửa driver NVIDIA, CUDA, package hệ thống, hay cấu hình GPU. Hai script CUDA-specific sẽ gỡ stack vLLM/PyTorch CUDA hiện có trong `.venv` trước khi cài lại để tránh lẫn wheel CUDA 13 với torch CUDA 12.9. Torch không được cài bằng một bước riêng; vLLM resolver chọn build PyTorch tương thích với backend đã chọn.
 
 Các script CUDA-specific kiểm tra driver tối thiểu trước khi cài:
 

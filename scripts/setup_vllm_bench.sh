@@ -34,15 +34,6 @@ expected_torch_cuda_for_backend() {
   esac
 }
 
-install_torch_for_backend() {
-  case "$1" in
-    cu129 | cu130)
-      echo "Installing PyTorch for backend $1..."
-      uv pip install --python "$PROJECT_PYTHON" torch --torch-backend="$1"
-      ;;
-  esac
-}
-
 if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "warning: nvidia-smi was not found; vLLM GPU benchmark runs may fail until NVIDIA driver/CUDA are available." >&2
 else
@@ -73,8 +64,6 @@ if [[ "$VLLM_CLEAN" == "1" ]]; then
     uv pip uninstall --python "$PROJECT_PYTHON" "$package" || true
   done
 fi
-
-install_torch_for_backend "$VLLM_TORCH_BACKEND"
 
 if [[ -n "${VLLM_VERSION:-}" ]]; then
   uv pip install --python "$PROJECT_PYTHON" "vllm==${VLLM_VERSION}" --torch-backend="${VLLM_TORCH_BACKEND}"
