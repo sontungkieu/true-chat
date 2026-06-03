@@ -557,6 +557,7 @@ uv run --frozen python scripts/run_hotpotqa_retry_failed_rows.py \
 ```
 
 The retry script reads the original `query_results.jsonl`, reruns only rows matching `--failed-status-code` (default `429`), merges successful original rows with retried rows, and writes a fresh `query_results.jsonl`, `retry_rows.jsonl`, `metrics.json`, and summary table. It does not rebuild HotpotQA BM25. RAGAS is skipped by default; add `--run-ragas` after generation is clean enough to judge.
+Retry runs write `retry_rows.partial.jsonl` and `retry_progress.json` while they are running. Reusing the same `--run-name` resumes from the partial retry rows by default; pass `--no-resume` to rerun the selected failed rows from scratch.
 
 Optional RAGAS mode:
 

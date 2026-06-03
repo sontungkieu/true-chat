@@ -41,6 +41,9 @@ def retry_failed_rows(
     max_failed_rows: int | None,
     include_non_status_errors: bool,
     run_ragas: bool,
+    resume: bool = True,
+    checkpoint_every: int = 1,
+    progress_every: int = 1,
     llm_factory: Callable[[], RoundRobinGroqClient] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
@@ -66,27 +69,82 @@ def retry_failed_rows(
 
     llm = llm_factory() if llm_factory is not None else build_generation_client(config)
     created_at = datetime.now(timezone.utc).isoformat()
-    retry_rows: list[dict[str, Any]] = []
-    retry_aggregates: list[dict[str, Any]] = []
-    for action_id, rows in _rows_by_action(failed_rows).items():
-        action = _action_from_row(rows[0])
-        action_rows, aggregate = run_action_from_cache(
+    partial_path = run_dir / "retry_rows.partial.jsonl"
+    progress_path = run_dir / "retry_progress.json"
+    if partial_path.exists() and not resume:
+        partial_path.unlink()
+    retry_rows = _read_partial_retry_rows(partial_path, failed_keys) if resume else []
+    previous_retry_count = len(retry_rows)
+    completed_keys = {_row_key(row) for row in retry_rows}
+    pending_rows = [row for row in failed_rows if _row_key(row) not in completed_keys]
+
+    _write_retry_progress(
+        progress_path,
+        run_id=run_id,
+        candidate_count=len(failed_rows),
+        previous_retry_count=previous_retry_count,
+        pending_count=len(pending_rows),
+        retry_rows=retry_rows,
+        elapsed_s=time.perf_counter() - started,
+        status="running",
+    )
+
+    for index, row in enumerate(pending_rows, start=1):
+        action = _action_from_row(row)
+        action_rows, _aggregate = run_action_from_cache(
             config=config,
             action=action,
-            retrieval_cache=[_cached_row_from_query_result(row) for row in rows],
+            retrieval_cache=[_cached_row_from_query_result(row)],
             references_by_query_id={
                 str(row.get("query_id")): tuple(str(answer) for answer in row.get("reference_answers") or [])
-                for row in rows
             },
             llm=llm,
             run_id=run_id,
             created_at=created_at,
         )
         retry_rows.extend(action_rows)
-        retry_aggregates.append(aggregate)
+        if checkpoint_every > 0 and index % checkpoint_every == 0:
+            write_jsonl(partial_path, retry_rows)
+            _write_retry_progress(
+                progress_path,
+                run_id=run_id,
+                candidate_count=len(failed_rows),
+                previous_retry_count=previous_retry_count,
+                pending_count=max(0, len(pending_rows) - index),
+                retry_rows=retry_rows,
+                elapsed_s=time.perf_counter() - started,
+                status="running",
+            )
+        if progress_every > 0 and (index % progress_every == 0 or index == len(pending_rows)):
+            latest = action_rows[-1] if action_rows else {}
+            print(
+                _format_progress_line(
+                    index=index,
+                    total=len(pending_rows),
+                    previous_retry_count=previous_retry_count,
+                    candidate_count=len(failed_rows),
+                    row=latest or row,
+                    elapsed_s=time.perf_counter() - started,
+                ),
+                flush=True,
+            )
+
+    if checkpoint_every > 0:
+        write_jsonl(partial_path, retry_rows)
+        _write_retry_progress(
+            progress_path,
+            run_id=run_id,
+            candidate_count=len(failed_rows),
+            previous_retry_count=previous_retry_count,
+            pending_count=0,
+            retry_rows=retry_rows,
+            elapsed_s=time.perf_counter() - started,
+            status="finalizing",
+        )
 
     merged_rows = _sort_rows([*kept_rows, *retry_rows], original_rows)
     aggregate_rows = _aggregate_rows_by_action(merged_rows, original_summary)
+    retry_aggregates = _aggregate_rows_by_action(retry_rows, original_summary)
 
     ragas_summary = {"skipped": True, "reason": "disabled"}
     ragas_rows: list[dict[str, Any]] = []
@@ -116,11 +174,19 @@ def retry_failed_rows(
         "retry": {
             "candidate_count": len(failed_rows),
             "retried_count": len(retry_rows),
+            "previous_retry_count": previous_retry_count,
+            "new_retry_count": max(0, len(retry_rows) - previous_retry_count),
+            "pending_count": 0,
             "retry_success_count": sum(1 for row in retry_rows if not row.get("error")),
             "retry_error_count": sum(1 for row in retry_rows if row.get("error")),
             "failed_status_code": failed_status_code,
             "include_non_status_errors": include_non_status_errors,
             "max_failed_rows": max_failed_rows,
+            "resume": resume,
+            "checkpoint_every": checkpoint_every,
+            "progress_every": progress_every,
+            "partial_path": str(partial_path),
+            "progress_path": str(progress_path),
         },
         "config": _serializable_retry_config(config),
         "benchmark": original_summary.get("benchmark", {}),
@@ -139,6 +205,16 @@ def retry_failed_rows(
     write_csv_rows(run_dir / "hotpotqa_summary.csv", summary_rows)
     write_csv_rows(run_dir / "ragas_per_sample.csv", ragas_rows)
     (run_dir / "hotpotqa_summary.md").write_text(render_markdown_summary(summary_rows, summary), encoding="utf-8")
+    _write_retry_progress(
+        progress_path,
+        run_id=run_id,
+        candidate_count=len(failed_rows),
+        previous_retry_count=previous_retry_count,
+        pending_count=0,
+        retry_rows=retry_rows,
+        elapsed_s=summary["elapsed_s"],
+        status="complete",
+    )
     return summary
 
 
@@ -174,6 +250,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ragas-model", default="mimo-v2.5-pro")
     parser.add_argument("--ragas-samples-per-action", type=int, default=1)
     parser.add_argument("--ragas-seed", type=int, default=20260529)
+    parser.add_argument("--no-resume", action="store_true")
+    parser.add_argument("--checkpoint-every", type=int, default=1)
+    parser.add_argument("--progress-every", type=int, default=1)
     return parser.parse_args(argv)
 
 
@@ -218,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
         max_failed_rows=args.max_failed_rows,
         include_non_status_errors=args.all_error_rows,
         run_ragas=args.run_ragas,
+        resume=not args.no_resume,
+        checkpoint_every=max(0, args.checkpoint_every),
+        progress_every=max(0, args.progress_every),
     )
     print(json.dumps({"output_dir": summary["output_dir"], "retry": summary["retry"]}, indent=2))
     return 0
@@ -312,6 +394,63 @@ def _serializable_retry_config(config: HotpotqaCachedEvalConfig) -> dict[str, An
     for key in ("output_dir", "mimo_env_file", "groq_keys_path"):
         data[key] = str(data[key])
     return data
+
+
+def _read_partial_retry_rows(path: Path, failed_keys: set[tuple[str, str]]) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows = _read_jsonl(path)
+    return [row for row in rows if _row_key(row) in failed_keys]
+
+
+def _write_retry_progress(
+    path: Path,
+    *,
+    run_id: str,
+    candidate_count: int,
+    previous_retry_count: int,
+    pending_count: int,
+    retry_rows: list[dict[str, Any]],
+    elapsed_s: float,
+    status: str,
+) -> None:
+    retry_success_count = sum(1 for row in retry_rows if not row.get("error"))
+    retry_error_count = sum(1 for row in retry_rows if row.get("error"))
+    write_json(
+        path,
+        {
+            "run_id": run_id,
+            "status": status,
+            "candidate_count": candidate_count,
+            "previous_retry_count": previous_retry_count,
+            "retried_count": len(retry_rows),
+            "new_retry_count": max(0, len(retry_rows) - previous_retry_count),
+            "pending_count": pending_count,
+            "retry_success_count": retry_success_count,
+            "retry_error_count": retry_error_count,
+            "elapsed_s": elapsed_s,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+
+def _format_progress_line(
+    *,
+    index: int,
+    total: int,
+    previous_retry_count: int,
+    candidate_count: int,
+    row: dict[str, Any],
+    elapsed_s: float,
+) -> str:
+    done = previous_retry_count + index
+    status = "error" if row.get("error") else "ok"
+    query_id = str(row.get("query_id") or "")
+    action_id = str(row.get("action_id") or "")
+    return (
+        f"retry {done}/{candidate_count} pending-batch {index}/{total} "
+        f"status={status} action={action_id} query_id={query_id} elapsed_s={elapsed_s:.1f}"
+    )
 
 
 def _read_json(path: Path) -> dict[str, Any]:

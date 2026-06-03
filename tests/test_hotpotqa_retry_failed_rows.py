@@ -131,3 +131,9 @@ def test_retry_failed_rows_merges_success_and_retried_rows(tmp_path: Path) -> No
     assert rows[1]["answer"] == "cats purr"
     assert rows[1]["error"] is None
     assert (run_dir / "retry_rows.jsonl").exists()
+    assert (run_dir / "retry_rows.partial.jsonl").exists()
+    progress = json.loads((run_dir / "retry_progress.json").read_text(encoding="utf-8"))
+    assert progress["status"] == "complete"
+    assert progress["candidate_count"] == 1
+    assert progress["retried_count"] == 1
+    assert progress["retry_success_count"] == 1

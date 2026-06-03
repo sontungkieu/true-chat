@@ -137,4 +137,5 @@ Retry path:
 - Use `scripts/run_hotpotqa_retry_failed_rows.py` against the downloaded Groq run directory to rerun only `error_status_code=429` rows.
 - The retry path reuses `query_results.jsonl` and retrieved contexts, so it does not rebuild the 5.23M-document BM25 index.
 - Recommended one-key Groq pacing for retry is `--key-tpm 5000 --key-rpm 3`.
+- The retry path now checkpoints each row to `retry_rows.partial.jsonl` and `retry_progress.json`, and reuses that partial file by default when the same `--run-name` is launched again.
 - RAGAS should remain disabled during generation retry; rerun RAGAS separately after the merged generation file has fewer missing answers.

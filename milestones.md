@@ -95,6 +95,6 @@ Status: presentation artifact drafted; implementation pending.
 - Add Kaggle policy-sharding flags for HotpotQA (`--context-policies`, `--context-budgets`, `--adaptive-profiles`) so MiMo jobs can be distributed across multiple accounts by fixed policy and adaptive profile.
 - Fix the local RAGAS embedding adapter to expose text embedding methods expected by current RAGAS evaluator calls, preventing answer-relevancy embedding jobs from failing with a missing `embed_text` method.
 - Run and summarize a Groq `qwen/qwen3-32b` full HotpotQA sampled matrix (`limit=50`, 16 action rows, MiMo judge `n=1/action`); mark the result as quota-contaminated because 417/800 generations hit Groq `429` rate limits.
-- Add a HotpotQA retry-only script that reruns failed query/action rows from downloaded artifacts without rebuilding BM25, then merges retried rows back into fresh metrics and summary outputs.
+- Add a HotpotQA retry-only script that reruns failed query/action rows from downloaded artifacts without rebuilding BM25, checkpoints row-level progress for resume, then merges retried rows back into fresh metrics and summary outputs.
 - Keep the deck scoped to AI feedback/RLAIF-style labels, offline contextual bandit/RL-lite, and analytical/profiling-oriented KV work.
 - Document boundaries in the deck: no PPO/GRPO, no human preference learning claim, no Qwen14B DPO completion claim, and no production runtime KV-cache pruning claim.

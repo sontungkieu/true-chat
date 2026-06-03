@@ -41,7 +41,7 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c3`; pendi
    - HotpotQA Kaggle upload now supports policy/profile sharding so MiMo fixed-policy, adaptive-balanced, and adaptive-aggressive jobs can run on separate Kaggle accounts.
    - RAGAS local embedding adapter now supports text embedding calls required by the evaluator path.
    - Groq `qwen/qwen3-32b` full HotpotQA sampled matrix completed with valid outputs but is marked quota-contaminated due to 417/800 `429` generation errors.
-   - A retry-only HotpotQA script now reruns failed query/action rows from downloaded artifacts without rebuilding BM25 and writes merged metrics.
+   - A retry-only HotpotQA script now reruns failed query/action rows from downloaded artifacts without rebuilding BM25, checkpoints progress for resume, and writes merged metrics.
    - Optional NFCorpus follow-up remains deferred; SciFact full generation and MiMo long-context cover the required Phase 1C.3 validation.
 
 5. Document findings
