@@ -22,6 +22,11 @@ fi
 max_model_len="${BENCH_MAX_MODEL_LEN:-4096}"
 gpu_memory_utilization="${BENCH_GPU_MEMORY_UTILIZATION:-0.85}"
 startup_timeout_s="${BENCH_STARTUP_TIMEOUT_S:-1800}"
+kv_cache_dtype="${BENCH_VLLM_KV_CACHE_DTYPE:-}"
+
+if [[ "$kv_cache_dtype" == "none" || "$kv_cache_dtype" == "off" ]]; then
+  kv_cache_dtype=""
+fi
 
 cmd=(
   uv run --frozen --no-sync rag-bench model-bench
@@ -36,6 +41,10 @@ cmd=(
 
 if [[ -n "${BENCH_VLLM_QUANTIZATION:-}" ]]; then
   cmd+=(--vllm-arg=--quantization --vllm-arg "$BENCH_VLLM_QUANTIZATION")
+fi
+
+if [[ -n "$kv_cache_dtype" ]]; then
+  cmd+=(--vllm-arg=--kv-cache-dtype --vllm-arg "$kv_cache_dtype")
 fi
 
 if [[ -n "${BENCH_MAX_NUM_SEQS:-}" ]]; then
@@ -53,7 +62,7 @@ fi
 cmd+=("$@")
 
 vast_log_step "single-model bench: cuda=12.9 model=$model preset=$preset max_model_len=$max_model_len gpu_memory_utilization=$gpu_memory_utilization startup_timeout_s=$startup_timeout_s"
-vast_log_step "vLLM options: BENCH_MAX_NUM_SEQS=${BENCH_MAX_NUM_SEQS:-unset} BENCH_MAX_NUM_BATCHED_TOKENS=${BENCH_MAX_NUM_BATCHED_TOKENS:-unset} BENCH_ENFORCE_EAGER=${BENCH_ENFORCE_EAGER:-0} BENCH_VLLM_QUANTIZATION=${BENCH_VLLM_QUANTIZATION:-auto}"
+vast_log_step "vLLM options: BENCH_MAX_NUM_SEQS=${BENCH_MAX_NUM_SEQS:-unset} BENCH_MAX_NUM_BATCHED_TOKENS=${BENCH_MAX_NUM_BATCHED_TOKENS:-unset} BENCH_ENFORCE_EAGER=${BENCH_ENFORCE_EAGER:-0} BENCH_VLLM_QUANTIZATION=${BENCH_VLLM_QUANTIZATION:-auto} BENCH_VLLM_KV_CACHE_DTYPE=${kv_cache_dtype:-auto}"
 vast_wait_for_gpu_ready
 vast_log_step "running 5060 Ti CUDA 12.9 benchmark command:"
 printf ' %q' "${cmd[@]}"
