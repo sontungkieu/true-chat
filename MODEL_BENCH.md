@@ -350,11 +350,11 @@ runs/model_bench/<timestamp>_<hostname>_<model_slug>/
 
 Các file chính:
 
-- `summary.md`: bảng ngắn để copy so sánh giữa máy.
-- `scenario_metrics.csv`: số aggregate dễ mở bằng spreadsheet.
-- `scenario_metrics.json`: số aggregate dạng JSON.
+- `summary.md`: bảng ngắn để copy so sánh giữa máy, gồm latency/tok/s và peak VRAM/GPU/power/temp.
+- `scenario_metrics.csv`: số aggregate dễ mở bằng spreadsheet, gồm cả hardware aggregate theo scenario.
+- `scenario_metrics.json`: số aggregate dạng JSON, gồm cả hardware aggregate theo scenario.
 - `requests.jsonl`: từng request riêng lẻ, gồm latency, TTFT, token usage, tok/s, lỗi.
-- `hardware_samples.csv`: GPU util, VRAM, power, temperature, CPU load, RAM trong lúc chạy.
+- `hardware_samples.csv`: raw samples GPU util, VRAM, power, temperature, CPU load, RAM trong lúc chạy.
 - `manifest.json`: model, command, git commit, dirty flag, platform, hardware snapshot.
 - `server.log`: log vLLM khi benchmark tự start server.
 
@@ -366,6 +366,10 @@ Metric nên nhìn đầu tiên:
 - `requests_per_s`: throughput theo scenario/concurrency.
 - `completion_tokens_per_s`: tổng completion token/s toàn scenario.
 - `error_rate`: nếu khác `0`, xem `requests.jsonl` và `server.log` trước khi so sánh tốc độ.
+- `gpu_peak_memory_used_mb`, `gpu_peak_memory_used_percent`: VRAM peak theo scenario.
+- `gpu_peak_util_percent`, `gpu_avg_util_percent`: mức dùng GPU peak/trung bình theo scenario.
+- `gpu_peak_power_w`, `gpu_avg_power_w`, `gpu_peak_temperature_c`: điện năng và nhiệt peak/trung bình theo scenario.
+- `ram_peak_used_mb`, `ram_peak_used_percent`, `cpu_load_1m_peak`: RAM và CPU host theo scenario.
 
 Khi so sánh nhiều máy, ưu tiên so cùng:
 

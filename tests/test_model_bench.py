@@ -13,6 +13,7 @@ from rag_bench.model_bench import (
     aggregate_scenario,
     collect_hardware_samples,
     collect_hardware_snapshot,
+    enrich_scenario_rows_with_hardware,
     parse_nvidia_gpu_samples,
     parse_nvidia_gpu_snapshot,
     run_scenario,
@@ -171,6 +172,53 @@ def test_nvidia_parsers_handle_csv_rows() -> None:
     ]
     assert samples[0]["gpu_util_percent"] == 91.0
     assert samples[0]["gpu_power_w"] == 250.5
+
+
+def test_enrich_scenario_rows_with_hardware_adds_peak_metrics() -> None:
+    scenario_rows = [
+        {
+            "scenario": "unit",
+            "suite": "synthetic",
+            "concurrency": 1,
+            "scenario_started_at": "2026-01-01T00:00:00+00:00",
+            "scenario_ended_at": "2026-01-01T00:00:03+00:00",
+        }
+    ]
+    hardware_rows = [
+        {
+            "sampled_at": "2026-01-01T00:00:01+00:00",
+            "gpu_util_percent": 50.0,
+            "gpu_memory_used_mb": 1000.0,
+            "gpu_memory_total_mb": 2000.0,
+            "gpu_power_w": 80.0,
+            "gpu_temperature_c": 55.0,
+            "ram_used_mb": 8000.0,
+            "ram_total_mb": 16000.0,
+            "cpu_load_1m": 1.0,
+        },
+        {
+            "sampled_at": "2026-01-01T00:00:02+00:00",
+            "gpu_util_percent": 90.0,
+            "gpu_memory_used_mb": 1500.0,
+            "gpu_memory_total_mb": 2000.0,
+            "gpu_power_w": 120.0,
+            "gpu_temperature_c": 65.0,
+            "ram_used_mb": 9000.0,
+            "ram_total_mb": 16000.0,
+            "cpu_load_1m": 2.0,
+        },
+    ]
+
+    enriched = enrich_scenario_rows_with_hardware(scenario_rows, hardware_rows)
+
+    assert enriched[0]["hardware_sample_count"] == 2
+    assert enriched[0]["gpu_peak_memory_used_mb"] == 1500.0
+    assert enriched[0]["gpu_peak_memory_used_percent"] == 75.0
+    assert enriched[0]["gpu_peak_util_percent"] == 90.0
+    assert enriched[0]["gpu_avg_util_percent"] == 70.0
+    assert enriched[0]["gpu_peak_power_w"] == 120.0
+    assert enriched[0]["gpu_peak_temperature_c"] == 65.0
+    assert enriched[0]["ram_peak_used_percent"] == 56.25
 
 
 def test_hardware_collection_falls_back_without_nvidia_smi() -> None:

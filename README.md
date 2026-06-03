@@ -141,8 +141,8 @@ Results are written under ignored `runs/model_bench/<timestamp>_<hostname>_<mode
 
 - `manifest.json`: command config, git branch/commit/dirty flag, endpoint, vLLM command, and hardware snapshot.
 - `requests.jsonl`: per-request latency, TTFT, usage tokens, output tok/s, generated size, and error.
-- `scenario_metrics.json` / `scenario_metrics.csv`: p50/p95/p99 latency, p50/p95 TTFT, tok/s, requests/s, completion tokens/s, and error rate.
-- `hardware_samples.csv`: sampled CPU/RAM and GPU utilization, memory, power, and temperature where `nvidia-smi` is available.
+- `scenario_metrics.json` / `scenario_metrics.csv`: p50/p95/p99 latency, p50/p95 TTFT, tok/s, requests/s, completion tokens/s, error rate, and per-scenario hardware aggregates such as peak VRAM, peak/avg GPU utilization, peak/avg power, peak temperature, peak RAM, and CPU load.
+- `hardware_samples.csv`: raw sampled CPU/RAM and GPU utilization, memory, power, and temperature where `nvidia-smi` is available.
 - `server.log`: local vLLM process output, or a note that an existing endpoint was used.
 - `summary.md`: compact comparison table for copying between machines.
 

@@ -86,6 +86,7 @@ class HardwareSampler:
     _stop: threading.Event = field(default_factory=threading.Event, init=False)
     _thread: threading.Thread | None = field(default=None, init=False)
     _rows: list[dict[str, Any]] = field(default_factory=list, init=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
     def start(self) -> None:
         if self._thread is not None:
@@ -97,11 +98,17 @@ class HardwareSampler:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=max(1.0, self.interval_s + 0.5))
-        return list(self._rows)
+        with self._lock:
+            return list(self._rows)
+
+    def sample_once(self) -> None:
+        rows = collect_hardware_samples(command_runner=self.command_runner)
+        with self._lock:
+            self._rows.extend(rows)
 
     def _sample_loop(self) -> None:
         while not self._stop.is_set():
-            self._rows.extend(collect_hardware_samples(command_runner=self.command_runner))
+            self.sample_once()
             self._stop.wait(self.interval_s)
 
 
@@ -157,6 +164,8 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
                         temperature=config.temperature,
                     )
                 for concurrency in concurrency_values:
+                    sampler.sample_once()
+                    scenario_started_at = datetime.now(timezone.utc)
                     scenario_result = run_scenario(
                         client,
                         scenario,
@@ -165,10 +174,20 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
                         max_output_tokens=config.max_output_tokens or scenario.max_output_tokens,
                         temperature=config.temperature,
                     )
+                    scenario_ended_at = datetime.now(timezone.utc)
+                    sampler.sample_once()
                     request_rows.extend(row.__dict__ for row in scenario_result["requests"])
-                    scenario_rows.append(scenario_result["metrics"])
+                    scenario_rows.append(
+                        {
+                            **scenario_result["metrics"],
+                            "scenario_started_at": scenario_started_at.isoformat(),
+                            "scenario_ended_at": scenario_ended_at.isoformat(),
+                        }
+                    )
         finally:
             hardware_rows = sampler.stop()
+
+        scenario_rows = enrich_scenario_rows_with_hardware(scenario_rows, hardware_rows)
 
         manifest = build_manifest(
             config,
@@ -460,6 +479,114 @@ def aggregate_scenario(
     }
 
 
+def enrich_scenario_rows_with_hardware(
+    scenario_rows: list[dict[str, Any]],
+    hardware_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            **row,
+            **aggregate_hardware_for_window(
+                hardware_rows,
+                started_at=row.get("scenario_started_at"),
+                ended_at=row.get("scenario_ended_at"),
+            ),
+        }
+        for row in scenario_rows
+    ]
+
+
+def aggregate_hardware_for_window(
+    hardware_rows: list[dict[str, Any]],
+    *,
+    started_at: str | None,
+    ended_at: str | None,
+) -> dict[str, Any]:
+    window_rows = hardware_rows_in_window(hardware_rows, started_at=started_at, ended_at=ended_at)
+    if not window_rows:
+        return {
+            "hardware_sample_count": 0,
+            "gpu_peak_memory_used_mb": None,
+            "gpu_peak_memory_used_percent": None,
+            "gpu_peak_util_percent": None,
+            "gpu_avg_util_percent": None,
+            "gpu_peak_power_w": None,
+            "gpu_avg_power_w": None,
+            "gpu_peak_temperature_c": None,
+            "ram_peak_used_mb": None,
+            "ram_peak_used_percent": None,
+            "cpu_load_1m_peak": None,
+        }
+
+    gpu_memory_used = numeric_values(window_rows, "gpu_memory_used_mb")
+    gpu_memory_total = numeric_values(window_rows, "gpu_memory_total_mb")
+    gpu_util = numeric_values(window_rows, "gpu_util_percent")
+    gpu_power = numeric_values(window_rows, "gpu_power_w")
+    gpu_temperature = numeric_values(window_rows, "gpu_temperature_c")
+    ram_used = numeric_values(window_rows, "ram_used_mb")
+    ram_total = numeric_values(window_rows, "ram_total_mb")
+    cpu_load = numeric_values(window_rows, "cpu_load_1m")
+
+    peak_gpu_memory_used = max(gpu_memory_used) if gpu_memory_used else None
+    peak_gpu_memory_total = max(gpu_memory_total) if gpu_memory_total else None
+    peak_ram_used = max(ram_used) if ram_used else None
+    peak_ram_total = max(ram_total) if ram_total else None
+
+    return {
+        "hardware_sample_count": len(window_rows),
+        "gpu_peak_memory_used_mb": peak_gpu_memory_used,
+        "gpu_peak_memory_used_percent": safe_ratio(100 * peak_gpu_memory_used, peak_gpu_memory_total)
+        if peak_gpu_memory_used is not None and peak_gpu_memory_total
+        else None,
+        "gpu_peak_util_percent": max(gpu_util) if gpu_util else None,
+        "gpu_avg_util_percent": mean(gpu_util) if gpu_util else None,
+        "gpu_peak_power_w": max(gpu_power) if gpu_power else None,
+        "gpu_avg_power_w": mean(gpu_power) if gpu_power else None,
+        "gpu_peak_temperature_c": max(gpu_temperature) if gpu_temperature else None,
+        "ram_peak_used_mb": peak_ram_used,
+        "ram_peak_used_percent": safe_ratio(100 * peak_ram_used, peak_ram_total)
+        if peak_ram_used is not None and peak_ram_total
+        else None,
+        "cpu_load_1m_peak": max(cpu_load) if cpu_load else None,
+    }
+
+
+def hardware_rows_in_window(
+    hardware_rows: list[dict[str, Any]],
+    *,
+    started_at: str | None,
+    ended_at: str | None,
+) -> list[dict[str, Any]]:
+    if not started_at or not ended_at:
+        return hardware_rows
+    try:
+        start = datetime.fromisoformat(started_at)
+        end = datetime.fromisoformat(ended_at)
+    except ValueError:
+        return hardware_rows
+    rows = []
+    for row in hardware_rows:
+        sampled_at = row.get("sampled_at")
+        if not isinstance(sampled_at, str):
+            continue
+        try:
+            sampled = datetime.fromisoformat(sampled_at)
+        except ValueError:
+            continue
+        if start <= sampled <= end:
+            rows.append(row)
+    return rows or hardware_rows
+
+
+def numeric_values(rows: list[dict[str, Any]], key: str) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        value = row.get(key)
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    return values
+
+
 def scenarios_for_preset(preset: str) -> list[Scenario]:
     synthetic = [
         synthetic_scenario("synthetic_short", prompt_target_tokens=96, max_output_tokens=64),
@@ -725,8 +852,8 @@ def render_summary(manifest: dict[str, Any], scenario_rows: list[dict[str, Any]]
         f"- Host: `{manifest['hardware'].get('hostname')}`",
         f"- Git: `{manifest['git'].get('commit')}` dirty={manifest['git'].get('dirty')}",
         "",
-        "| Scenario | Suite | Concurrency | Success | Error % | p50 latency | p95 latency | p50 TTFT | avg tok/s | req/s |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Scenario | Suite | Concurrency | Success | Error % | p50 latency | p95 latency | p50 TTFT | avg tok/s | req/s | peak VRAM MB | peak GPU % | peak W | peak C |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in scenario_rows:
         lines.append(
@@ -743,6 +870,10 @@ def render_summary(manifest: dict[str, Any], scenario_rows: list[dict[str, Any]]
                     fmt_number(row.get("ttft_p50_s")),
                     fmt_number(row.get("avg_output_tokens_per_s")),
                     fmt_number(row.get("requests_per_s")),
+                    fmt_number(row.get("gpu_peak_memory_used_mb")),
+                    fmt_number(row.get("gpu_peak_util_percent")),
+                    fmt_number(row.get("gpu_peak_power_w")),
+                    fmt_number(row.get("gpu_peak_temperature_c")),
                 ]
             )
             + " |"
