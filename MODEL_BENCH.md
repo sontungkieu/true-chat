@@ -45,7 +45,7 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
   scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
-env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc BENCH_VLLM_CPU_OFFLOAD_GB=2 \
   scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
 
 # Llama-3 16B AWQ
@@ -73,7 +73,7 @@ env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4
   scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-4bit standard
 
 # Qwen 3.5 9B AWQ 8-bit/BF16-INT8
-env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc \
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 BENCH_GPU_MEMORY_UTILIZATION=0.94 BENCH_VLLM_KV_CACHE_DTYPE=turboquant_4bit_nc BENCH_VLLM_CPU_OFFLOAD_GB=2 \
   scripts/bench_vast_5060ti_cuda129.sh cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8 standard
 
 # Llama-3 16B AWQ
@@ -211,6 +211,7 @@ Suite model lớn dùng defaults an toàn hơn wrapper single-model:
 - `BENCH_ENFORCE_EAGER=1`;
 - `BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=turboquant_4bit_nc` cho riêng Qwen3.5 9B 8-bit;
 - `BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.94` cho riêng Qwen3.5 9B 8-bit nếu không set global `BENCH_GPU_MEMORY_UTILIZATION`;
+- `BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=2` cho riêng Qwen3.5 9B 8-bit nếu không set global `BENCH_VLLM_CPU_OFFLOAD_GB`;
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 
 Trước mỗi model, Vast wrapper cũng:
@@ -235,10 +236,10 @@ BENCH_MAX_NUM_BATCHED_TOKENS=2048 \
 scripts/bench_vast_5060ti_cuda130.sh cyankiwi/Qwen3.5-9B-AWQ-4bit smoke
 ```
 
-Nếu log vLLM báo `No available memory for the cache blocks`, nghĩa là budget `--gpu-memory-utilization` quá thấp sau khi load/profile model. Qwen3.5 9B 8-bit mặc định dùng `0.94`; nếu vẫn gặp lỗi này trên máy sạch VRAM, có thể thử sát hơn:
+Nếu log vLLM báo `No available memory for the cache blocks`, nghĩa là sau khi load/profile model vẫn không còn đủ chỗ tạo KV cache block. Qwen3.5 9B 8-bit mặc định dùng `gpu_memory_utilization=0.94`, `turboquant_4bit_nc`, và `cpu_offload_gb=2`; nếu vẫn gặp lỗi này trên máy sạch VRAM, tăng offload trước khi tăng `gpu_memory_utilization`:
 
 ```bash
-BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.95 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=4 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
 ```
 
 Nếu muốn so sánh Qwen3.5 9B 8-bit bằng KV-cache dtype khác, override riêng biến này:
