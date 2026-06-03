@@ -63,6 +63,13 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
+Chạy suite model thêm gồm Qwen3.5 9B AWQ và Llama-3 16B AWQ:
+
+```bash
+scripts/bench_vast_5060ti_model_suite_cuda129.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda129.sh standard
+```
+
 Nếu muốn xác nhận lỗi AWQ Marlin, có thể ép kernel AWQ thường:
 
 ```bash
@@ -101,6 +108,41 @@ Override cấu hình giống profile CUDA 12.9:
 BENCH_MAX_MODEL_LEN=6144 \
 BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Chạy suite model thêm gồm Qwen3.5 9B AWQ và Llama-3 16B AWQ:
+
+```bash
+scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+```
+
+### Model suite 5060 Ti
+
+Các suite script mặc định chạy:
+
+| Nhãn | Model id | Ghi chú |
+| --- | --- | --- |
+| Qwen3.5 9B AWQ | `cyankiwi/Qwen3.5-9B-AWQ-4bit` | Bản AWQ 4-bit, hợp lý hơn bản full cho VRAM 16GB. |
+| Llama-3 16B AWQ | `solidrust/Llama-3-16B-Instruct-v0.1-AWQ` | Community merge AWQ, có thể sát VRAM hơn; bắt đầu bằng `smoke`. |
+
+Llama 4 Scout 17B:
+
+- model chính thức: `meta-llama/Llama-4-Scout-17B-16E-Instruct`;
+- đây là MoE lớn và thường cần quyền access/HF token;
+- không 16GB-safe để chạy mặc định trong vLLM;
+- chỉ bật khi muốn thử có kiểm soát:
+
+```bash
+BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
+```
+
+Nếu muốn thử repo Llama 4 khác, override:
+
+```bash
+BENCH_INCLUDE_LLAMA4=1 \
+BENCH_LLAMA4_MODEL=unsloth/Llama-4-Scout-17B-16E-Instruct-unsloth-bnb-4bit \
+scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
 ```
 
 ## 1. Chuẩn bị trên mỗi máy
