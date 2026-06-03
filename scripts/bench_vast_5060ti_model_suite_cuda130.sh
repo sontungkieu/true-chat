@@ -10,8 +10,13 @@ fi
 
 models=(
   "cyankiwi/Qwen3.5-9B-AWQ-4bit"
-  "solidrust/Llama-3-16B-Instruct-v0.1-AWQ"
 )
+
+if [[ "${BENCH_INCLUDE_QWEN35_8BIT:-1}" == "1" ]]; then
+  models+=("cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8")
+fi
+
+models+=("solidrust/Llama-3-16B-Instruct-v0.1-AWQ")
 
 if [[ "${BENCH_INCLUDE_LLAMA4:-0}" == "1" ]]; then
   models+=("${BENCH_LLAMA4_MODEL:-meta-llama/Llama-4-Scout-17B-16E-Instruct}")

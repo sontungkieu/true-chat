@@ -56,7 +56,7 @@ Run the extra 5060 Ti model suite for Qwen3.5 9B and Llama-3 16B:
 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
 ```
 
-The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit` and `solidrust/Llama-3-16B-Instruct-v0.1-AWQ`. Llama 4 Scout 17B is optional because it is a large gated MoE model and is not 16GB-safe by default:
+The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit`, `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8`, and `solidrust/Llama-3-16B-Instruct-v0.1-AWQ`. If the Qwen3.5 9B 8-bit run is too tight on a 16GB instance, disable it with `BENCH_INCLUDE_QWEN35_8BIT=0`. Llama 4 Scout 17B is optional because it is a large gated MoE model and is not 16GB-safe by default:
 
 ```bash
 BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke

@@ -65,7 +65,7 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ và Llama-3 16B AWQ:
+Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda129.sh smoke
@@ -112,7 +112,7 @@ BENCH_GPU_MEMORY_UTILIZATION=0.88 \
 scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
 ```
 
-Chạy suite model thêm gồm Qwen3.5 9B AWQ và Llama-3 16B AWQ:
+Chạy suite model thêm gồm Qwen3.5 9B AWQ 4-bit, Qwen3.5 9B AWQ 8-bit, và Llama-3 16B AWQ:
 
 ```bash
 scripts/bench_vast_5060ti_model_suite_cuda130.sh smoke
@@ -126,6 +126,7 @@ Các suite script mặc định chạy:
 | Nhãn | Model id | Ghi chú |
 | --- | --- | --- |
 | Qwen3.5 9B AWQ | `cyankiwi/Qwen3.5-9B-AWQ-4bit` | Bản AWQ 4-bit, hợp lý hơn bản full cho VRAM 16GB. |
+| Qwen3.5 9B AWQ 8-bit | `cyankiwi/Qwen3.5-9B-AWQ-BF16-INT8` | Bản 8-bit để so với 4-bit; nếu sát VRAM, tắt bằng `BENCH_INCLUDE_QWEN35_8BIT=0`. |
 | Llama-3 16B AWQ | `solidrust/Llama-3-16B-Instruct-v0.1-AWQ` | Community merge AWQ, có thể sát VRAM hơn; bắt đầu bằng `smoke`. |
 
 Llama 4 Scout 17B:
