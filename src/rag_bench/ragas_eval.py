@@ -155,11 +155,17 @@ class _SentenceTransformerEmbeddings:
     def embed_query(self, text: str) -> list[float]:
         return self._model.encode(text, normalize_embeddings=True).tolist()
 
+    def embed_text(self, text: str) -> list[float]:
+        return self.embed_query(text)
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self._model.encode(texts, normalize_embeddings=True).tolist()
 
     async def aembed_query(self, text: str) -> list[float]:
         return self.embed_query(text)
+
+    async def aembed_text(self, text: str) -> list[float]:
+        return self.embed_text(text)
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         return self.embed_documents(texts)

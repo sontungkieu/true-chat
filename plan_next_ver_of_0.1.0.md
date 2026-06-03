@@ -39,6 +39,7 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c3`; pendi
    - MiMo long-context matrix completed with `limit 30`, `top-k 10`, and budgets up to 32000 characters.
    - HotpotQA Kaggle path now supports Groq generation smoke runs with one injected key and separate MiMo-backed RAGAS judging via `--ragas-model`.
    - HotpotQA Kaggle upload now supports policy/profile sharding so MiMo fixed-policy, adaptive-balanced, and adaptive-aggressive jobs can run on separate Kaggle accounts.
+   - RAGAS local embedding adapter now supports text embedding calls required by the evaluator path.
    - Optional NFCorpus follow-up remains deferred; SciFact full generation and MiMo long-context cover the required Phase 1C.3 validation.
 
 5. Document findings

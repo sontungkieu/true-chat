@@ -32,6 +32,8 @@ Default eval settings:
 
 The uploader also supports policy sharding with `--context-policies`, `--context-budgets`, and `--adaptive-profiles`, so fixed-policy rows and adaptive profiles can run on separate Kaggle accounts while preserving the same cached-BM25 workflow per notebook.
 
+RAGAS uses local sentence-transformer embeddings for embedding-backed evaluator calls. The local adapter exposes query, document, and text embedding methods expected by the pinned RAGAS path; missing embedding methods should be treated as an eval-path compatibility issue rather than a retrieval or generation failure.
+
 Groq smoke mode uses the same cached retrieval and reference join path with `--provider groq`, for example `--model qwen/qwen3-32b --model-role stronger-baseline --groq-key-alias <alias>`. RAGAS remains a MiMo-backed judge path; set `--ragas-model mimo-v2.5-pro` even when the generation model is Groq.
 
 ## Outputs

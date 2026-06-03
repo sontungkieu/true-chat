@@ -13,7 +13,7 @@ from rag_bench.hotpotqa_cached_eval import (
     run_hotpotqa_cached_eval,
     select_ragas_sample_rows,
 )
-from rag_bench.ragas_eval import _row_to_ragas_sample
+from rag_bench.ragas_eval import _SentenceTransformerEmbeddings, _row_to_ragas_sample
 from rag_bench.types import BenchmarkData, Document, Query
 
 
@@ -61,6 +61,31 @@ def test_ragas_sample_preserves_reference_answers() -> None:
 
     assert sample["reference"] == "cats purr"
     assert sample["ground_truth"] == "cats purr"
+
+
+def test_ragas_embeddings_support_text_methods() -> None:
+    class FakeEncoded:
+        def __init__(self, value):
+            self.value = value
+
+        def tolist(self):
+            return self.value
+
+    class FakeSentenceTransformer:
+        def __init__(self, _model_name: str) -> None:
+            pass
+
+        def encode(self, value, *, normalize_embeddings: bool):
+            assert normalize_embeddings is True
+            if isinstance(value, list):
+                return FakeEncoded([[1.0, 0.0] for _ in value])
+            return FakeEncoded([1.0, 0.0])
+
+    embeddings = _SentenceTransformerEmbeddings("fake-model", FakeSentenceTransformer)
+
+    assert embeddings.embed_query("question") == [1.0, 0.0]
+    assert embeddings.embed_text("answer") == [1.0, 0.0]
+    assert embeddings.embed_documents(["a", "b"]) == [[1.0, 0.0], [1.0, 0.0]]
 
 
 def test_ragas_sampling_is_deterministic_and_per_action() -> None:

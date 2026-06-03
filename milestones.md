@@ -93,5 +93,6 @@ Status: presentation artifact drafted; implementation pending.
 - Add a Kaggle-first HotpotQA eval path for Phase 1C.3: build BM25 once, cache retrieval, replay the 16 MiMo context-policy action rows, join `hotpotqa/hotpot_qa` references for EM/token-F1, and run MiMo-backed RAGAS samples per action. Local full matrix remains out of scope because HotpotQA BM25 indexing is too heavy for iterative local runs.
 - Extend the HotpotQA Kaggle path to support Groq generation with a single injected key, including `qwen/qwen3-32b` smoke runs, while keeping RAGAS judging on MiMo via a separate `--ragas-model` setting.
 - Add Kaggle policy-sharding flags for HotpotQA (`--context-policies`, `--context-budgets`, `--adaptive-profiles`) so MiMo jobs can be distributed across multiple accounts by fixed policy and adaptive profile.
+- Fix the local RAGAS embedding adapter to expose text embedding methods expected by current RAGAS evaluator calls, preventing answer-relevancy embedding jobs from failing with a missing `embed_text` method.
 - Keep the deck scoped to AI feedback/RLAIF-style labels, offline contextual bandit/RL-lite, and analytical/profiling-oriented KV work.
 - Document boundaries in the deck: no PPO/GRPO, no human preference learning claim, no Qwen14B DPO completion claim, and no production runtime KV-cache pruning claim.
