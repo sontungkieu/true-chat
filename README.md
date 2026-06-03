@@ -104,6 +104,8 @@ uv run --frozen --no-sync rag-bench model-bench \
   --tensor-parallel-size auto
 ```
 
+While a model benchmark is running, progress lines show setup, cache cleanup, vLLM health, warmup, each scenario/concurrency pair, hardware sampling, artifact writing, and server shutdown. Core benchmark progress is prefixed with `[model-bench HH:MM:SS]`; Vast wrapper/setup progress uses `[vast-bench HH:MM:SS]`, `[vast-setup HH:MM:SS]`, and `[vllm-setup HH:MM:SS]`.
+
 Use the full synthetic plus chat suite when the model fits and the machine is stable:
 
 ```bash

@@ -16,6 +16,7 @@ from rag_bench.model_bench import (
     enrich_scenario_rows_with_hardware,
     parse_nvidia_gpu_samples,
     parse_nvidia_gpu_snapshot,
+    run_model_benchmark,
     run_scenario,
     validate_model_bench_config,
 )
@@ -138,6 +139,42 @@ def test_run_scenario_aggregates_fake_server_results() -> None:
     assert result["metrics"]["success_count"] == 4
     assert result["metrics"]["error_rate"] == 0.0
     assert result["metrics"]["latency_p50_s"] is not None
+
+
+def test_run_model_benchmark_emits_progress_for_existing_endpoint(tmp_path: Path, capsys) -> None:
+    server, endpoint = _serve_completion_api()
+    try:
+        summary = run_model_benchmark(
+            ModelBenchConfig(
+                model=None,
+                endpoint=endpoint,
+                served_model_name="test-model",
+                preset="smoke",
+                concurrency=(1,),
+                requests_per_scenario=1,
+                warmup_requests=0,
+                output_dir=tmp_path,
+                host="127.0.0.1",
+                port=8000,
+                tensor_parallel_size="1",
+                max_model_len=None,
+                max_output_tokens=8,
+                temperature=0.0,
+                startup_timeout_s=1,
+                sample_interval_s=0.1,
+                stream=False,
+            )
+        )
+    finally:
+        server.shutdown()
+
+    captured = capsys.readouterr()
+    assert summary["scenario_count"] == 1
+    assert summary["request_count"] == 1
+    assert "[model-bench " in captured.err
+    assert "using existing OpenAI-compatible endpoint" in captured.err
+    assert "run 1/1: scenario=synthetic_short concurrency=1 requests=1" in captured.err
+    assert "writing benchmark artifacts" in captured.err
 
 
 def test_aggregate_scenario_records_error_rate_and_percentiles() -> None:

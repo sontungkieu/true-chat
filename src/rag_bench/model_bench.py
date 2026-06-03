@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from rag_bench.io import write_csv, write_json, write_jsonl
 
 MODEL_BENCH_PRESETS = ("smoke", "standard", "all")
 DEFAULT_MODEL_BENCH_OUTPUT_DIR = Path("runs/model_bench")
+ProgressLogger = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,18 @@ def _run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 127, "", str(exc))
 
 
+def progress_logger() -> ProgressLogger:
+    def log(message: str) -> None:
+        stamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[model-bench {stamp}] {message}", file=sys.stderr, flush=True)
+
+    return log
+
+
+def shell_join(command: list[str]) -> str:
+    return shlex.join(command)
+
+
 @dataclass
 class HardwareSampler:
     interval_s: float = 1.0
@@ -119,6 +133,9 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
     run_dir = config.output_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     server_log_path = run_dir / "server.log"
+    progress = progress_logger()
+    progress(f"run_id={run_id}")
+    progress(f"output_dir={run_dir}")
 
     served_model_name = config.served_model_name or config.model
     if served_model_name is None:
@@ -126,9 +143,11 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
 
     tensor_parallel_size = resolve_tensor_parallel_size(config.tensor_parallel_size)
     endpoint = config.endpoint.rstrip("/") if config.endpoint else f"http://{config.host}:{config.port}/v1"
+    progress(f"model={served_model_name} endpoint={endpoint} preset={config.preset} tensor_parallel_size={tensor_parallel_size}")
     vllm_command: list[str] | None = None
     server_process: subprocess.Popen[str] | None = None
     server_log_handle = None
+    progress("collecting hardware snapshot")
     hardware_snapshot = collect_hardware_snapshot()
     sampler = HardwareSampler(interval_s=config.sample_interval_s)
     request_rows: list[dict[str, Any]] = []
@@ -138,6 +157,8 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
         if config.endpoint is None:
             assert config.model is not None
             vllm_command = build_vllm_command(config, tensor_parallel_size=tensor_parallel_size, served_model_name=served_model_name)
+            progress(f"starting vLLM: {shell_join(vllm_command)}")
+            progress(f"server_log={server_log_path}")
             server_log_handle = server_log_path.open("w", encoding="utf-8", buffering=1)
             server_process = subprocess.Popen(
                 vllm_command,
@@ -145,25 +166,53 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-            wait_for_server_health(endpoint, server_process, timeout_s=config.startup_timeout_s, log_path=server_log_path)
+            wait_for_server_health(
+                endpoint,
+                server_process,
+                timeout_s=config.startup_timeout_s,
+                log_path=server_log_path,
+                progress=progress,
+            )
+            progress("vLLM health check passed")
         else:
+            progress("using existing OpenAI-compatible endpoint; no local vLLM process will be started")
             server_log_path.write_text("Using existing OpenAI-compatible endpoint; no local vLLM process was started.\n", encoding="utf-8")
 
         scenarios = scenarios_for_preset(config.preset)
         concurrency_values = config.concurrency or default_concurrency(config.preset)
         requests_per_scenario = config.requests_per_scenario or default_requests_per_scenario(config.preset)
         client = OpenAICompletionClient(endpoint=endpoint, model=served_model_name, stream=config.stream)
+        progress(
+            "benchmark plan: "
+            f"{len(scenarios)} scenario(s), concurrency={','.join(str(value) for value in concurrency_values)}, "
+            f"requests_per_scenario={requests_per_scenario}, warmup_requests={config.warmup_requests}, "
+            f"stream={config.stream}"
+        )
 
+        progress(f"starting hardware sampler interval_s={config.sample_interval_s}")
         sampler.start()
         try:
-            for scenario in scenarios:
-                for _ in range(config.warmup_requests):
+            total_runs = len(scenarios) * len(concurrency_values)
+            run_index = 0
+            for scenario_index, scenario in enumerate(scenarios, start=1):
+                max_output_tokens = config.max_output_tokens or scenario.max_output_tokens
+                progress(
+                    f"scenario {scenario_index}/{len(scenarios)} {scenario.name} "
+                    f"suite={scenario.suite} max_output_tokens={max_output_tokens}"
+                )
+                for warmup_index in range(config.warmup_requests):
+                    progress(f"warmup {warmup_index + 1}/{config.warmup_requests} for {scenario.name}")
                     client.complete(
                         scenario.messages,
-                        max_tokens=config.max_output_tokens or scenario.max_output_tokens,
+                        max_tokens=max_output_tokens,
                         temperature=config.temperature,
                     )
                 for concurrency in concurrency_values:
+                    run_index += 1
+                    progress(
+                        f"run {run_index}/{total_runs}: scenario={scenario.name} concurrency={concurrency} "
+                        f"requests={requests_per_scenario}"
+                    )
                     sampler.sample_once()
                     scenario_started_at = datetime.now(timezone.utc)
                     scenario_result = run_scenario(
@@ -171,22 +220,31 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
                         scenario,
                         concurrency=concurrency,
                         requests_per_scenario=requests_per_scenario,
-                        max_output_tokens=config.max_output_tokens or scenario.max_output_tokens,
+                        max_output_tokens=max_output_tokens,
                         temperature=config.temperature,
                     )
                     scenario_ended_at = datetime.now(timezone.utc)
                     sampler.sample_once()
                     request_rows.extend(row.__dict__ for row in scenario_result["requests"])
+                    metrics = scenario_result["metrics"]
                     scenario_rows.append(
                         {
-                            **scenario_result["metrics"],
+                            **metrics,
                             "scenario_started_at": scenario_started_at.isoformat(),
                             "scenario_ended_at": scenario_ended_at.isoformat(),
                         }
                     )
+                    progress(
+                        f"done scenario={scenario.name} concurrency={concurrency}: "
+                        f"success={metrics['success_count']}/{metrics['request_count']} "
+                        f"p50_latency={fmt_number(metrics.get('latency_p50_s'))}s "
+                        f"avg_tok_s={fmt_number(metrics.get('avg_output_tokens_per_s'))}"
+                    )
         finally:
             hardware_rows = sampler.stop()
+            progress(f"hardware sampler stopped; samples={len(hardware_rows)}")
 
+        progress("aggregating hardware metrics by scenario")
         scenario_rows = enrich_scenario_rows_with_hardware(scenario_rows, hardware_rows)
 
         manifest = build_manifest(
@@ -199,7 +257,9 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
             hardware_snapshot=hardware_snapshot,
             elapsed_s=time.perf_counter() - started,
         )
+        progress("writing benchmark artifacts")
         write_outputs(run_dir, manifest=manifest, request_rows=request_rows, scenario_rows=scenario_rows, hardware_rows=hardware_rows)
+        progress(f"done; summary={run_dir / 'summary.md'}")
         return {
             "run_id": run_id,
             "output_dir": str(run_dir),
@@ -208,6 +268,7 @@ def run_model_benchmark(config: ModelBenchConfig) -> dict[str, Any]:
         }
     finally:
         if server_process is not None:
+            progress("stopping local vLLM process")
             terminate_process(server_process)
         if server_log_handle is not None:
             server_log_handle.close()
@@ -271,13 +332,24 @@ def build_vllm_command(
     return command
 
 
-def wait_for_server_health(endpoint: str, process: subprocess.Popen[str], *, timeout_s: int, log_path: Path) -> None:
+def wait_for_server_health(
+    endpoint: str,
+    process: subprocess.Popen[str],
+    *,
+    timeout_s: int,
+    log_path: Path,
+    progress: ProgressLogger | None = None,
+) -> None:
     health_url = endpoint.rstrip("/")
     if health_url.endswith("/v1"):
         health_url = health_url[:-3]
     health_url = f"{health_url.rstrip('/')}/health"
     deadline = time.monotonic() + timeout_s
+    started = time.monotonic()
+    next_progress_at = started
     last_error: str | None = None
+    if progress is not None:
+        progress(f"waiting for vLLM health at {health_url} timeout_s={timeout_s}")
     while time.monotonic() < deadline:
         exit_code = process.poll()
         if exit_code is not None:
@@ -288,6 +360,12 @@ def wait_for_server_health(endpoint: str, process: subprocess.Popen[str], *, tim
                     return
         except Exception as exc:  # noqa: BLE001 - health endpoint can fail while vLLM loads.
             last_error = f"{type(exc).__name__}: {exc}"
+        now = time.monotonic()
+        if progress is not None and now >= next_progress_at:
+            elapsed = int(now - started)
+            remaining = max(0, int(deadline - now))
+            progress(f"vLLM still starting: elapsed={elapsed}s remaining={remaining}s last_error={last_error}")
+            next_progress_at = now + 30
         time.sleep(2)
     raise TimeoutError(f"vLLM did not become healthy within {timeout_s}s; last error: {last_error}; log: {tail_file(log_path)}")
 

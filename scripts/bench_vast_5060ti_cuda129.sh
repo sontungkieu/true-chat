@@ -52,10 +52,10 @@ fi
 
 cmd+=("$@")
 
-echo "Using HF_HOME=$HF_HOME"
-echo "Using XDG_CACHE_HOME=$XDG_CACHE_HOME"
+vast_log_step "single-model bench: cuda=12.9 model=$model preset=$preset max_model_len=$max_model_len gpu_memory_utilization=$gpu_memory_utilization startup_timeout_s=$startup_timeout_s"
+vast_log_step "vLLM options: BENCH_MAX_NUM_SEQS=${BENCH_MAX_NUM_SEQS:-unset} BENCH_MAX_NUM_BATCHED_TOKENS=${BENCH_MAX_NUM_BATCHED_TOKENS:-unset} BENCH_ENFORCE_EAGER=${BENCH_ENFORCE_EAGER:-0} BENCH_VLLM_QUANTIZATION=${BENCH_VLLM_QUANTIZATION:-auto}"
 vast_wait_for_gpu_ready
-echo "Running 5060 Ti CUDA 12.9 benchmark:"
+vast_log_step "running 5060 Ti CUDA 12.9 benchmark command:"
 printf ' %q' "${cmd[@]}"
 echo
 

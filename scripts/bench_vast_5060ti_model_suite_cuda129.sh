@@ -33,17 +33,21 @@ fi
 
 failures=0
 previous_model=""
+total_models="${#models[@]}"
+model_index=0
+vast_log_step "model suite plan: cuda=12.9 preset=$preset total_models=$total_models max_model_len=$BENCH_MAX_MODEL_LEN max_num_seqs=$BENCH_MAX_NUM_SEQS max_num_batched_tokens=$BENCH_MAX_NUM_BATCHED_TOKENS enforce_eager=$BENCH_ENFORCE_EAGER cache_cleanup=${BENCH_MODEL_CACHE_CLEANUP:-auto}"
 
 for model in "${models[@]}"; do
+  model_index=$((model_index + 1))
   if [[ -n "$previous_model" ]]; then
     vast_prune_previous_model_cache_if_needed "$previous_model"
   fi
 
   echo
-  echo "=== Benchmarking ${model} with preset ${preset} on Vast 5060 Ti CUDA 12.9 ==="
+  vast_log_step "model ${model_index}/${total_models}: ${model} preset=${preset} cuda=12.9"
   if ! scripts/bench_vast_5060ti_cuda129.sh "$model" "$preset" "$@"; then
     failures=$((failures + 1))
-    echo "warning: benchmark failed for ${model}" >&2
+    vast_log_step "warning: benchmark failed for ${model}" >&2
     if [[ "${BENCH_KEEP_GOING:-1}" != "1" ]]; then
       exit 1
     fi
@@ -52,8 +56,8 @@ for model in "${models[@]}"; do
 done
 
 if [[ "$failures" -gt 0 ]]; then
-  echo "Completed with ${failures} failed model(s)." >&2
+  vast_log_step "completed with ${failures} failed model(s)" >&2
   exit 1
 fi
 
-echo "All model benchmarks completed."
+vast_log_step "all model benchmarks completed"

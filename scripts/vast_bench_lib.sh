@@ -7,6 +7,10 @@ vast_trim() {
   printf '%s' "$value"
 }
 
+vast_log_step() {
+  printf '[vast-bench %s] %s\n' "$(date +%H:%M:%S)" "$*"
+}
+
 vast_configure_cache_env() {
   local cache_root
   if [[ -d /workspace && -w /workspace ]]; then
@@ -18,6 +22,7 @@ vast_configure_cache_env() {
   export HF_HOME="${HF_HOME:-${cache_root}/hf-cache}"
   export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${cache_root}/vllm-cache}"
   mkdir -p "$HF_HOME" "$XDG_CACHE_HOME"
+  vast_log_step "cache configured: HF_HOME=$HF_HOME XDG_CACHE_HOME=$XDG_CACHE_HOME"
 }
 
 vast_disk_free_mb() {
@@ -39,7 +44,7 @@ vast_remove_hf_model_cache() {
   lock_dir="${HF_HOME}/.locks/${cache_name}"
 
   if [[ ! -e "$cache_dir" && ! -e "$lock_dir" ]]; then
-    echo "No local Hugging Face cache found for ${model}."
+    vast_log_step "no local Hugging Face cache found for ${model}"
     return 0
   fi
 
@@ -47,7 +52,7 @@ vast_remove_hf_model_cache() {
   if [[ -e "$cache_dir" ]]; then
     size_mb="$(du -sm "$cache_dir" 2>/dev/null | awk '{print $1 + 0}')"
   fi
-  echo "Deleting Hugging Face cache for ${model} (${size_mb} MiB): ${cache_dir}"
+  vast_log_step "deleting Hugging Face cache for ${model} (${size_mb} MiB): ${cache_dir}"
   rm -rf -- "$cache_dir" "$lock_dir"
 }
 
@@ -81,11 +86,11 @@ vast_prune_previous_model_cache_if_needed() {
     return 0
   fi
 
-  echo "HF cache free before next model: ${free_mb} MiB (cleanup threshold: ${min_free_mb} MiB)."
+  vast_log_step "HF cache free before next model: ${free_mb} MiB (cleanup threshold: ${min_free_mb} MiB)"
   if [[ "$free_mb" -lt "$min_free_mb" ]]; then
     vast_remove_hf_model_cache "$previous_model"
     free_mb="$(vast_disk_free_mb "$HF_HOME")"
-    echo "HF cache free after cleanup: ${free_mb} MiB."
+    vast_log_step "HF cache free after cleanup: ${free_mb} MiB"
   fi
 }
 
@@ -113,7 +118,7 @@ vast_kill_stale_vllm_processes() {
       continue
     fi
     if [[ "$process_name" == *VLLM* || "$process_name" == *vllm* ]]; then
-      echo "Killing stale vLLM GPU process ${pid} (${process_name}, ${used_memory} MiB)." >&2
+      vast_log_step "killing stale vLLM GPU process ${pid} (${process_name}, ${used_memory} MiB)" >&2
       kill "$pid" 2>/dev/null || true
       pids+=("$pid")
     fi
@@ -126,7 +131,7 @@ vast_kill_stale_vllm_processes() {
   sleep "${BENCH_GPU_CLEANUP_GRACE_S:-3}"
   for pid in "${pids[@]}"; do
     if kill -0 "$pid" 2>/dev/null; then
-      echo "Force killing stale vLLM GPU process ${pid}." >&2
+      vast_log_step "force killing stale vLLM GPU process ${pid}" >&2
       kill -9 "$pid" 2>/dev/null || true
     fi
   done
@@ -152,8 +157,9 @@ vast_wait_for_gpu_ready() {
   while true; do
     local used_mb
     used_mb="$(vast_gpu_memory_used_mb)"
-    echo "GPU memory used before benchmark: ${used_mb} MiB (ready threshold: ${max_used_mb} MiB)."
+    vast_log_step "GPU memory used before benchmark: ${used_mb} MiB (ready threshold: ${max_used_mb} MiB)"
     if [[ "$used_mb" -le "$max_used_mb" ]]; then
+      vast_log_step "GPU ready for benchmark"
       return 0
     fi
 

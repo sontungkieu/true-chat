@@ -371,6 +371,15 @@ Mặc định lệnh sẽ:
 - ghi artifacts vào `runs/model_bench/...`;
 - stop process vLLM khi xong.
 
+Trong lúc chạy, terminal sẽ hiện progress theo từng bước:
+
+- `[vast-setup ...]`: setup profile Vast, cache, backend CUDA;
+- `[vllm-setup ...]`: tạo/sync `.venv`, clean package cũ, cài vLLM, verify Torch CUDA;
+- `[vast-bench ...]`: wrapper Vast, kiểm tra cache/disk, dọn VRAM, chạy từng model trong suite;
+- `[model-bench ...]`: core benchmark, start/chờ vLLM, warmup, từng scenario/concurrency, ghi artifact.
+
+JSON kết quả cuối vẫn in ở stdout; progress log của core benchmark in ở stderr để dễ theo dõi khi chạy dài mà không phá output JSON.
+
 ## 3. Dùng endpoint có sẵn
 
 Nếu bạn đã tự start vLLM hoặc có OpenAI-compatible endpoint khác:
