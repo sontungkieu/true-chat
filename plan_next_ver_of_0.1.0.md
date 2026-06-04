@@ -102,6 +102,28 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
+4b. Add direct pairwise RLAIF labels
+   - Status: `rlaif-label-pairs` CLI implemented; full pairwise judge run remains pending.
+   - Use `rlaif_preferences.jsonl` only as a source of comparable action pairs.
+   - Present Action A as the reward-derived chosen action and Action B as the rejected action, but instruct the judge to decide independently.
+   - Judge only from logged question, answers, retrieved contexts, and resource costs; do not browse or use external knowledge.
+   - Output `chosen=A|B|null`, `tie`, `ambiguous`, answer-quality winner, evidence-support winner, efficiency winner, quality-regret flag, unsupported-claim risk, confidence, and short rationale.
+   - Invalid JSON, missing actions, missing rewards, missing answers, and missing contexts become ambiguous labels with null confidence, never score zero.
+   - This is for reward/preference calibration and selector analysis only; do not train DPO/reward model or replace runtime defaults in v1.
+
+```bash
+uv run rag-bench rlaif-label-pairs \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --limit 50 \
+  --resume \
+  --sleep-seconds 0.5
+```
+
 ```bash
 uv run rag-bench rlaif-label-contexts \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
@@ -248,6 +270,7 @@ Context label schema:
    - `rlaif_policy.json`: fixed, cheapest, best-average, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
    - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
+   - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
    - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
@@ -307,6 +330,21 @@ uv run python scripts/summarize_rlaif_context_labels.py \
   --labels benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
   --out-md benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.md \
   --out-json benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.json
+```
+
+Pairwise preference labeling:
+
+```bash
+uv run rag-bench rlaif-label-pairs \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --limit 50 \
+  --resume \
+  --sleep-seconds 0.5
 ```
 
 After the current Kaggle answer-label job completes, use this auditable path before writing a curated report:
@@ -392,6 +430,8 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - `rag-bench rlaif-build` writes all expected files on a tiny fixture.
    - `rag-bench rlaif-label-answers --dry-run` and `rag-bench rlaif-label-contexts --dry-run` write valid placeholder labels without network calls.
    - `rag-bench rlaif-label-contexts` filters unknown judge-returned chunk ids and preserves null scores for missing/ambiguous labels.
+   - `rag-bench rlaif-label-pairs --dry-run` writes ambiguous placeholder labels without network calls.
+   - `rag-bench rlaif-label-pairs` preserves null confidence for missing/ambiguous pair data and records A/B/tie decisions without trusting reward-derived preferences.
    - `scripts/summarize_rlaif_context_labels.py` reports sufficiency, missing evidence, chunk selection counts, dropped unknown chunk ids, and score statistics.
    - Labeling commands support `--resume` without duplicating completed action ids.
    - Invalid inputs fail with actionable errors.

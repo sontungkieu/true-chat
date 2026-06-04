@@ -25,6 +25,7 @@ from rag_bench.rlaif_label_answers import (
     label_rlaif_answers,
 )
 from rag_bench.rlaif_label_contexts import RlaifContextLabelConfig, label_rlaif_contexts
+from rag_bench.rlaif_label_pairs import RlaifPairLabelConfig, label_rlaif_pairs
 from rag_bench.rlaif_policy import (
     RlaifEvalConfig,
     RlaifTrainConfig,
@@ -61,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
         return _rlaif_label_answers(args)
     if args.command == "rlaif-label-contexts":
         return _rlaif_label_contexts(args)
+    if args.command == "rlaif-label-pairs":
+        return _rlaif_label_pairs(args)
     if args.command == "rlaif-train":
         return _rlaif_train(args)
     if args.command == "rlaif-eval":
@@ -393,6 +396,47 @@ def build_parser() -> argparse.ArgumentParser:
     rlaif_label_contexts_parser.add_argument("--key-tpm", type=int, default=0)
     rlaif_label_contexts_parser.add_argument("--key-rpm", type=int, default=0)
     rlaif_label_contexts_parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1,
+        help="Write one stderr progress line every N processed rows. Use 0 to disable.",
+    )
+
+    rlaif_label_pairs_parser = subparsers.add_parser(
+        "rlaif-label-pairs",
+        help="Label direct pairwise RLAIF preferences with an AI judge.",
+    )
+    rlaif_label_pairs_parser.add_argument("--actions", type=Path, required=True, help="Path to rlaif_actions.jsonl.")
+    rlaif_label_pairs_parser.add_argument("--rewards", type=Path, required=True, help="Path to rlaif_rewards.jsonl.")
+    rlaif_label_pairs_parser.add_argument("--preferences", type=Path, required=True, help="Path to rlaif_preferences.jsonl.")
+    rlaif_label_pairs_parser.add_argument("--output", type=Path, required=True, help="Output rlaif_pairwise_labels.jsonl path.")
+    rlaif_label_pairs_parser.add_argument(
+        "--judge-provider",
+        choices=("mimo", "groq", "deepseek"),
+        default="mimo",
+    )
+    rlaif_label_pairs_parser.add_argument("--judge-model", default="mimo-v2.5-pro")
+    rlaif_label_pairs_parser.add_argument("--dry-run", action="store_true")
+    rlaif_label_pairs_parser.add_argument("--resume", action="store_true")
+    rlaif_label_pairs_parser.add_argument("--limit", type=int, default=None)
+    rlaif_label_pairs_parser.add_argument("--max-errors", type=int, default=3)
+    rlaif_label_pairs_parser.add_argument("--sleep-seconds", type=float, default=0.0)
+    rlaif_label_pairs_parser.add_argument("--json-retries", type=int, default=1)
+    rlaif_label_pairs_parser.add_argument("--max-context-chars", type=int, default=12_000)
+    rlaif_label_pairs_parser.add_argument(
+        "--max-completion-tokens",
+        type=int,
+        default=DEFAULT_RLAIF_LABEL_MAX_COMPLETION_TOKENS,
+    )
+    rlaif_label_pairs_parser.add_argument("--temperature", type=float, default=0.0)
+    rlaif_label_pairs_parser.add_argument("--groq-keys-path", type=Path, default=Path(".secrets/groq_key.env"))
+    rlaif_label_pairs_parser.add_argument("--env-file", type=Path, default=Path(".secrets/.env"))
+    rlaif_label_pairs_parser.add_argument("--api-key-var", default=None)
+    rlaif_label_pairs_parser.add_argument("--base-url", default=None)
+    rlaif_label_pairs_parser.add_argument("--timeout-s", type=float, default=60.0)
+    rlaif_label_pairs_parser.add_argument("--key-tpm", type=int, default=0)
+    rlaif_label_pairs_parser.add_argument("--key-rpm", type=int, default=0)
+    rlaif_label_pairs_parser.add_argument(
         "--progress-every",
         type=int,
         default=1,
@@ -938,6 +982,93 @@ def _rlaif_label_contexts(args: argparse.Namespace) -> int:
                 "skipped_resume_count": summary["skipped_resume_count"],
                 "skipped_limit_count": summary["skipped_limit_count"],
                 "ambiguous_count": summary["ambiguous_count"],
+                "invalid_json_count": summary["invalid_json_count"],
+                "missing_input_count": summary["missing_input_count"],
+                "error_count": summary["error_count"],
+                "stopped_early": summary["stopped_early"],
+                "stop_reason": summary["stop_reason"],
+                "dry_run": summary["dry_run"],
+                "judge_provider": summary["judge_provider"],
+                "judge_model": summary["judge_model"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _rlaif_label_pairs(args: argparse.Namespace) -> int:
+    for name in (
+        "max_errors",
+        "sleep_seconds",
+        "json_retries",
+        "max_completion_tokens",
+        "timeout_s",
+        "key_tpm",
+        "key_rpm",
+        "progress_every",
+    ):
+        if getattr(args, name) < 0:
+            print(f"--{name.replace('_', '-')} must be non-negative.", file=sys.stderr)
+            return 2
+    if args.limit is not None and args.limit < 0:
+        print("--limit must be non-negative.", file=sys.stderr)
+        return 2
+    if args.max_context_chars <= 0:
+        print("--max-context-chars must be positive.", file=sys.stderr)
+        return 2
+    if args.max_completion_tokens <= 0:
+        print("--max-completion-tokens must be positive.", file=sys.stderr)
+        return 2
+    if args.timeout_s <= 0:
+        print("--timeout-s must be positive.", file=sys.stderr)
+        return 2
+    try:
+        summary = label_rlaif_pairs(
+            RlaifPairLabelConfig(
+                actions_path=args.actions,
+                rewards_path=args.rewards,
+                preferences_path=args.preferences,
+                output_path=args.output,
+                judge_provider=args.judge_provider,
+                judge_model=args.judge_model,
+                dry_run=args.dry_run,
+                resume=args.resume,
+                limit=args.limit,
+                max_errors=args.max_errors,
+                sleep_seconds=args.sleep_seconds,
+                json_retries=args.json_retries,
+                max_context_chars=args.max_context_chars,
+                max_completion_tokens=args.max_completion_tokens,
+                temperature=args.temperature,
+                groq_keys_path=args.groq_keys_path,
+                env_file=args.env_file,
+                api_key_var=args.api_key_var,
+                base_url=args.base_url,
+                timeout_s=args.timeout_s,
+                key_tpm=args.key_tpm,
+                key_rpm=args.key_rpm,
+                progress_every=args.progress_every,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rlaif-label-pairs failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "output_path": summary["output_path"],
+                "action_count": summary["action_count"],
+                "reward_count": summary["reward_count"],
+                "preference_count": summary["preference_count"],
+                "processed_count": summary["processed_count"],
+                "skipped_resume_count": summary["skipped_resume_count"],
+                "skipped_limit_count": summary["skipped_limit_count"],
+                "ambiguous_count": summary["ambiguous_count"],
+                "tie_count": summary["tie_count"],
                 "invalid_json_count": summary["invalid_json_count"],
                 "missing_input_count": summary["missing_input_count"],
                 "error_count": summary["error_count"],

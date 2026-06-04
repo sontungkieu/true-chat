@@ -254,6 +254,7 @@ RLAIF schema modules:
 - `rag_bench.rlaif_build`: dataset builder for normalized action and answer-feedback rows.
 - `rag_bench.rlaif_label_answers`: resumable AI-judge answer labeler for normalized action rows.
 - `rag_bench.rlaif_label_contexts`: resumable AI-judge context sufficiency labeler for normalized action rows.
+- `rag_bench.rlaif_label_pairs`: direct pairwise AI-judge labeler for reward-derived action pairs.
 - `rag_bench.rlaif_reward`: reward and pairwise preference builder over normalized RLAIF datasets.
 - `rag_bench.rlaif_split`: deterministic query-level train/eval splitter for RLAIF reward and preference rows.
 - `rag_bench.rlaif_policy`: offline selector baselines over logged RLAIF reward rows.
@@ -308,6 +309,23 @@ uv run python scripts/summarize_rlaif_context_labels.py \
 ```
 
 The summary reports valid/invalid JSON counts, ambiguous labels, sufficiency and missing-evidence counts, average selected/redundant/irrelevant chunk counts, dropped unknown chunk-id counts, and context quality/evidence support/minimality score statistics.
+
+Label reward-derived action pairs with a direct pairwise AI judge:
+
+```bash
+uv run rag-bench rlaif-label-pairs \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --limit 50 \
+  --resume \
+  --sleep-seconds 0.5
+```
+
+`rlaif-label-pairs` uses existing `rlaif_preferences.jsonl` only to choose comparable action pairs. Action A is the reward-derived chosen action and Action B is the rejected action, but the judge is instructed to decide independently between `A`, `B`, `tie`, or `ambiguous` using only the logged question, answers, retrieved contexts, and token/latency/KV costs. Invalid JSON, missing action data, missing answers, and missing contexts become ambiguous labels with `confidence=null`; they are not converted into score zero. These direct pairwise labels are for offline calibration and analysis only; they do not replace runtime policy defaults.
 
 Summarize answer labels:
 

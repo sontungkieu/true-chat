@@ -98,5 +98,6 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `scripts/estimate_local_qwen_kv_cache.py` and `docs/reports/local_qwen_kv_estimates.md` for analytical Qwen2.5 KV-cache estimates without loading model weights.
 - Add `rlaif-label-contexts` for resumable context-level RLAIF labels over normalized action rows, including selected/redundant/irrelevant chunk ids, context sufficiency, missing evidence, JSON repair, progress logging, and null-score handling for invalid or missing labels.
 - Add `scripts/summarize_rlaif_context_labels.py` and `docs/reports/phase1d_rlaif_context_labels_template.md` so context-label runs can be summarized for sufficiency, redundancy, missing evidence, dropped chunk-id hallucinations, and context quality.
+- Add `rlaif-label-pairs` for direct pairwise AI-judge comparisons of reward-derived retrieval-context action pairs, with A/B/tie/ambiguous decisions, quality/support/efficiency winners, resume support, JSON repair, and null-score handling for invalid or missing pair data.
 - Keep larger held-out evaluation pending until answer/context labels are richer than RAGAS answer relevancy.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.
