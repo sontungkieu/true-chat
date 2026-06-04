@@ -32,6 +32,7 @@ pairwise_calibration = _load_script(
     "diagnose_rlaif_pairwise_calibration",
     "scripts/diagnose_rlaif_pairwise_calibration.py",
 )
+selector_sweep = _load_script("run_rlaif_split_sweep", "scripts/run_rlaif_split_sweep.py")
 kv_estimates = _load_script("estimate_local_qwen_kv_cache", "scripts/estimate_local_qwen_kv_cache.py")
 
 
@@ -82,6 +83,44 @@ def test_summarize_rlaif_labels_counts_scores_and_ragas_correlation(tmp_path: Pa
     assert summary["ragas_correlation"]["count"] == 2
     assert summary["ragas_correlation"]["pearson_quality_score_vs_ragas_answer_relevancy"] is None
     assert "Invalid, ambiguous" in summarize_labels.render_markdown(summary)
+
+
+def test_run_rlaif_selector_sweep_writes_multiseed_summary(tmp_path: Path) -> None:
+    rewards_path = tmp_path / "rlaif_rewards.jsonl"
+    preferences_path = tmp_path / "rlaif_preferences.jsonl"
+    _write_jsonl(
+        rewards_path,
+        [
+            _sweep_reward("q1", "cheap", 0.60, 0.65, token=0.10),
+            _sweep_reward("q1", "rich", 0.80, 0.85, token=0.40),
+            _sweep_reward("q2", "cheap", 0.62, 0.66, token=0.10),
+            _sweep_reward("q2", "rich", 0.78, 0.84, token=0.40),
+            _sweep_reward("q3", "cheap", 0.63, 0.67, token=0.10),
+            _sweep_reward("q3", "rich", 0.79, 0.86, token=0.40),
+            _sweep_reward("q4", "cheap", 0.61, 0.65, token=0.10),
+            _sweep_reward("q4", "rich", 0.81, 0.87, token=0.40),
+        ],
+    )
+    _write_jsonl(preferences_path, [])
+
+    summary = selector_sweep.run_selector_sweep(
+        rewards_path=rewards_path,
+        preferences_path=preferences_path,
+        output_dir=tmp_path / "sweep",
+        seeds=[1, 2],
+        train_ratio=0.5,
+    )
+
+    assert summary["seed_count"] == 2
+    assert (tmp_path / "sweep" / "split_seed1" / "rlaif_policy.json").is_file()
+    assert (tmp_path / "sweep" / "split_seed2" / "rlaif_eval_summary.md").is_file()
+    assert (tmp_path / "sweep" / "selector_sweep_summary.json").is_file()
+    rendered = (tmp_path / "sweep" / "selector_sweep_summary.md").read_text(encoding="utf-8")
+    assert "RLAIF Multi-Seed Held-Out Selector Sweep" in rendered
+    assert "linear_reward_model" in rendered
+    assert "Runtime default replacement: `false`" in rendered
+    assert summary["policy_stats"]["linear_reward_model"]["coverage"]["count"] == 2
+    assert summary["policy_stats"]["oracle_logged"]["oracle_gap"]["mean"] == 0.0
 
 
 def test_qwen_kv_estimate_formula_and_table() -> None:
@@ -345,3 +384,42 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
         "\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows) + "\n",
         encoding="utf-8",
     )
+
+
+def _sweep_reward(
+    query_id: str,
+    context_policy: str,
+    reward: float,
+    quality: float,
+    *,
+    token: float,
+) -> dict:
+    signature = {
+        "retrieval_strategy": "bm25",
+        "fusion_strategy": "single",
+        "top_k": 10,
+        "context_policy": context_policy,
+        "budget_chars": 1000 if context_policy == "cheap" else 4000,
+        "adaptive_profile": None,
+        "selected_context_policy": context_policy,
+        "selected_budget_chars": 1000 if context_policy == "cheap" else 4000,
+        "generator_model": "mimo_v25_pro",
+    }
+    return {
+        "action_id": f"action-{query_id}-{context_policy}",
+        "query_id": query_id,
+        "reward": reward,
+        "quality": quality,
+        "token_cost_norm": token,
+        "latency_norm": token,
+        "kv_cost_norm": token,
+        "metadata": {
+            "query_group": {
+                "benchmark": "scifact",
+                "query_id": query_id,
+                "top_k": 10,
+                "generator_model": "mimo_v25_pro",
+            },
+            "action_signature": signature,
+        },
+    }

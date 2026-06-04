@@ -245,6 +245,7 @@ Context label schema:
    - Status: held-out query split/eval implemented and documented in `docs/reports/phase1d_rlaif_heldout_eval.md`.
    - Status: full MiMo answer-label run completed on Kaggle, rewards rebuilt with `--answer-labels`, held-out split/train/eval rerun, and documented in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.
    - Status: first learned offline selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`.
+   - Status: multi-seed held-out selector sweep implemented and documented in `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -267,7 +268,8 @@ Context label schema:
    - The learned RLAIF/bandit policy must not replace `adaptive-heuristic` as the default runtime policy until it passes offline evaluation and quality guardrails.
    - Current smoke caveat: the first selector smoke used the same RAGAS-joined logged rewards for train/eval, so it is a resubstitution/offline sanity check rather than held-out generalization.
    - Current held-out result: `rlaif-split` writes deterministic `benchmark + query_id` train/eval files and `rlaif-eval --split-manifest` records `held_out_query_eval=true`.
-   - Next evaluator change: run larger held-out splits after answer/context labels are richer than RAGAS answer relevancy.
+   - Current multi-seed result: `linear_reward_model` beats `cheapest` on average reward and oracle gap while keeping full coverage, but does not consistently beat `best_average` across seeds.
+   - Next evaluator change: inspect action coverage and signature sparsity before adding a pairwise ranker.
 
 5. Outputs
    - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and the `rlaif-label-contexts` skeleton write the implemented files below; a full context-label run remains pending.
@@ -279,6 +281,7 @@ Context label schema:
    - `split_summary.md`: query-level split summary.
    - `rlaif_policy.json`: fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
+   - `selector_sweep_summary.md`: multi-seed selector mean/std report.
    - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
    - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
    - `rlaif_pairwise_labels_summary.md`: direct pairwise label agreement and risk summary.
@@ -286,6 +289,7 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
    - `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`: curated held-out query eval report after full MiMo answer labels and `rlaif-reward --answer-labels`.
    - `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`: curated held-out query eval report for the first learned offline selector baseline.
+   - `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`: curated multi-seed selector robustness report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.

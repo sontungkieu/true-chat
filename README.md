@@ -424,6 +424,19 @@ uv run rag-bench rlaif-eval \
 
 `rlaif-split` writes `train_rewards.jsonl`, `eval_rewards.jsonl`, `train_preferences.jsonl`, `eval_preferences.jsonl`, `split_manifest.json`, and `split_summary.md`. It splits by `benchmark + query_id`, not by random action rows, so all actions for the same query stay in the same split. Preferences crossing the split boundary are dropped and counted in the manifest. `rlaif-train` writes fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged selector baselines. `linear_reward_model` is a small offline ridge-regression selector over retrieval-context action/cost features; its feature table excludes reward, quality, evidence-support, and preference-outcome labels. The policy artifact sets `runtime_default_replacement=false`; it is an offline evaluation artifact and does not replace the default `adaptive-heuristic` runtime policy. `rlaif-eval` reports mean reward, quality, normalized token/latency/KV costs, selected action distribution, coverage, and paired oracle gap. When `--split-manifest` is provided, the eval summary records `held_out_query_eval=true`.
 
+Run a multi-seed held-out selector sweep:
+
+```bash
+uv run python scripts/run_rlaif_split_sweep.py \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>/split_sweep_seeds_1_2_3_4_5_42 \
+  --seeds 1,2,3,4,5,42 \
+  --train-ratio 0.8
+```
+
+The sweep writes `selector_sweep_summary.json` and `selector_sweep_summary.md` plus one `split_seed*/` directory per seed. It is a logged-candidate offline robustness check, not a runtime policy change.
+
 Summarize local matrix outputs:
 
 ```bash
