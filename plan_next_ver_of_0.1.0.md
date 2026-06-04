@@ -40,8 +40,14 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c3`; pendi
    - HotpotQA Kaggle path now supports Groq generation smoke runs with one injected key and separate MiMo-backed RAGAS judging via `--ragas-model`.
    - HotpotQA Kaggle upload now supports policy/profile sharding so MiMo fixed-policy, adaptive-balanced, and adaptive-aggressive jobs can run on separate Kaggle accounts.
    - RAGAS local embedding adapter now supports text embedding calls required by the evaluator path.
+   - Clean `hp-mimo-old-rerun-0603` HotpotQA sampled metrics are now downloaded and summarized: 800/800 MiMo generations succeeded with 80 RAGAS samples.
+   - `hp-mimo-evidence-1k32k-20260603-1948` metrics are downloaded and summarized: evidence-aware now has clean 1k, 2k, 4k, 8k, 16k, and 32k coverage with 30 RAGAS samples.
+   - `hp-mimo-lowcurve-500-3k-20260604-0010` metrics are downloaded and summarized: legacy plus adaptive-heuristic balanced/aggressive now have clean 500, 1000, 1500, 2000, and 3000 budget coverage with 75 RAGAS samples.
+   - `hp-mimo-adaptive-lowcurve-500-3k-20260604-0037` metrics are downloaded and summarized as an adaptive-only resilience shard with 50 RAGAS samples.
    - Groq `qwen/qwen3-32b` full HotpotQA sampled matrix completed with valid outputs but is marked quota-contaminated due to 417/800 `429` generation errors.
    - A retry-only HotpotQA script now reruns failed query/action rows from downloaded artifacts without rebuilding BM25, checkpoints progress for resume, and writes merged metrics.
+   - The first Groq retry Kaggle kernel failed before generation because the original-output dataset was not attached. A fixed retry kernel is now running with dataset auto-discovery, conservative one-key Groq pacing, and MiMo-backed RAGAS `n=20/action`.
+   - Remaining HotpotQA work is to pull the fixed Groq retry output when complete, verify merged 800-row metrics, and then update the final slide/report view.
    - Optional NFCorpus follow-up remains deferred; SciFact full generation and MiMo long-context cover the required Phase 1C.3 validation.
 
 5. Document findings
