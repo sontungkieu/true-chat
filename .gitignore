@@ -209,6 +209,7 @@ marimo/_lsp/
 __marimo__/
 
 # Local benchmark outputs and archives
+temp/
 runs/
 benchmark_results/budgetrag/
 benchmark_results/rlaif/

@@ -252,6 +252,7 @@ RLAIF schema modules:
 - `rag_bench.rlaif_schema`: dataclasses for `RetrievalContextAction`, answer/context feedback, reward weights, scalar rewards, and preferences.
 - `rag_bench.retrieval_context_actions`: helper for converting BudgetRAG `query_results.jsonl` rows into normalized retrieval-context actions.
 - `rag_bench.rlaif_build`: dataset builder for normalized action and answer-feedback rows.
+- `rag_bench.rlaif_label_answers`: resumable AI-judge answer labeler for normalized action rows.
 - `rag_bench.rlaif_reward`: reward and pairwise preference builder over normalized RLAIF datasets.
 - `rag_bench.rlaif_split`: deterministic query-level train/eval splitter for RLAIF reward and preference rows.
 - `rag_bench.rlaif_policy`: offline selector baselines over logged RLAIF reward rows.
@@ -264,7 +265,34 @@ uv run rag-bench rlaif-build \
   --output-dir benchmark_results/rlaif/<run-name>
 ```
 
-The builder preserves answer text, retrieved source records, context metrics, retrieval metrics, latency, token usage, KV estimates, and answer feedback provenance. Gold EM/F1 labels are used when present; otherwise it records RAGAS fields or existing AI judge fields. AI judge feedback uses `provenance=ai_judge` and stores the concrete `judge_provider`/`judge_model` such as MiMo, DeepSeek, or Groq instead of mislabeling non-MiMo judges as heuristic. If no labels exist, the feedback row stays `provenance=missing` with a concrete `missing_reason`. Generation failures are marked as ambiguous missing feedback, not as score zero. The planned judge commands (`rlaif-label-answers` and `rlaif-label-contexts`) remain intentionally disabled until the normalized dataset path is stable.
+The builder preserves answer text, retrieved source records, context metrics, retrieval metrics, latency, token usage, KV estimates, and answer feedback provenance. Gold EM/F1 labels are used when present; otherwise it records RAGAS fields or existing AI judge fields. AI judge feedback uses `provenance=ai_judge` and stores the concrete `judge_provider`/`judge_model` such as MiMo, DeepSeek, or Groq instead of mislabeling non-MiMo judges as heuristic. If no labels exist, the feedback row stays `provenance=missing` with a concrete `missing_reason`. Generation failures are marked as ambiguous missing feedback, not as score zero.
+
+Label answers with an AI judge using only the logged question, answer, and retrieved context:
+
+```bash
+uv run rag-bench rlaif-label-answers \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --resume \
+  --json-retries 1 \
+  --max-completion-tokens 4096
+```
+
+`rlaif-label-answers` writes incrementally and supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`. It instructs the judge not to browse and not to use external knowledge. Invalid JSON, empty MiMo completions, missing answers, and missing context become ambiguous labels with `quality_score=null`; they are not converted into score zero. MiMo V2.5 often spends hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
+
+Summarize answer labels:
+
+```bash
+uv run python scripts/summarize_rlaif_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --ragas-feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo_summary.json
+```
+
+The summary reports label counts, valid/invalid JSON, ambiguous labels, judge provider/model counts, score mean/std, unsupported-claim penalty, and correlation with RAGAS answer relevancy when a RAGAS feedback file is provided.
 
 Build scalar rewards and pairwise preferences:
 
@@ -272,6 +300,7 @@ Build scalar rewards and pairwise preferences:
 uv run rag-bench rlaif-reward \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
   --output-dir benchmark_results/rlaif/<run-name> \
   --quality-weight 0.75 \
   --support-weight 0.10 \
@@ -282,7 +311,7 @@ uv run rag-bench rlaif-reward \
   --max-quality-regret 0.02
 ```
 
-`rlaif-reward` writes `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md`. Missing or ambiguous feedback produces `reward=null` with `reward_mode=missing_quality` or `reward_mode=ambiguous_feedback`; it is not converted to score zero. Preferences are generated only within comparable query groups and are skipped when the higher-reward action violates the configured quality-regret guardrail.
+`rlaif-reward` writes `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md`. Missing or ambiguous feedback produces `reward=null` with `reward_mode=missing_quality` or `reward_mode=ambiguous_feedback`; it is not converted to score zero. When `--answer-labels` is provided, valid AI-judge labels override the original feedback for reward scoring. Invalid, ambiguous, errored, or missing answer labels fall back to the original feedback when available, and the merge reason is recorded in reward metadata and summary counts. Preferences are generated only within comparable query groups and are skipped when the higher-reward action violates the configured quality-regret guardrail.
 
 Build and evaluate offline selector baselines:
 
@@ -315,6 +344,15 @@ uv run python scripts/summarize_budgetrag_results.py benchmark_results/budgetrag
 ```
 
 Use `--kv-profile generic-small` or `--kv-profile qwen2.5-14b` to choose the analytical KV profile, and `--disable-kv-estimate` when those fields are not needed. If `--context-budget-chars` is omitted, the runner uses `--max-context-chars` as the BudgetRAG budget. When both are provided, `--context-budget-chars` controls the context policy and `--max-context-chars` remains a prompt safety ceiling.
+
+Estimate local Qwen KV-cache memory without loading weights:
+
+```bash
+uv run python scripts/estimate_local_qwen_kv_cache.py \
+  --out-md docs/reports/local_qwen_kv_estimates.md
+```
+
+The estimator uses `KV bytes = 2 * layers * num_key_value_heads * head_dim * seq_len * batch_size * dtype_bytes`. It includes fallback specs for Qwen2.5 0.5B, 1.5B, 3B, 7B, and 14B, and can optionally try `transformers.AutoConfig` with `--use-auto-config`.
 
 ## Built-In Chat UI And OpenAI Proxy
 

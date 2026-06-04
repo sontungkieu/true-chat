@@ -38,10 +38,10 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-reward}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, hardening \texttt{ai\_judge} provenance và optional full-context budget \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-reward --answer-labels}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, answer-label summary và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{164 passed} \\
+Trạng thái test gần nhất & \texttt{178 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -56,11 +56,12 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item \texttt{fdefb63}: định nghĩa schema cho action, answer feedback, context feedback, scalar reward và preference.
   \item \texttt{78cf83d}: thêm \texttt{rlaif-build} để đọc BudgetRAG output và ghi các dataset RLAIF chuẩn hóa.
   \item Hardening hiện tại: chuẩn hóa AI judge provenance thành \texttt{ai\_judge} và cho phép full-context/legacy action không có explicit budget.
-  \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa.
+  \item Answer judge hiện tại: thêm \texttt{rlaif-label-answers} với resume, progress logging, JSON repair và guardrail không biến invalid/missing label thành score 0.
+  \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ.
   \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average và oracle-logged baselines.
 \end{itemize}
 
-Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit thật, \textbf{chưa} gọi judge mới, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
+Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit thật, \textbf{chưa} có context-level judge labels, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
 
 \section{Bối cảnh nghiên cứu}
 
@@ -129,6 +130,25 @@ Builder thực hiện:
 
 Quan trọng: missing feedback không bị gán score 0. Generation skipped, generation error và missing answer được ghi bằng \texttt{missing\_reason} riêng, trong đó generation error được đánh dấu \texttt{ambiguous=True}.
 
+\subsection{Answer judge labeler}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-label-answers \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --resume \
+  --json-retries 1 \
+  --max-completion-tokens 4096
+\end{verbatim}
+
+\texttt{rlaif-label-answers} chỉ judge từ question, answer và retrieved context đã log; prompt cấm browse và external knowledge. Output ghi incremental nên có thể resume sau khi kernel/local process bị ngắt. Nếu model trả invalid JSON, empty content, thiếu answer hoặc thiếu context, label được ghi là ambiguous với \texttt{quality\_score=null}; không có path nào biến lỗi judge thành score 0.
+
+Script \texttt{scripts/summarize\_rlaif\_labels.py} đọc \texttt{rlaif\_answer\_labels.jsonl} và báo label count, valid/invalid JSON, ambiguous labels, judge provider/model counts, score mean/std, unsupported-claim penalty và correlation với RAGAS answer relevancy khi có \texttt{rlaif\_feedback.jsonl}. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_answer\_labels\_template.md}.
+
 \subsection{Reward/preference builder}
 
 Command hiện có:
@@ -137,6 +157,7 @@ Command hiện có:
 uv run rag-bench rlaif-reward \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
   --output-dir benchmark_results/rlaif/<run-name> \
   --quality-weight 0.75 \
   --support-weight 0.10 \
@@ -146,6 +167,8 @@ uv run rag-bench rlaif-reward \
   --min-reward-delta 0.03 \
   --max-quality-regret 0.02
 \end{verbatim}
+
+Khi có \texttt{--answer-labels}, reward builder dùng AI-judge labels hợp lệ làm feedback chính. Nếu label invalid, ambiguous, errored hoặc thiếu quality, builder fallback về feedback gốc như RAGAS khi có và ghi rõ merge reason trong metadata. Nếu cả hai nguồn đều thiếu quality hợp lệ, reward vẫn là \texttt{null}, không phải 0.
 
 Builder ghi ba artifact:
 
@@ -223,12 +246,24 @@ budget_chars: int | None
 
 Nếu \texttt{budget\_chars=None}, action id vẫn ổn định và biểu diễn đúng ``full-context'' hoặc legacy baseline. Điều này hợp hơn với Phase 1D, vì baseline full/legacy phải có mặt trong action space thay vì bị loại vì thiếu metadata.
 
+\section{Local Qwen KV Estimate}
+
+Script \texttt{scripts/estimate\_local\_qwen\_kv\_cache.py} ước lượng KV-cache cho các model Qwen2.5 mà không load weights. Công thức dùng:
+
+\begin{verbatim}
+KV bytes = 2 * layers * num_key_value_heads * head_dim
+           * seq_len * batch_size * dtype_bytes
+\end{verbatim}
+
+Report \texttt{docs/reports/local\_qwen\_kv\_estimates.md} hiện ghi bảng cho Qwen2.5 0.5B, 1.5B, 3B, 7B và 14B ở 1K, 2K, 4K, 8K, 16K, 32K và 128K tokens với batch size 1, dtype 2 bytes. Ví dụ analytical KV-cache của Qwen2.5-14B là khoảng 0.750 GiB ở 4K, 6.000 GiB ở 32K và 24.000 GiB ở 128K. Đây chỉ là KV-cache estimate; chưa bao gồm weights, activations, allocator fragmentation, paged-attention block overhead hoặc runtime server overhead.
+
 \section{Roadmap tiếp theo}
 
 Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Judge labeling stubs}: \texttt{rlaif-label-answers} và \texttt{rlaif-label-contexts} có \texttt{--dry-run}, \texttt{--resume}, \texttt{--limit}, \texttt{--max-errors}; skip sạch nếu thiếu API key.
+  \item \textbf{Hoàn tất answer judge run}: download output Kaggle, chạy \texttt{scripts/summarize\_rlaif\_labels.py}, rebuild reward bằng \texttt{--answer-labels}, rồi rerun split/train/eval.
+  \item \textbf{Context judge skeleton}: thêm \texttt{rlaif-label-contexts} với \texttt{--dry-run}, \texttt{--resume}, \texttt{--limit}, \texttt{--max-errors}.
   \item \textbf{Richer RLAIF labels}: thêm answer correctness, faithfulness, unsupported claims và context sufficiency trước khi học model phức tạp.
   \item \textbf{Simple reward model/ranking baseline}: dùng feature table nhẹ khi reward/preference coverage đủ hơn baseline bảng.
   \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.

@@ -92,5 +92,9 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Run a Phase 1D selector smoke on real Phase 1C.3 outputs joined with RAGAS post-hoc answer relevancy and document it in `docs/reports/phase1d_rlaif_selector_smoke.md`.
 - Add `rlaif-split` for deterministic held-out splits by `benchmark + query_id`, keeping all actions for the same query in one split and dropping cross-split preferences.
 - Run held-out selector evaluation with `--split-manifest` and document it in `docs/reports/phase1d_rlaif_heldout_eval.md`.
+- Add `rlaif-label-answers` for resumable AI-judge answer labels over normalized action rows, with JSON repair, progress logging, incremental writes, and ambiguous/null handling for invalid or missing labels.
+- Add `scripts/summarize_rlaif_labels.py` and `docs/reports/phase1d_rlaif_answer_labels_template.md` so MiMo/Groq/DeepSeek judge runs can be summarized as soon as outputs finish.
+- Add `rlaif-reward --answer-labels` so valid AI-judge labels can replace RAGAS feedback while invalid/ambiguous labels fall back cleanly instead of becoming score zero.
+- Add `scripts/estimate_local_qwen_kv_cache.py` and `docs/reports/local_qwen_kv_estimates.md` for analytical Qwen2.5 KV-cache estimates without loading model weights.
 - Keep larger held-out evaluation pending until answer/context labels are richer than RAGAS answer relevancy.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

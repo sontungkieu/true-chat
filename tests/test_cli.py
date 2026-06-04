@@ -144,6 +144,8 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
             "scored_reward_count": 2,
             "preference_count": 1,
             "reward_mode_counts": {"gold": 2, "missing_quality": 1},
+            "answer_label_count": 1,
+            "answer_label_merge_counts": {"used_answer_label": 1},
             "preference_type_counts": {"context_policy_preference": 1},
             "preference_skip_reason_counts": {"missing_quality": 1},
             "invalid_row_count": 0,
@@ -158,6 +160,8 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
             str(tmp_path / "rlaif_actions.jsonl"),
             "--feedback",
             str(tmp_path / "rlaif_feedback.jsonl"),
+            "--answer-labels",
+            str(tmp_path / "rlaif_answer_labels.jsonl"),
             "--output-dir",
             str(tmp_path / "out"),
             "--quality-weight",
@@ -171,10 +175,12 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
     assert exit_code == 0
     assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
     assert seen["config"].feedback_path == tmp_path / "rlaif_feedback.jsonl"
+    assert seen["config"].answer_labels_path == tmp_path / "rlaif_answer_labels.jsonl"
     assert seen["config"].output_dir == tmp_path / "out"
     assert seen["config"].quality_weight == 0.7
     assert seen["config"].min_reward_delta == 0.04
     assert '"reward_count": 3' in captured.out
+    assert '"used_answer_label": 1' in captured.out
     assert '"context_policy_preference": 1' in captured.out
 
 
@@ -261,6 +267,87 @@ def test_cli_rlaif_split_rejects_invalid_train_ratio(capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "--train-ratio must be greater than 0 and less than 1" in captured.err
+
+
+def test_cli_rlaif_label_answers_smoke_with_mocked_labeler(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_label_rlaif_answers(config):
+        seen["config"] = config
+        return {
+            "output_path": str(tmp_path / "labels.jsonl"),
+            "action_count": 10,
+            "processed_count": 3,
+            "skipped_resume_count": 1,
+            "skipped_limit_count": 0,
+            "invalid_json_count": 0,
+            "missing_input_count": 0,
+            "error_count": 0,
+            "stopped_early": False,
+            "stop_reason": None,
+            "dry_run": True,
+            "judge_provider": "mimo",
+            "judge_model": "mimo-v2.5-pro",
+        }
+
+    monkeypatch.setattr(cli, "label_rlaif_answers", fake_label_rlaif_answers)
+
+    exit_code = cli.main(
+        [
+            "rlaif-label-answers",
+            "--actions",
+            str(tmp_path / "rlaif_actions.jsonl"),
+            "--output",
+            str(tmp_path / "labels.jsonl"),
+            "--judge-provider",
+            "mimo",
+            "--judge-model",
+            "mimo-v2.5-pro",
+            "--dry-run",
+            "--resume",
+            "--limit",
+            "3",
+            "--max-errors",
+            "2",
+            "--sleep-seconds",
+            "0.5",
+            "--json-retries",
+            "2",
+            "--max-context-chars",
+            "9000",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
+    assert seen["config"].output_path == tmp_path / "labels.jsonl"
+    assert seen["config"].dry_run is True
+    assert seen["config"].resume is True
+    assert seen["config"].limit == 3
+    assert seen["config"].max_errors == 2
+    assert seen["config"].sleep_seconds == 0.5
+    assert seen["config"].json_retries == 2
+    assert seen["config"].max_context_chars == 9000
+    assert '"processed_count": 3' in captured.out
+
+
+def test_cli_rlaif_label_answers_rejects_negative_limit(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-label-answers",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--output",
+            "labels.jsonl",
+            "--limit",
+            "-1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--limit must be non-negative" in captured.err
 
 
 def test_cli_rlaif_train_smoke_with_mocked_trainer(monkeypatch, tmp_path: Path, capsys) -> None:

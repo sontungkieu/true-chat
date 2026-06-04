@@ -65,10 +65,12 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
    Note: full-context or legacy baseline rows without an explicit context budget are valid and use `budget_chars: null` in the action identity payload.
 
 3. Add answer-labeling when feedback is absent
-   - Status: pending.
+   - Status: implemented on `feature/rlaif-retrieval-context-v0`.
    - If judge fields are not present, implement an explicit answer-labeling path instead of leaving everything as `missing`.
    - The labeling path must support `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, and `--judge-model`.
    - It should write incrementally so a long MiMo judge run can resume safely.
+   - Invalid JSON, empty completions, missing answers, and missing contexts become ambiguous labels with `quality_score: null`, never score zero.
+   - MiMo V2.5 can spend hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
 
 ```bash
 uv run rag-bench rlaif-label-answers \
@@ -78,6 +80,16 @@ uv run rag-bench rlaif-label-answers \
   --output benchmark_results/rlaif/<run-name>/rlaif_answer_labels.jsonl \
   --limit 50 \
   --resume
+```
+
+Summarize answer labels and compare with RAGAS answer relevancy:
+
+```bash
+uv run python scripts/summarize_rlaif_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels.jsonl \
+  --ragas-feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_answer_labels_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_answer_labels_summary.json
 ```
 
 4. Add context-level RLAIF feedback
@@ -136,6 +148,7 @@ Context label schema:
 
 1. Build scalar rewards
    - Status: dataset-level reward builder implemented on `feature/rlaif-retrieval-context-v0`.
+   - Status: optional `--answer-labels` merge path implemented; valid AI-judge labels override original feedback, while invalid/ambiguous/missing labels fall back to original feedback when available and never become score zero.
    - Convert quality, efficiency, and latency into a bounded scalar reward.
    - Default priority: answer quality dominates efficiency.
    - Implemented default formula:
@@ -226,8 +239,10 @@ Context label schema:
    - `split_summary.md`: query-level split summary.
    - `rlaif_policy.json`: fixed, cheapest, best-average, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
+   - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
    - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
+   - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - Optional CSV summary for slides/reports.
 
 ## Non-Blocking KV/Qwen Scaffold
@@ -247,6 +262,7 @@ Current reward/preference CLI:
 uv run rag-bench rlaif-reward \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels.jsonl \
   --output-dir benchmark_results/rlaif/<run-name> \
   --quality-weight 0.75 \
   --support-weight 0.10 \
@@ -359,6 +375,8 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
 - Phase 1D reward/preference builder is implemented and covered by tests.
 - Both context-only and retrieval-context preference modes are represented.
 - CLI can build rewards/preferences from existing BudgetRAG output folders.
+- CLI can rebuild rewards with optional answer-label files without treating invalid labels as zero quality.
 - Summary markdown explains reward coverage, preference coverage, and tradeoffs.
+- Answer-label and local Qwen KV-cache summary scripts are documented and covered by tests.
 - `README.md` and `milestones.md` are updated when implementation lands.
 - Existing test suite still passes.

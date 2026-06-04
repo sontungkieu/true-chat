@@ -78,6 +78,78 @@ def test_rlaif_reward_keeps_ambiguous_feedback_out_of_preferences(tmp_path: Path
     assert summary["preference_skip_reason_counts"]["ambiguous_feedback"] == 1
 
 
+def test_rlaif_reward_uses_valid_answer_labels_over_ragas_feedback(tmp_path: Path) -> None:
+    actions = [_action("a1")]
+    feedback = [_feedback("a1", quality=0.2, provenance="ragas")]
+    answer_labels = [
+        {
+            "action_id": "a1",
+            "query_id": "q1",
+            "provenance": "ai_judge",
+            "quality_score": 0.9,
+            "evidence_support": 0.8,
+            "faithfulness": 0.7,
+            "unsupported_claim_penalty": 0.1,
+            "ambiguous": False,
+            "invalid_json": False,
+            "error": None,
+        }
+    ]
+    _write_jsonl(tmp_path / "rlaif_actions.jsonl", actions)
+    _write_jsonl(tmp_path / "rlaif_feedback.jsonl", feedback)
+    _write_jsonl(tmp_path / "rlaif_answer_labels.jsonl", answer_labels)
+
+    summary = build_rlaif_rewards(
+        RlaifRewardConfig(
+            actions_path=tmp_path / "rlaif_actions.jsonl",
+            feedback_path=tmp_path / "rlaif_feedback.jsonl",
+            answer_labels_path=tmp_path / "rlaif_answer_labels.jsonl",
+            output_dir=tmp_path / "out",
+        )
+    )
+
+    reward = _read_jsonl(tmp_path / "out" / "rlaif_rewards.jsonl")[0]
+    assert summary["answer_label_count"] == 1
+    assert summary["answer_label_merge_counts"]["used_answer_label"] == 1
+    assert reward["quality"] == 0.9
+    assert reward["provenance"] == "ai_judge"
+    assert reward["metadata"]["fallback_feedback"]["provenance"] == "ragas"
+
+
+def test_rlaif_reward_falls_back_when_answer_label_is_invalid(tmp_path: Path) -> None:
+    actions = [_action("a1")]
+    feedback = [_feedback("a1", quality=0.55, provenance="ragas")]
+    answer_labels = [
+        {
+            "action_id": "a1",
+            "query_id": "q1",
+            "provenance": "ai_judge",
+            "quality_score": None,
+            "ambiguous": True,
+            "invalid_json": True,
+        }
+    ]
+    _write_jsonl(tmp_path / "rlaif_actions.jsonl", actions)
+    _write_jsonl(tmp_path / "rlaif_feedback.jsonl", feedback)
+    _write_jsonl(tmp_path / "rlaif_answer_labels.jsonl", answer_labels)
+
+    summary = build_rlaif_rewards(
+        RlaifRewardConfig(
+            actions_path=tmp_path / "rlaif_actions.jsonl",
+            feedback_path=tmp_path / "rlaif_feedback.jsonl",
+            answer_labels_path=tmp_path / "rlaif_answer_labels.jsonl",
+            output_dir=tmp_path / "out",
+        )
+    )
+
+    reward = _read_jsonl(tmp_path / "out" / "rlaif_rewards.jsonl")[0]
+    assert summary["answer_label_merge_counts"]["invalid_answer_label"] == 1
+    assert summary["answer_label_merge_counts"]["fallback_to_feedback"] == 1
+    assert reward["quality"] == 0.55
+    assert reward["provenance"] == "ragas"
+    assert reward["metadata"]["answer_label_skip_reason"] == "invalid_json"
+
+
 def _action(
     action_id: str,
     *,
