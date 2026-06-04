@@ -62,8 +62,10 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c2`; pendi
 Status: started on `feature/rlaif-retrieval-context-v0`.
 
 - Add a normalized answer-quality and context-evidence feedback layer for BudgetRAG action rows.
-- Add schema-only records for retrieval-context actions, answer feedback, context feedback, rewards, and preferences.
+- Add schema records for retrieval-context actions, answer feedback, context feedback, rewards, and preferences.
 - Add deterministic action ids that include retriever, fusion strategy, context policy, budget, adaptive profile, selected context action, and generator model while excluding source run ids.
+- Add `rlaif-build` to convert BudgetRAG `query_results.jsonl` outputs into `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md`.
+- Preserve answer text, retrieved records, context metrics, retrieval metrics, latency, token usage, KV estimates, feedback provenance, and missing-label reasons in offline datasets.
 - Keep gold metrics, RAGAS/MiMo judge scores, missing labels, and ambiguous judge results separate.
 - Add explicit answer and context judge labeling paths with dry-run/resume support.
 - Label minimal evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and context sufficiency.

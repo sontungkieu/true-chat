@@ -37,7 +37,7 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 ## Phase 1C.3 Implementation Plan: Feedback Layer
 
 1. Normalize action rows
-   - Status: schema baseline implemented on `feature/rlaif-retrieval-context-v0`; full dataset builder pending.
+   - Status: dataset builder implemented on `feature/rlaif-retrieval-context-v0`.
    - Read one or more `query_results.jsonl` files from BudgetRAG runs.
    - Extract stable keys: benchmark, query id, question, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected adaptive action, generator model, answer, references, context metrics, latency, and token usage.
    - Assign an `action_id` that is deterministic across runs.
@@ -55,7 +55,7 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 ```
 
 2. Normalize feedback sources
-   - Status: schema baseline implemented; extraction from existing outputs pending.
+   - Status: dataset builder implemented for gold, existing RAGAS fields, existing MiMo/judge fields, and missing-label reasons.
    - Use gold metrics when present: exact match and token F1.
    - Use RAGAS/MiMo judge fields when present: answer relevancy, faithfulness, answer correctness, and judge rationale.
    - Record feedback provenance explicitly: `gold`, `ragas`, `mimo_judge`, `heuristic`, or `missing`.
@@ -121,6 +121,7 @@ Context label schema:
    - Keep raw judge rationale separate from model inputs so it can be audited later.
 
 6. Outputs
+   - Status: `rlaif-build` writes the first three files below; context labeling outputs remain pending.
    - `rlaif_actions.jsonl`: one normalized candidate action per query/run.
    - `rlaif_feedback.jsonl`: one feedback record per candidate action.
    - `rlaif_answer_labels.jsonl`: explicit judge labels for answers when source runs do not already contain judge fields.

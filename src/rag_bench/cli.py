@@ -18,6 +18,7 @@ from rag_bench.context_policies import CONTEXT_POLICY_NAMES
 from rag_bench.adaptive_budget import ADAPTIVE_PROFILES
 from rag_bench.kv_estimator import KV_MODEL_PROFILES
 from rag_bench.retriever_registry import list_retriever_ids
+from rag_bench.rlaif_build import RlaifBuildConfig, build_rlaif_dataset
 from rag_bench.runner import RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
 
@@ -36,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "serve":
         return _serve(args)
+    if args.command == "rlaif-build":
+        return _rlaif_build(args)
     parser.print_help()
     return 1
 
@@ -230,6 +233,29 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("per-key", "shared"),
         default="per-key",
         help="Use per-key buckets or one shared bucket for org-level limits.",
+    )
+
+    rlaif_build_parser = subparsers.add_parser(
+        "rlaif-build",
+        help="Build normalized RLAIF action and feedback datasets from BudgetRAG outputs.",
+    )
+    rlaif_build_parser.add_argument(
+        "--inputs",
+        nargs="+",
+        type=Path,
+        required=True,
+        help="BudgetRAG query_results.jsonl files or directories containing them.",
+    )
+    rlaif_build_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Output directory. Defaults to benchmark_results/rlaif/<timestamp>.",
+    )
+    rlaif_build_parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Timestamp/name used only when --output-dir is omitted.",
     )
     return parser
 
@@ -454,6 +480,37 @@ def _serve(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001 - CLI should show concise startup errors.
         print(f"rag-bench serve failed: {exc}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _rlaif_build(args: argparse.Namespace) -> int:
+    try:
+        summary = build_rlaif_dataset(
+            RlaifBuildConfig(
+                inputs=tuple(args.inputs),
+                output_dir=args.output_dir,
+                run_name=args.run_name,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rlaif-build failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "output_dir": summary["output_dir"],
+                "action_count": summary["action_count"],
+                "feedback_count": summary["feedback_count"],
+                "invalid_row_count": summary["invalid_row_count"],
+                "feedback_provenance_counts": summary["feedback_provenance_counts"],
+                "missing_reason_counts": summary["missing_reason_counts"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

@@ -99,6 +99,40 @@ def test_cli_run_rejects_invalid_adaptive_profile(capsys) -> None:
     assert "invalid choice" in captured.err
 
 
+def test_cli_rlaif_build_smoke_with_mocked_builder(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_build_rlaif_dataset(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "rlaif"),
+            "action_count": 2,
+            "feedback_count": 2,
+            "invalid_row_count": 0,
+            "feedback_provenance_counts": {"gold": 1, "missing": 1},
+            "missing_reason_counts": {"generation_skipped": 1},
+        }
+
+    monkeypatch.setattr(cli, "build_rlaif_dataset", fake_build_rlaif_dataset)
+
+    exit_code = cli.main(
+        [
+            "rlaif-build",
+            "--inputs",
+            str(tmp_path / "matrix"),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].inputs == (tmp_path / "matrix",)
+    assert seen["config"].output_dir == tmp_path / "out"
+    assert '"action_count": 2' in captured.out
+    assert '"gold": 1' in captured.out
+
+
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     seen = {}
 

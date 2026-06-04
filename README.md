@@ -186,7 +186,7 @@ Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuris
 
 Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggressive`) and normalized score diagnostics for threshold calibration. These profiles are deterministic heuristics, not learned policies.
 
-Phase 1C.3 starts the RLAIF retrieval-context data layer. The first implementation adds schema-only records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. This is still offline data plumbing: it does not replace `adaptive-heuristic`, train a policy, call a judge, or change runtime retrieval behavior.
+Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. This is still offline data plumbing: it does not replace `adaptive-heuristic`, train a policy, call a judge, or change runtime retrieval behavior.
 
 Retrieval-only BudgetRAG smoke run:
 
@@ -251,8 +251,17 @@ RLAIF schema modules:
 
 - `rag_bench.rlaif_schema`: dataclasses for `RetrievalContextAction`, answer/context feedback, reward weights, scalar rewards, and preferences.
 - `rag_bench.retrieval_context_actions`: helper for converting BudgetRAG `query_results.jsonl` rows into normalized retrieval-context actions.
+- `rag_bench.rlaif_build`: dataset builder for normalized action and answer-feedback rows.
 
-The planned RLAIF CLI commands (`rlaif-build`, `rlaif-label-answers`, `rlaif-label-contexts`, and `rlaif-train`) are intentionally not enabled yet. The next implementation step is the dataset builder that reads existing BudgetRAG outputs and writes `rlaif_actions.jsonl` plus feedback stubs.
+Build a normalized RLAIF dataset from one matrix directory or one or more `query_results.jsonl` files:
+
+```bash
+uv run rag-bench rlaif-build \
+  --inputs benchmark_results/budgetrag/<matrix-run> \
+  --output-dir benchmark_results/rlaif/<run-name>
+```
+
+The builder preserves answer text, retrieved source records, context metrics, retrieval metrics, latency, token usage, KV estimates, and answer feedback provenance. Gold EM/F1 labels are used when present; otherwise it records RAGAS/MiMo/judge fields when already available; otherwise the feedback row stays `provenance=missing` with a concrete `missing_reason`. Generation failures are marked as ambiguous missing feedback, not as score zero. The planned judge and training commands (`rlaif-label-answers`, `rlaif-label-contexts`, and `rlaif-train`) remain intentionally disabled until the normalized dataset path is stable.
 
 Summarize local matrix outputs:
 
