@@ -109,6 +109,7 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Judge only from logged question, answers, retrieved contexts, and resource costs; do not browse or use external knowledge.
    - Output `chosen=A|B|null`, `tie`, `ambiguous`, answer-quality winner, evidence-support winner, efficiency winner, quality-regret flag, unsupported-claim risk, confidence, and short rationale.
    - Invalid JSON, missing actions, missing rewards, missing answers, and missing contexts become ambiguous labels with null confidence, never score zero.
+   - Summarize pairwise labels with `scripts/summarize_rlaif_pairwise_labels.py` to track A/B/tie/ambiguous counts, reward-preference agreement, disagreement, confidence, quality regret, and unsupported-claim risk.
    - This is for reward/preference calibration and selector analysis only; do not train DPO/reward model or replace runtime defaults in v1.
 
 ```bash
@@ -271,10 +272,12 @@ Context label schema:
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
    - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
    - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
+   - `rlaif_pairwise_labels_summary.md`: direct pairwise label agreement and risk summary.
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
    - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
+   - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.
    - Optional CSV summary for slides/reports.
 
 ## Non-Blocking KV/Qwen Scaffold
@@ -345,6 +348,11 @@ uv run rag-bench rlaif-label-pairs \
   --limit 50 \
   --resume \
   --sleep-seconds 0.5
+
+uv run python scripts/summarize_rlaif_pairwise_labels.py \
+  --input benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo_summary.json
 ```
 
 After the current Kaggle answer-label job completes, use this auditable path before writing a curated report:
@@ -432,6 +440,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - `rag-bench rlaif-label-contexts` filters unknown judge-returned chunk ids and preserves null scores for missing/ambiguous labels.
    - `rag-bench rlaif-label-pairs --dry-run` writes ambiguous placeholder labels without network calls.
    - `rag-bench rlaif-label-pairs` preserves null confidence for missing/ambiguous pair data and records A/B/tie decisions without trusting reward-derived preferences.
+   - `scripts/summarize_rlaif_pairwise_labels.py` reports reward-preference agreement, disagreement, ties, ambiguity, confidence, quality regret, and unsupported-claim risk.
    - `scripts/summarize_rlaif_context_labels.py` reports sufficiency, missing evidence, chunk selection counts, dropped unknown chunk ids, and score statistics.
    - Labeling commands support `--resume` without duplicating completed action ids.
    - Invalid inputs fail with actionable errors.

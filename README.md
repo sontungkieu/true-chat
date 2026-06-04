@@ -327,6 +327,17 @@ uv run rag-bench rlaif-label-pairs \
 
 `rlaif-label-pairs` uses existing `rlaif_preferences.jsonl` only to choose comparable action pairs. Action A is the reward-derived chosen action and Action B is the rejected action, but the judge is instructed to decide independently between `A`, `B`, `tie`, or `ambiguous` using only the logged question, answers, retrieved contexts, and token/latency/KV costs. Invalid JSON, missing action data, missing answers, and missing contexts become ambiguous labels with `confidence=null`; they are not converted into score zero. These direct pairwise labels are for offline calibration and analysis only; they do not replace runtime policy defaults.
 
+Summarize pairwise labels:
+
+```bash
+uv run python scripts/summarize_rlaif_pairwise_labels.py \
+  --input benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo_summary.json
+```
+
+The summary reports A/B/tie/ambiguous counts, agreement and disagreement with reward-derived preferences, confidence statistics, quality-regret counts, unsupported-claim risk counts, and judge provider/model counts.
+
 Summarize answer labels:
 
 ```bash

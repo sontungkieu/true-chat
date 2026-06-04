@@ -41,7 +41,7 @@
 Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, answer/context-label summaries và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{194 passed} \\
+Trạng thái test gần nhất & \texttt{195 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -188,6 +188,8 @@ uv run rag-bench rlaif-label-pairs \
 
 \texttt{rlaif-label-pairs} dùng preference cũ chỉ để chọn cặp action có thể so sánh. Action A là action reward formula đang chọn, Action B là action bị reject, nhưng judge được yêu cầu quyết định độc lập giữa A, B, tie hoặc ambiguous dựa trên question, answer, retrieved context và token/latency/KV cost đã log. Missing action/reward, missing answer/context, invalid JSON hoặc judge error đều thành ambiguous label với confidence \texttt{null}, không thành score 0. Đây là dữ liệu calibration offline, chưa train reward model, DPO hoặc thay runtime policy.
 
+Script \texttt{scripts/summarize\_rlaif\_pairwise\_labels.py} đọc \texttt{rlaif\_pairwise\_labels.jsonl} và báo A/B/tie/ambiguous counts, agreement/disagreement với reward-derived preference, confidence statistics, quality-regret count, unsupported-claim risk count và judge provider/model counts. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_pairwise\_labels\_template.md}.
+
 \subsection{Reward/preference builder}
 
 Command hiện có:
@@ -304,7 +306,7 @@ Thứ tự tiếp theo nên giữ như sau:
   \item \textbf{Hoàn tất answer judge run}: download output Kaggle, chạy \texttt{scripts/summarize\_rlaif\_labels.py}, rebuild reward bằng \texttt{--answer-labels}, rồi rerun split/train/eval.
   \item \textbf{Context judge run}: chạy \texttt{rlaif-label-contexts} sau khi answer-label pipeline ổn, rồi dùng labels này để tạo context-sufficiency preferences.
   \item \textbf{Context label report}: chạy \texttt{scripts/summarize\_rlaif\_context\_labels.py} và điền \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md}.
-  \item \textbf{Pairwise judge run}: chạy \texttt{rlaif-label-pairs} trên subset preference để đo reward-derived preference có khớp direct AI preference không.
+  \item \textbf{Pairwise judge run}: chạy \texttt{rlaif-label-pairs} trên subset preference, rồi chạy \texttt{scripts/summarize\_rlaif\_pairwise\_labels.py} để đo reward-derived preference có khớp direct AI preference không.
   \item \textbf{Richer RLAIF labels}: thêm answer correctness, faithfulness, unsupported claims và context sufficiency trước khi học model phức tạp.
   \item \textbf{Simple reward model/ranking baseline}: dùng feature table nhẹ khi reward/preference coverage đủ hơn baseline bảng.
   \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.

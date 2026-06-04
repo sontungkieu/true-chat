@@ -24,6 +24,10 @@ summarize_context_labels = _load_script(
     "summarize_rlaif_context_labels",
     "scripts/summarize_rlaif_context_labels.py",
 )
+summarize_pairwise_labels = _load_script(
+    "summarize_rlaif_pairwise_labels",
+    "scripts/summarize_rlaif_pairwise_labels.py",
+)
 kv_estimates = _load_script("estimate_local_qwen_kv_cache", "scripts/estimate_local_qwen_kv_cache.py")
 
 
@@ -159,6 +163,83 @@ def test_summarize_rlaif_context_labels_counts_chunks_scores_and_dropped_ids(tmp
     rendered = summarize_context_labels.render_markdown(summary)
     assert "RLAIF Context Label Summary" in rendered
     assert "Dropped unknown chunk ids" in rendered
+
+
+def test_summarize_rlaif_pairwise_labels_counts_agreement_and_confidence(tmp_path: Path) -> None:
+    labels_path = tmp_path / "pairwise_labels.jsonl"
+    _write_jsonl(
+        labels_path,
+        [
+            {
+                "preference_id": "p1",
+                "judge_provider": "mimo",
+                "judge_model": "mimo-v2.5-pro",
+                "judge_version": "rlaif-pairwise-judge-v1",
+                "chosen": "A",
+                "tie": False,
+                "ambiguous": False,
+                "invalid_json": False,
+                "answer_quality_winner": "A",
+                "evidence_support_winner": "A",
+                "efficiency_winner": "B",
+                "quality_regret": False,
+                "unsupported_claim_risk": "b",
+                "confidence": 0.8,
+            },
+            {
+                "preference_id": "p2",
+                "judge_provider": "mimo",
+                "judge_model": "mimo-v2.5-pro",
+                "chosen": "B",
+                "tie": False,
+                "ambiguous": False,
+                "invalid_json": False,
+                "answer_quality_winner": "B",
+                "evidence_support_winner": "B",
+                "efficiency_winner": "A",
+                "quality_regret": True,
+                "unsupported_claim_risk": "a",
+                "confidence": 0.6,
+            },
+            {
+                "preference_id": "p3",
+                "chosen": None,
+                "tie": True,
+                "ambiguous": False,
+                "invalid_json": False,
+                "confidence": 0.5,
+                "unsupported_claim_risk": "neither",
+            },
+            {
+                "preference_id": "p4",
+                "chosen": None,
+                "tie": False,
+                "ambiguous": True,
+                "invalid_json": True,
+                "confidence": None,
+            },
+        ],
+    )
+
+    summary = summarize_pairwise_labels.summarize_pairwise_labels(labels_path)
+
+    assert summary["label_count"] == 4
+    assert summary["valid_json_count"] == 3
+    assert summary["invalid_json_count"] == 1
+    assert summary["ambiguous_count"] == 1
+    assert summary["tie_count"] == 1
+    assert summary["a_win_count"] == 1
+    assert summary["b_win_count"] == 1
+    assert summary["agreement_with_reward_preference"] == 1
+    assert summary["disagreement_with_reward_preference"] == 1
+    assert summary["tie_or_ambiguous_vs_reward_preference"] == 2
+    assert summary["agreement_rate"] == 0.5
+    assert summary["quality_regret_count"] == 1
+    assert summary["unsupported_claim_risk_count"] == 2
+    assert summary["confidence_stats"]["mean"] == 0.6333333333333333
+    rendered = summarize_pairwise_labels.render_markdown(summary)
+    assert "RLAIF Pairwise Label Summary" in rendered
+    assert "Agreement counts compare" in rendered
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
