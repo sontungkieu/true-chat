@@ -96,5 +96,6 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `scripts/summarize_rlaif_labels.py` and `docs/reports/phase1d_rlaif_answer_labels_template.md` so MiMo/Groq/DeepSeek judge runs can be summarized as soon as outputs finish.
 - Add `rlaif-reward --answer-labels` so valid AI-judge labels can replace RAGAS feedback while invalid/ambiguous labels fall back cleanly instead of becoming score zero.
 - Add `scripts/estimate_local_qwen_kv_cache.py` and `docs/reports/local_qwen_kv_estimates.md` for analytical Qwen2.5 KV-cache estimates without loading model weights.
+- Add `rlaif-label-contexts` for resumable context-level RLAIF labels over normalized action rows, including selected/redundant/irrelevant chunk ids, context sufficiency, missing evidence, JSON repair, progress logging, and null-score handling for invalid or missing labels.
 - Keep larger held-out evaluation pending until answer/context labels are richer than RAGAS answer relevancy.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

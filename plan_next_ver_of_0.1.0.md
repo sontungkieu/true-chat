@@ -93,9 +93,11 @@ uv run python scripts/summarize_rlaif_labels.py \
 ```
 
 4. Add context-level RLAIF feedback
-   - Status: schema baseline implemented; judge labeling path pending.
+   - Status: schema baseline and `rlaif-label-contexts` CLI implemented; full context-label run still pending.
    - Judge candidate retrieved/context chunks before generation.
    - Identify selected evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and sufficiency.
+   - The labeling path supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, `--judge-model`, JSON repair, progress logging, and incremental writes.
+   - Missing contexts, invalid JSON, empty completions, and judge errors become ambiguous labels with null scores, never score zero.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
@@ -230,7 +232,7 @@ Context label schema:
    - Next evaluator change: run larger held-out splits after answer/context labels are richer than RAGAS answer relevancy.
 
 5. Outputs
-   - Status: `rlaif-reward`, `rlaif-train`, and `rlaif-eval` write the implemented files below; context labeling outputs remain pending.
+   - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and the `rlaif-label-contexts` skeleton write the implemented files below; a full context-label run remains pending.
    - `rlaif_rewards.jsonl`
    - `rlaif_preferences.jsonl`
    - `rlaif_reward_summary.md`
@@ -343,6 +345,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
 2. CLI tests
    - `rag-bench rlaif-build` writes all expected files on a tiny fixture.
    - `rag-bench rlaif-label-answers --dry-run` and `rag-bench rlaif-label-contexts --dry-run` write valid placeholder labels without network calls.
+   - `rag-bench rlaif-label-contexts` filters unknown judge-returned chunk ids and preserves null scores for missing/ambiguous labels.
    - Labeling commands support `--resume` without duplicating completed action ids.
    - Invalid inputs fail with actionable errors.
    - Output records do not include secrets or provider API keys.

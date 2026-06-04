@@ -186,7 +186,7 @@ Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuris
 
 Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggressive`) and normalized score diagnostics for threshold calibration. These profiles are deterministic heuristics, not learned policies.
 
-Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. Full-context or legacy rows without an explicit context budget use `budget_chars=null` as a stable action dimension. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. The `rlaif-reward` command turns those normalized files into scalar rewards and pairwise preferences with quality guardrails. The `rlaif-split`, `rlaif-train`, and `rlaif-eval` commands create query-level held-out splits and evaluate offline selector baselines from logged reward rows. This is still offline data plumbing: it does not replace `adaptive-heuristic`, call a judge, or change runtime retrieval behavior.
+Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. Full-context or legacy rows without an explicit context budget use `budget_chars=null` as a stable action dimension. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. The `rlaif-label-answers` and `rlaif-label-contexts` commands create optional offline AI-judge labels with resume and null-score guardrails. The `rlaif-reward` command turns those normalized files into scalar rewards and pairwise preferences with quality guardrails. The `rlaif-split`, `rlaif-train`, and `rlaif-eval` commands create query-level held-out splits and evaluate offline selector baselines from logged reward rows. This is still offline data plumbing: it does not replace `adaptive-heuristic` or change runtime retrieval behavior.
 
 Retrieval-only BudgetRAG smoke run:
 
@@ -253,6 +253,7 @@ RLAIF schema modules:
 - `rag_bench.retrieval_context_actions`: helper for converting BudgetRAG `query_results.jsonl` rows into normalized retrieval-context actions.
 - `rag_bench.rlaif_build`: dataset builder for normalized action and answer-feedback rows.
 - `rag_bench.rlaif_label_answers`: resumable AI-judge answer labeler for normalized action rows.
+- `rag_bench.rlaif_label_contexts`: resumable AI-judge context sufficiency labeler for normalized action rows.
 - `rag_bench.rlaif_reward`: reward and pairwise preference builder over normalized RLAIF datasets.
 - `rag_bench.rlaif_split`: deterministic query-level train/eval splitter for RLAIF reward and preference rows.
 - `rag_bench.rlaif_policy`: offline selector baselines over logged RLAIF reward rows.
@@ -281,6 +282,21 @@ uv run rag-bench rlaif-label-answers \
 ```
 
 `rlaif-label-answers` writes incrementally and supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`. It instructs the judge not to browse and not to use external knowledge. Invalid JSON, empty MiMo completions, missing answers, and missing context become ambiguous labels with `quality_score=null`; they are not converted into score zero. MiMo V2.5 often spends hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
+
+Label context sufficiency with an AI judge using only the logged question, optional answer, and retrieved chunks:
+
+```bash
+uv run rag-bench rlaif-label-contexts \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --resume \
+  --json-retries 1 \
+  --max-completion-tokens 4096
+```
+
+`rlaif-label-contexts` writes `sufficient`, `selected_chunk_ids`, `redundant_chunk_ids`, `irrelevant_chunk_ids`, `missing_evidence`, `minimality_score`, `evidence_support_score`, and `context_quality_score`. It uses stable chunk ids from the logged retrieved records and drops judge-returned ids that are not present in the action row. It supports the same operational controls as answer labeling, including `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`. Missing context, invalid JSON, and judge errors become ambiguous labels with null scores, not score zero.
 
 Summarize answer labels:
 
