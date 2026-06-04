@@ -349,7 +349,7 @@ uv run python scripts/diagnose_rlaif_pairwise_calibration.py \
   --out-json benchmark_results/rlaif/<run-name>/rlaif_pairwise_calibration.json
 ```
 
-`diagnose_rlaif_pairwise_calibration.py` is analysis-only. It flags small quality/support deltas where the direct pairwise judge treats answer quality or support as tied and prefers the cheaper action. The output is intended to guide a future explicit `reward_calibration_v1_candidate`; it does not change `rlaif-reward` defaults.
+`diagnose_rlaif_pairwise_calibration.py` is analysis-only. It flags small quality/support deltas where the direct pairwise judge treats answer quality or support as tied and prefers the cheaper action. The output is intended to guide the explicit opt-in `pairwise_tie_v1` reward calibration candidate; it does not change `rlaif-reward` defaults.
 
 The summary reports A/B/tie/ambiguous counts, agreement and disagreement with reward-derived preferences, confidence statistics, quality-regret counts, unsupported-claim risk counts, and judge provider/model counts.
 
@@ -383,6 +383,22 @@ uv run rag-bench rlaif-reward \
 ```
 
 `rlaif-reward` writes `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md`. Missing or ambiguous feedback produces `reward=null` with `reward_mode=missing_quality` or `reward_mode=ambiguous_feedback`; it is not converted to score zero. When `--answer-labels` is provided, valid AI-judge labels override the original feedback for reward scoring. Invalid, ambiguous, errored, or missing answer labels fall back to the original feedback when available, and the merge reason is recorded in reward metadata and summary counts. Preferences are generated only within comparable query groups and are skipped when the higher-reward action violates the configured quality-regret guardrail.
+
+Optional pairwise tie-aware preference calibration:
+
+```bash
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>_calibrated \
+  --reward-calibration pairwise_tie_v1 \
+  --quality-tie-threshold 0.10 \
+  --support-tie-threshold 0.20 \
+  --tie-break-by-efficiency
+```
+
+`pairwise_tie_v1` is opt-in. It leaves scalar reward rows unchanged and only changes preference construction when quality/support gaps are within the configured tie band. The default remains `--reward-calibration none`, and calibrated artifacts are offline-only.
 
 Build and evaluate offline selector baselines:
 

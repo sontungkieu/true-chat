@@ -103,5 +103,6 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Complete the full MiMo answer-label Kaggle run for the Phase 1D selector smoke, rebuild rewards with `rlaif-reward --answer-labels`, rerun held-out split/train/eval, and document the result in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.
 - Run a 50-pair direct MiMo pairwise audit over AI-judge reward-derived preferences, summarize reward/preference agreement, and document the result in `docs/reports/phase1d_rlaif_pairwise_mimo50.md`.
 - Add pairwise-calibrated reward diagnostics to detect small quality/support deltas where direct pairwise judge prefers lower resource cost, and document the MiMo-50 result in `docs/reports/phase1d_rlaif_pairwise_calibration_diagnostics.md`.
+- Add opt-in `pairwise_tie_v1` reward calibration for preference construction, keep scalar reward/default behavior unchanged, and document the calibrated candidate in `docs/reports/phase1d_rlaif_pairwise_calibrated_reward_candidate.md`.
 - Keep larger held-out evaluation pending until answer/context labels are richer than RAGAS answer relevancy.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

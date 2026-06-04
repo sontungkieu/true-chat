@@ -313,6 +313,19 @@ def build_parser() -> argparse.ArgumentParser:
     rlaif_reward_parser.add_argument("--unsupported-weight", type=float, default=1.0)
     rlaif_reward_parser.add_argument("--min-reward-delta", type=float, default=0.03)
     rlaif_reward_parser.add_argument("--max-quality-regret", type=float, default=0.02)
+    rlaif_reward_parser.add_argument(
+        "--reward-calibration",
+        choices=("none", "pairwise_tie_v1"),
+        default="none",
+        help="Optional offline preference calibration. Defaults to none and leaves historical behavior unchanged.",
+    )
+    rlaif_reward_parser.add_argument("--quality-tie-threshold", type=float, default=0.0)
+    rlaif_reward_parser.add_argument("--support-tie-threshold", type=float, default=0.0)
+    rlaif_reward_parser.add_argument(
+        "--tie-break-by-efficiency",
+        action="store_true",
+        help="When pairwise_tie_v1 marks quality/support as tied, choose the lower token+latency+KV cost action.",
+    )
 
     rlaif_split_parser = subparsers.add_parser(
         "rlaif-split",
@@ -747,10 +760,15 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
         "unsupported_weight",
         "min_reward_delta",
         "max_quality_regret",
+        "quality_tie_threshold",
+        "support_tie_threshold",
     ):
         if getattr(args, name) < 0:
             print(f"--{name.replace('_', '-')} must be non-negative.", file=sys.stderr)
             return 2
+    if args.reward_calibration == "none" and args.tie_break_by_efficiency:
+        print("--tie-break-by-efficiency requires --reward-calibration pairwise_tie_v1.", file=sys.stderr)
+        return 2
     try:
         summary = build_rlaif_rewards(
             RlaifRewardConfig(
@@ -767,6 +785,10 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
                 unsupported_weight=args.unsupported_weight,
                 min_reward_delta=args.min_reward_delta,
                 max_quality_regret=args.max_quality_regret,
+                reward_calibration=args.reward_calibration,
+                quality_tie_threshold=args.quality_tie_threshold,
+                support_tie_threshold=args.support_tie_threshold,
+                tie_break_by_efficiency=args.tie_break_by_efficiency,
             )
         )
     except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
@@ -784,7 +806,12 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
                 "answer_label_count": summary["answer_label_count"],
                 "answer_label_merge_counts": summary["answer_label_merge_counts"],
                 "preference_type_counts": summary["preference_type_counts"],
+                "preference_reason_counts": summary["preference_reason_counts"],
                 "preference_skip_reason_counts": summary["preference_skip_reason_counts"],
+                "reward_calibration": summary["reward_calibration"],
+                "quality_tie_threshold": summary["quality_tie_threshold"],
+                "support_tie_threshold": summary["support_tie_threshold"],
+                "tie_break_by_efficiency": summary["tie_break_by_efficiency"],
                 "invalid_row_count": summary["invalid_row_count"],
             },
             ensure_ascii=False,

@@ -147,7 +147,12 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
             "answer_label_count": 1,
             "answer_label_merge_counts": {"used_answer_label": 1},
             "preference_type_counts": {"context_policy_preference": 1},
+            "preference_reason_counts": {"pairwise_tie_v1_efficiency": 1},
             "preference_skip_reason_counts": {"missing_quality": 1},
+            "reward_calibration": "pairwise_tie_v1",
+            "quality_tie_threshold": 0.1,
+            "support_tie_threshold": 0.2,
+            "tie_break_by_efficiency": True,
             "invalid_row_count": 0,
         }
 
@@ -168,6 +173,13 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
             "0.7",
             "--min-reward-delta",
             "0.04",
+            "--reward-calibration",
+            "pairwise_tie_v1",
+            "--quality-tie-threshold",
+            "0.10",
+            "--support-tie-threshold",
+            "0.20",
+            "--tie-break-by-efficiency",
         ]
     )
 
@@ -179,9 +191,14 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
     assert seen["config"].output_dir == tmp_path / "out"
     assert seen["config"].quality_weight == 0.7
     assert seen["config"].min_reward_delta == 0.04
+    assert seen["config"].reward_calibration == "pairwise_tie_v1"
+    assert seen["config"].quality_tie_threshold == 0.10
+    assert seen["config"].support_tie_threshold == 0.20
+    assert seen["config"].tie_break_by_efficiency is True
     assert '"reward_count": 3' in captured.out
     assert '"used_answer_label": 1' in captured.out
     assert '"context_policy_preference": 1' in captured.out
+    assert '"reward_calibration": "pairwise_tie_v1"' in captured.out
 
 
 def test_cli_rlaif_reward_rejects_negative_weight(capsys) -> None:
@@ -200,6 +217,23 @@ def test_cli_rlaif_reward_rejects_negative_weight(capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "--quality-weight must be non-negative" in captured.err
+
+
+def test_cli_rlaif_reward_rejects_efficiency_tie_break_without_calibration(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-reward",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--feedback",
+            "rlaif_feedback.jsonl",
+            "--tie-break-by-efficiency",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--tie-break-by-efficiency requires --reward-calibration pairwise_tie_v1" in captured.err
 
 
 def test_cli_rlaif_split_smoke_with_mocked_splitter(monkeypatch, tmp_path: Path, capsys) -> None:

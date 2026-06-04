@@ -103,6 +103,62 @@ def test_small_reward_delta_does_not_create_preferences(tmp_path: Path) -> None:
     assert summary["preference_skip_reason_counts"]["small_reward_delta"] == 2
 
 
+def test_pairwise_tie_calibration_is_opt_in_and_prefers_cheaper_action(tmp_path: Path) -> None:
+    actions = [
+        _action("a-expensive-slightly-better", context_policy="legacy", total_tokens=200, latency_s=2.0, kv_mb=20.0),
+        _action("a-cheaper-good", context_policy="evidence-aware", total_tokens=20, latency_s=0.2, kv_mb=2.0),
+    ]
+    feedback = [
+        _feedback("a-expensive-slightly-better", quality=0.95),
+        _feedback("a-cheaper-good", quality=0.90),
+    ]
+    _write_jsonl(tmp_path / "rlaif_actions.jsonl", actions)
+    _write_jsonl(tmp_path / "rlaif_feedback.jsonl", feedback)
+
+    default_summary = build_rlaif_rewards(
+        RlaifRewardConfig(
+            actions_path=tmp_path / "rlaif_actions.jsonl",
+            feedback_path=tmp_path / "rlaif_feedback.jsonl",
+            output_dir=tmp_path / "default",
+            quality_weight=0.95,
+            support_weight=0.0,
+            token_weight=0.01,
+            latency_weight=0.01,
+            kv_weight=0.01,
+            min_reward_delta=0.01,
+        )
+    )
+    calibrated_summary = build_rlaif_rewards(
+        RlaifRewardConfig(
+            actions_path=tmp_path / "rlaif_actions.jsonl",
+            feedback_path=tmp_path / "rlaif_feedback.jsonl",
+            output_dir=tmp_path / "calibrated",
+            quality_weight=0.95,
+            support_weight=0.0,
+            token_weight=0.01,
+            latency_weight=0.01,
+            kv_weight=0.01,
+            min_reward_delta=0.01,
+            reward_calibration="pairwise_tie_v1",
+            quality_tie_threshold=0.10,
+            support_tie_threshold=0.10,
+            tie_break_by_efficiency=True,
+        )
+    )
+
+    default_preferences = _read_jsonl(tmp_path / "default" / "rlaif_preferences.jsonl")
+    calibrated_preferences = _read_jsonl(tmp_path / "calibrated" / "rlaif_preferences.jsonl")
+
+    assert default_summary["reward_calibration"] == "none"
+    assert all(row["chosen_action_id"] == "a-expensive-slightly-better" for row in default_preferences)
+    assert calibrated_summary["reward_calibration"] == "pairwise_tie_v1"
+    assert calibrated_summary["preference_reason_counts"]["pairwise_tie_v1_efficiency"] == 2
+    assert all(row["chosen_action_id"] == "a-cheaper-good" for row in calibrated_preferences)
+    assert all(row["reason"] == "pairwise_tie_v1_efficiency" for row in calibrated_preferences)
+    assert calibrated_preferences[0]["reward_gap"] < 0
+    assert calibrated_preferences[0]["metadata"]["quality_support_tie"] is True
+
+
 def _action(
     action_id: str,
     *,

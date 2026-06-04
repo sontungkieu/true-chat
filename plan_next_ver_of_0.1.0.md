@@ -115,6 +115,7 @@ uv run python scripts/summarize_rlaif_labels.py \
    - The observed disagreements cluster around cases where scalar reward prefers slightly higher quality/support scores while the direct judge treats both answers as acceptable or correct abstentions and then favors lower resource cost.
    - Pairwise-calibrated diagnostics are implemented in `scripts/diagnose_rlaif_pairwise_calibration.py`.
    - Initial diagnostic result with candidate thresholds `quality=0.10` and `support=0.20`: 38 small quality/support delta pairs, 35 cheaper-wins-when-tied, and 5 scalar-over-quality disagreements, all in `query_id=128`.
+   - Opt-in `pairwise_tie_v1` reward calibration is implemented for preference construction. Default remains `none`; scalar reward rows are unchanged. Initial calibrated candidate creates 1270 preferences, including 900 `pairwise_tie_v1_efficiency` preferences, and is documented in `docs/reports/phase1d_rlaif_pairwise_calibrated_reward_candidate.md`.
 
 ```bash
 uv run rag-bench rlaif-label-pairs \

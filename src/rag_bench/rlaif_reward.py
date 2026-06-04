@@ -27,6 +27,10 @@ class RlaifRewardConfig:
     unsupported_weight: float = 1.0
     min_reward_delta: float = 0.03
     max_quality_regret: float = 0.02
+    reward_calibration: str = "none"
+    quality_tie_threshold: float = 0.0
+    support_tie_threshold: float = 0.0
+    tie_break_by_efficiency: bool = False
 
 
 def build_rlaif_rewards(config: RlaifRewardConfig) -> dict[str, Any]:
@@ -72,6 +76,10 @@ def build_rlaif_rewards(config: RlaifRewardConfig) -> dict[str, Any]:
         rewards=reward_rows,
         min_reward_delta=config.min_reward_delta,
         max_quality_regret=config.max_quality_regret,
+        reward_calibration=config.reward_calibration,
+        quality_tie_threshold=config.quality_tie_threshold,
+        support_tie_threshold=config.support_tie_threshold,
+        tie_break_by_efficiency=config.tie_break_by_efficiency,
     )
 
     write_jsonl(output_dir / "rlaif_rewards.jsonl", reward_rows)
@@ -251,6 +259,10 @@ def _build_preferences(
     rewards: list[dict[str, Any]],
     min_reward_delta: float,
     max_quality_regret: float,
+    reward_calibration: str,
+    quality_tie_threshold: float,
+    support_tie_threshold: float,
+    tie_break_by_efficiency: bool,
 ) -> tuple[list[dict[str, Any]], Counter[str]]:
     action_by_id = {str(action.get("action_id")): action for action in actions if action.get("action_id")}
     reward_by_id = {str(reward.get("action_id")): reward for reward in rewards if reward.get("action_id")}
@@ -291,6 +303,10 @@ def _build_preferences(
                     right_action=action_by_id[str(right["action_id"])],
                     min_reward_delta=min_reward_delta,
                     max_quality_regret=max_quality_regret,
+                    reward_calibration=reward_calibration,
+                    quality_tie_threshold=quality_tie_threshold,
+                    support_tie_threshold=support_tie_threshold,
+                    tie_break_by_efficiency=tie_break_by_efficiency,
                 )
                 if skip_reason is not None:
                     skip_counts[skip_reason] += 1
@@ -323,11 +339,29 @@ def _preference_from_pair(
     right_action: dict[str, Any],
     min_reward_delta: float,
     max_quality_regret: float,
+    reward_calibration: str,
+    quality_tie_threshold: float,
+    support_tie_threshold: float,
+    tie_break_by_efficiency: bool,
 ) -> tuple[dict[str, Any] | None, str | None]:
     if left["action_id"] == right["action_id"]:
         return None, "same_action"
     left_reward = float(left["reward"])
     right_reward = float(right["reward"])
+    calibrated = _calibrated_preference_from_pair(
+        preference_type=preference_type,
+        group_key=group_key,
+        left=left,
+        right=right,
+        left_action=left_action,
+        right_action=right_action,
+        reward_calibration=reward_calibration,
+        quality_tie_threshold=quality_tie_threshold,
+        support_tie_threshold=support_tie_threshold,
+        tie_break_by_efficiency=tie_break_by_efficiency,
+    )
+    if calibrated[0] is not None or calibrated[1] is not None:
+        return calibrated
     reward_gap_abs = abs(left_reward - right_reward)
     if reward_gap_abs < min_reward_delta:
         return None, "small_reward_delta"
@@ -352,6 +386,73 @@ def _preference_from_pair(
             "group_key": list(group_key),
             "chosen": _action_summary(chosen_action),
             "rejected": _action_summary(rejected_action),
+        },
+    )
+    return preference.to_dict(), None
+
+
+def _calibrated_preference_from_pair(
+    *,
+    preference_type: str,
+    group_key: tuple[Any, ...],
+    left: dict[str, Any],
+    right: dict[str, Any],
+    left_action: dict[str, Any],
+    right_action: dict[str, Any],
+    reward_calibration: str,
+    quality_tie_threshold: float,
+    support_tie_threshold: float,
+    tie_break_by_efficiency: bool,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if reward_calibration == "none":
+        return None, None
+    if reward_calibration != "pairwise_tie_v1":
+        return None, f"unsupported_reward_calibration:{reward_calibration}"
+    if not tie_break_by_efficiency:
+        return None, None
+
+    quality_gap_left_minus_right = float(left["quality"]) - float(right["quality"])
+    support_gap_left_minus_right = float(left.get("evidence_support") or 0.0) - float(right.get("evidence_support") or 0.0)
+    epsilon = 1e-12
+    if abs(quality_gap_left_minus_right) > quality_tie_threshold + epsilon:
+        return None, None
+    if abs(support_gap_left_minus_right) > support_tie_threshold + epsilon:
+        return None, None
+
+    left_cost = _total_cost_score(left)
+    right_cost = _total_cost_score(right)
+    if left_cost == right_cost:
+        return None, "pairwise_tie_no_efficiency_delta"
+
+    chosen, rejected = (left, right) if left_cost < right_cost else (right, left)
+    chosen_action, rejected_action = (
+        (left_action, right_action) if chosen is left else (right_action, left_action)
+    )
+    quality_gap = float(chosen["quality"]) - float(rejected["quality"])
+    support_gap = float(chosen.get("evidence_support") or 0.0) - float(rejected.get("evidence_support") or 0.0)
+    efficiency_gap = _efficiency_score(chosen) - _efficiency_score(rejected)
+    preference = RlaifPreference(
+        preference_type=preference_type,  # type: ignore[arg-type]
+        query_id=str(chosen["query_id"]),
+        chosen_action_id=str(chosen["action_id"]),
+        rejected_action_id=str(rejected["action_id"]),
+        reward_gap=round(float(chosen["reward"]) - float(rejected["reward"]), 12),
+        quality_gap=round(quality_gap, 12),
+        efficiency_gap=round(efficiency_gap, 12),
+        reason="pairwise_tie_v1_efficiency",
+        metadata={
+            "group_key": list(group_key),
+            "chosen": _action_summary(chosen_action),
+            "rejected": _action_summary(rejected_action),
+            "reward_calibration": "pairwise_tie_v1",
+            "quality_support_tie": True,
+            "quality_tie_threshold": quality_tie_threshold,
+            "support_tie_threshold": support_tie_threshold,
+            "support_gap": round(support_gap, 12),
+            "left_minus_right_quality_gap": round(quality_gap_left_minus_right, 12),
+            "left_minus_right_support_gap": round(support_gap_left_minus_right, 12),
+            "chosen_total_cost": round(_total_cost_score(chosen), 12),
+            "rejected_total_cost": round(_total_cost_score(rejected), 12),
         },
     )
     return preference.to_dict(), None
@@ -391,6 +492,16 @@ def _efficiency_score(reward: dict[str, Any]) -> float:
             1.0 - float(reward.get("token_cost_norm") or 0.0),
             1.0 - float(reward.get("latency_norm") or 0.0),
             1.0 - float(reward.get("kv_cost_norm") or 0.0),
+        ]
+    )
+
+
+def _total_cost_score(reward: dict[str, Any]) -> float:
+    return sum(
+        [
+            float(reward.get("token_cost_norm") or 0.0),
+            float(reward.get("latency_norm") or 0.0),
+            float(reward.get("kv_cost_norm") or 0.0),
         ]
     )
 
@@ -460,6 +571,10 @@ def _build_summary(
         "weights": asdict(weights),
         "min_reward_delta": config.min_reward_delta,
         "max_quality_regret": config.max_quality_regret,
+        "reward_calibration": config.reward_calibration,
+        "quality_tie_threshold": config.quality_tie_threshold,
+        "support_tie_threshold": config.support_tie_threshold,
+        "tie_break_by_efficiency": config.tie_break_by_efficiency,
     }
 
 
@@ -476,6 +591,7 @@ def _render_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Missing-quality rewards: {summary['missing_quality_count']}",
         f"- Preferences: {summary['preference_count']}",
         f"- Invalid rows: {summary['invalid_row_count']}",
+        f"- Reward calibration: `{summary['reward_calibration']}`",
         "",
         "## Reward Modes",
         "",
@@ -499,6 +615,24 @@ def _render_summary_markdown(summary: dict[str, Any]) -> str:
     for key, value in sorted(summary["preference_skip_reason_counts"].items()):
         lines.append(f"| `{key}` | {value} |")
     if not summary["preference_skip_reason_counts"]:
+        lines.append("| N/A | 0 |")
+    lines.extend(
+        [
+            "",
+            "## Calibration",
+            "",
+            f"- `reward_calibration`: `{summary['reward_calibration']}`",
+            f"- `quality_tie_threshold`: {summary['quality_tie_threshold']}",
+            f"- `support_tie_threshold`: {summary['support_tie_threshold']}",
+            f"- `tie_break_by_efficiency`: {summary['tie_break_by_efficiency']}",
+            "",
+            "| Preference reason | Count |",
+            "| --- | ---: |",
+        ]
+    )
+    for key, value in sorted(summary["preference_reason_counts"].items()):
+        lines.append(f"| `{key}` | {value} |")
+    if not summary["preference_reason_counts"]:
         lines.append("| N/A | 0 |")
     lines.extend(["", "## Weights", ""])
     for key, value in sorted(summary["weights"].items()):
@@ -578,6 +712,14 @@ def _validate_config(config: RlaifRewardConfig) -> None:
         raise ValueError("min_reward_delta must be non-negative")
     if config.max_quality_regret < 0:
         raise ValueError("max_quality_regret must be non-negative")
+    if config.quality_tie_threshold < 0:
+        raise ValueError("quality_tie_threshold must be non-negative")
+    if config.support_tie_threshold < 0:
+        raise ValueError("support_tie_threshold must be non-negative")
+    if config.reward_calibration not in {"none", "pairwise_tie_v1"}:
+        raise ValueError("reward_calibration must be one of: none, pairwise_tie_v1")
+    if config.reward_calibration == "none" and config.tie_break_by_efficiency:
+        raise ValueError("tie_break_by_efficiency requires reward_calibration=pairwise_tie_v1")
     if not config.actions_path.is_file():
         raise ValueError(f"Actions path does not exist: {config.actions_path}")
     if not config.feedback_path.is_file():
