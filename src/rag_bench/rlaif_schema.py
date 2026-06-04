@@ -7,6 +7,16 @@ from typing import Any, Literal
 
 
 FeedbackProvenance = Literal["gold", "ragas", "ai_judge", "mimo_judge", "heuristic", "missing"]
+RewardMode = Literal[
+    "gold",
+    "ragas",
+    "ai_judge",
+    "mimo_judge",
+    "heuristic",
+    "proxy",
+    "missing_quality",
+    "ambiguous_feedback",
+]
 PreferenceType = Literal[
     "context_policy_preference",
     "retrieval_context_preference",
@@ -14,6 +24,16 @@ PreferenceType = Literal[
 ]
 
 VALID_PROVENANCE = {"gold", "ragas", "ai_judge", "mimo_judge", "heuristic", "missing"}
+VALID_REWARD_MODES = {
+    "gold",
+    "ragas",
+    "ai_judge",
+    "mimo_judge",
+    "heuristic",
+    "proxy",
+    "missing_quality",
+    "ambiguous_feedback",
+}
 VALID_PREFERENCE_TYPES = {
     "context_policy_preference",
     "retrieval_context_preference",
@@ -179,8 +199,8 @@ class RlaifRewardWeights:
 class RlaifReward:
     action_id: str
     query_id: str
-    reward: float
-    quality: float
+    reward: float | None
+    quality: float | None
     evidence_support: float
     token_cost_norm: float
     latency_norm: float
@@ -189,13 +209,16 @@ class RlaifReward:
     unsupported_claim_penalty: float
     weights: RlaifRewardWeights = field(default_factory=RlaifRewardWeights)
     provenance: FeedbackProvenance = "heuristic"
+    reward_mode: RewardMode = "heuristic"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require_text("action_id", self.action_id)
         _require_text("query_id", self.query_id)
         _require_provenance(self.provenance)
-        _require_bounded("reward", self.reward, -1.0, 1.0)
+        _require_reward_mode(self.reward_mode)
+        if self.reward is not None:
+            _require_bounded("reward", self.reward, -1.0, 1.0)
         for field_name in (
             "quality",
             "evidence_support",
@@ -222,6 +245,7 @@ class RlaifReward:
         unsupported_claim_penalty: float = 0.0,
         weights: RlaifRewardWeights | None = None,
         provenance: FeedbackProvenance = "heuristic",
+        reward_mode: RewardMode | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> RlaifReward:
         active_weights = weights or RlaifRewardWeights()
@@ -247,11 +271,22 @@ class RlaifReward:
             unsupported_claim_penalty=unsupported_claim_penalty,
             weights=active_weights,
             provenance=provenance,
+            reward_mode=reward_mode or _reward_mode_from_provenance(provenance),
             metadata=metadata or {},
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["reward_components"] = {
+            "quality": self.quality,
+            "evidence_support": self.evidence_support,
+            "token_cost_norm": self.token_cost_norm,
+            "latency_norm": self.latency_norm,
+            "kv_cost_norm": self.kv_cost_norm,
+            "error_penalty": self.error_penalty,
+            "unsupported_claim_penalty": self.unsupported_claim_penalty,
+        }
+        return data
 
 
 @dataclass(frozen=True)
@@ -328,6 +363,12 @@ def _require_provenance(value: str) -> None:
         raise ValueError(f"provenance must be one of: {allowed}")
 
 
+def _require_reward_mode(value: str) -> None:
+    if value not in VALID_REWARD_MODES:
+        allowed = ", ".join(sorted(VALID_REWARD_MODES))
+        raise ValueError(f"reward_mode must be one of: {allowed}")
+
+
 def _require_preference_type(value: str) -> None:
     if value not in VALID_PREFERENCE_TYPES:
         allowed = ", ".join(sorted(VALID_PREFERENCE_TYPES))
@@ -345,3 +386,9 @@ def _tuple_of_text(field_name: str, values: tuple[str, ...] | list[str]) -> tupl
 
 def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def _reward_mode_from_provenance(provenance: FeedbackProvenance) -> RewardMode:
+    if provenance == "missing":
+        return "missing_quality"
+    return provenance

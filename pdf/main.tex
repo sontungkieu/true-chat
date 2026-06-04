@@ -38,10 +38,10 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, hardening \texttt{ai\_judge} provenance và optional full-context budget \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-reward}, hardening \texttt{ai\_judge} provenance và optional full-context budget \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{144 passed} \\
+Trạng thái test gần nhất & \texttt{151 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -56,6 +56,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item \texttt{fdefb63}: định nghĩa schema cho action, answer feedback, context feedback, scalar reward và preference.
   \item \texttt{78cf83d}: thêm \texttt{rlaif-build} để đọc BudgetRAG output và ghi các dataset RLAIF chuẩn hóa.
   \item Hardening hiện tại: chuẩn hóa AI judge provenance thành \texttt{ai\_judge} và cho phép full-context/legacy action không có explicit budget.
+  \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa.
 \end{itemize}
 
 Đây vẫn là bước dữ liệu offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit, \textbf{chưa} gọi judge mới, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
@@ -127,6 +128,34 @@ Builder thực hiện:
 
 Quan trọng: missing feedback không bị gán score 0. Generation skipped, generation error và missing answer được ghi bằng \texttt{missing\_reason} riêng, trong đó generation error được đánh dấu \texttt{ambiguous=True}.
 
+\subsection{Reward/preference builder}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name> \
+  --quality-weight 0.75 \
+  --support-weight 0.10 \
+  --token-weight 0.05 \
+  --latency-weight 0.05 \
+  --kv-weight 0.05 \
+  --min-reward-delta 0.03 \
+  --max-quality-regret 0.02
+\end{verbatim}
+
+Builder ghi ba artifact:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{rlaif\_rewards.jsonl}: reward row cho mỗi action, gồm reward, reward components, weights, provenance và reward mode.
+  \item \texttt{rlaif\_preferences.jsonl}: pairwise preferences cho context-policy và retrieval-context groups.
+  \item \texttt{rlaif\_reward\_summary.md}: coverage, reward modes, preference types, skip reasons và weights.
+\end{itemize}
+
+Guardrail quan trọng: nếu feedback thiếu quality hoặc ambiguous, reward vẫn được ghi để audit nhưng \texttt{reward=null}; nó không bị biến thành 0. Preference chỉ được tạo giữa các action có reward thật, cùng query group, reward gap đủ lớn, và không vi phạm \texttt{max-quality-regret}. Vì vậy action rẻ hơn không được thắng nếu answer quality tụt rõ.
+
 \section{Hai điểm đã harden trước reward/preference}
 
 Pasted review đã chỉ ra hai điểm yếu hợp lý cần sửa trước khi xây reward/preference builder. Hai điểm này đã được xử lý trong hardening hiện tại.
@@ -159,7 +188,6 @@ Nếu \texttt{budget\_chars=None}, action id vẫn ổn định và biểu diễ
 Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Reward/preference builder}: tạo \texttt{rlaif\_rewards.jsonl} và \texttt{rlaif\_preferences.jsonl}, có quality-regret guardrail.
   \item \textbf{Judge labeling stubs}: \texttt{rlaif-label-answers} và \texttt{rlaif-label-contexts} có \texttt{--dry-run}, \texttt{--resume}, \texttt{--limit}, \texttt{--max-errors}; skip sạch nếu thiếu API key.
   \item \textbf{Offline selector baseline}: fixed, cheapest, best-average, oracle và simple ranking baseline. Chưa cần LinUCB phức tạp khi data chưa đủ.
   \item \textbf{Contextual bandit thật}: chỉ sau khi reward/preference coverage đủ và offline eval cho thấy không làm giảm answer quality.
@@ -171,7 +199,7 @@ Guardrail chính phải giữ: learned RLAIF/bandit policy không được thay 
 
 Repo hiện đã có engineering story tốt hơn trước: plan checkpoint, schema checkpoint, dataset builder checkpoint và test suite pass. Bổ sung research grounding giúp báo cáo không còn giống một pipeline tự phát, mà đứng tại giao điểm của RAG evaluation, prompt/context compression, KV-cache compression, RLAIF và contextual bandit learning.
 
-Điểm cần làm ngay tiếp theo không phải train policy, mà là xây reward/preference builder trên dataset đã được harden. Đây là đường đi đúng để RLAIF trong project trở thành một cơ chế học action có dữ liệu và guardrail, không phải một nhãn ``RL'' gắn sau.
+Điểm cần làm ngay tiếp theo không phải train policy ngay, mà là thêm judge labeling stubs và offline selector baselines trên reward/preference dataset đã có guardrail. Đây là đường đi đúng để RLAIF trong project trở thành một cơ chế học action có dữ liệu và guardrail, không phải một nhãn ``RL'' gắn sau.
 
 \bibliographystyle{plain}
 \bibliography{references}

@@ -19,6 +19,7 @@ from rag_bench.adaptive_budget import ADAPTIVE_PROFILES
 from rag_bench.kv_estimator import KV_MODEL_PROFILES
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.rlaif_build import RlaifBuildConfig, build_rlaif_dataset
+from rag_bench.rlaif_reward import RlaifRewardConfig, build_rlaif_rewards
 from rag_bench.runner import RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
 
@@ -39,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(args)
     if args.command == "rlaif-build":
         return _rlaif_build(args)
+    if args.command == "rlaif-reward":
+        return _rlaif_reward(args)
     parser.print_help()
     return 1
 
@@ -257,6 +260,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Timestamp/name used only when --output-dir is omitted.",
     )
+    rlaif_reward_parser = subparsers.add_parser(
+        "rlaif-reward",
+        help="Build scalar RLAIF rewards and pairwise preferences from normalized RLAIF datasets.",
+    )
+    rlaif_reward_parser.add_argument("--actions", type=Path, required=True, help="Path to rlaif_actions.jsonl.")
+    rlaif_reward_parser.add_argument("--feedback", type=Path, required=True, help="Path to rlaif_feedback.jsonl.")
+    rlaif_reward_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Output directory. Defaults to the actions file directory.",
+    )
+    rlaif_reward_parser.add_argument("--quality-weight", type=float, default=0.75)
+    rlaif_reward_parser.add_argument("--support-weight", type=float, default=0.10)
+    rlaif_reward_parser.add_argument("--token-weight", type=float, default=0.05)
+    rlaif_reward_parser.add_argument("--latency-weight", type=float, default=0.05)
+    rlaif_reward_parser.add_argument("--kv-weight", type=float, default=0.05)
+    rlaif_reward_parser.add_argument("--error-weight", type=float, default=1.0)
+    rlaif_reward_parser.add_argument("--unsupported-weight", type=float, default=1.0)
+    rlaif_reward_parser.add_argument("--min-reward-delta", type=float, default=0.03)
+    rlaif_reward_parser.add_argument("--max-quality-regret", type=float, default=0.02)
     return parser
 
 
@@ -505,6 +529,62 @@ def _rlaif_build(args: argparse.Namespace) -> int:
                 "invalid_row_count": summary["invalid_row_count"],
                 "feedback_provenance_counts": summary["feedback_provenance_counts"],
                 "missing_reason_counts": summary["missing_reason_counts"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _rlaif_reward(args: argparse.Namespace) -> int:
+    for name in (
+        "quality_weight",
+        "support_weight",
+        "token_weight",
+        "latency_weight",
+        "kv_weight",
+        "error_weight",
+        "unsupported_weight",
+        "min_reward_delta",
+        "max_quality_regret",
+    ):
+        if getattr(args, name) < 0:
+            print(f"--{name.replace('_', '-')} must be non-negative.", file=sys.stderr)
+            return 2
+    try:
+        summary = build_rlaif_rewards(
+            RlaifRewardConfig(
+                actions_path=args.actions,
+                feedback_path=args.feedback,
+                output_dir=args.output_dir,
+                quality_weight=args.quality_weight,
+                support_weight=args.support_weight,
+                token_weight=args.token_weight,
+                latency_weight=args.latency_weight,
+                kv_weight=args.kv_weight,
+                error_weight=args.error_weight,
+                unsupported_weight=args.unsupported_weight,
+                min_reward_delta=args.min_reward_delta,
+                max_quality_regret=args.max_quality_regret,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rlaif-reward failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "output_dir": summary["output_dir"],
+                "reward_count": summary["reward_count"],
+                "scored_reward_count": summary["scored_reward_count"],
+                "preference_count": summary["preference_count"],
+                "reward_mode_counts": summary["reward_mode_counts"],
+                "preference_type_counts": summary["preference_type_counts"],
+                "preference_skip_reason_counts": summary["preference_skip_reason_counts"],
+                "invalid_row_count": summary["invalid_row_count"],
             },
             ensure_ascii=False,
             indent=2,

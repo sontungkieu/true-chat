@@ -135,10 +135,10 @@ Context label schema:
 ## Phase 1D Implementation Plan: RLAIF Reward And Preference Layer
 
 1. Build scalar rewards
-   - Status: schema baseline implemented; dataset-level reward builder pending.
+   - Status: dataset-level reward builder implemented on `feature/rlaif-retrieval-context-v0`.
    - Convert quality, efficiency, and latency into a bounded scalar reward.
    - Default priority: answer quality dominates efficiency.
-   - Proposed default formula:
+   - Implemented default formula:
      - `quality = token_f1` when gold exists.
      - Else `quality = weighted judge score` from answer correctness, answer relevancy, and faithfulness.
      - `evidence_support = context evidence support score` when context labels exist.
@@ -156,11 +156,12 @@ Context label schema:
      - `w_kv = 0.05`
      - `w_error = 1.0`
      - `w_unsupported = 1.0`
-   - Store all components, weights, and provenance in every reward row.
+   - Store all components, weights, provenance, and `reward_mode` in every reward row.
+   - Missing or ambiguous quality writes a reward row with `reward = null` and `reward_mode = missing_quality` or `ambiguous_feedback`; it is not converted to score zero.
    - Do not use KV savings as the only positive efficiency reward. Very short contexts must still lose when quality or support drops.
 
 2. Build pairwise preferences
-   - Status: schema baseline implemented; dataset-level preference builder pending.
+   - Status: dataset-level preference builder implemented on `feature/rlaif-retrieval-context-v0`.
    - Build two preference sets:
      - `context_policy_preference`: group by benchmark + query id + retriever + top-k + generator model, then compare context policies/budgets inside the same retriever.
      - `retrieval_context_preference`: group by benchmark + query id + top-k + generator model, then compare retrieval strategy + context policy combinations across retrievers.
@@ -205,8 +206,10 @@ Context label schema:
    - The learned RLAIF/bandit policy must not replace `adaptive-heuristic` as the default runtime policy until it passes offline evaluation and quality guardrails.
 
 5. Outputs
+   - Status: `rlaif-reward` writes the first three files below; policy/eval artifacts remain pending.
    - `rlaif_rewards.jsonl`
    - `rlaif_preferences.jsonl`
+   - `rlaif_reward_summary.md`
    - `rlaif_context_preferences.jsonl`
    - `rlaif_policy.json`
    - `rlaif_eval_summary.md`
@@ -223,11 +226,12 @@ Phase 1D should not implement full KV pruning, but it should leave a clear path 
 
 ## CLI And File Layout
 
-Proposed CLI:
+Current reward/preference CLI:
 
 ```bash
-uv run rag-bench rlaif-build \
-  --inputs benchmark_results/budgetrag/<matrix-run> \
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
   --output-dir benchmark_results/rlaif/<run-name> \
   --quality-weight 0.75 \
   --support-weight 0.10 \

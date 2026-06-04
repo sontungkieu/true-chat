@@ -76,11 +76,14 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 
 ## BudgetRAG Phase 1D
 
-Status: planned on `internship`.
+Status: started on `feature/rlaif-retrieval-context-v0`.
 
 - Implement offline RLAIF reward and preference builders over Phase 1C.3 feedback.
 - Include retrieval strategy, fusion strategy, context policy, budget, adaptive profile, and generator model in the action space.
 - Keep answer quality and evidence support as primary reward terms while token, latency, and estimated KV costs remain bounded penalties.
 - Add quality guardrails so a cheaper context policy cannot win when it clearly harms answer quality.
 - Build both context-only preferences and retrieval-context preferences.
+- Add `rlaif-reward` to write `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md` from normalized RLAIF action/feedback files.
+- Preserve missing or ambiguous feedback as `reward=null` instead of converting absent quality into score zero.
+- Add pairwise preference skip reasons for missing quality, ambiguous feedback, small reward deltas, and quality guardrail failures.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

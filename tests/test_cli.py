@@ -133,6 +133,69 @@ def test_cli_rlaif_build_smoke_with_mocked_builder(monkeypatch, tmp_path: Path, 
     assert '"gold": 1' in captured.out
 
 
+def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_build_rlaif_rewards(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "rlaif"),
+            "reward_count": 3,
+            "scored_reward_count": 2,
+            "preference_count": 1,
+            "reward_mode_counts": {"gold": 2, "missing_quality": 1},
+            "preference_type_counts": {"context_policy_preference": 1},
+            "preference_skip_reason_counts": {"missing_quality": 1},
+            "invalid_row_count": 0,
+        }
+
+    monkeypatch.setattr(cli, "build_rlaif_rewards", fake_build_rlaif_rewards)
+
+    exit_code = cli.main(
+        [
+            "rlaif-reward",
+            "--actions",
+            str(tmp_path / "rlaif_actions.jsonl"),
+            "--feedback",
+            str(tmp_path / "rlaif_feedback.jsonl"),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--quality-weight",
+            "0.7",
+            "--min-reward-delta",
+            "0.04",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
+    assert seen["config"].feedback_path == tmp_path / "rlaif_feedback.jsonl"
+    assert seen["config"].output_dir == tmp_path / "out"
+    assert seen["config"].quality_weight == 0.7
+    assert seen["config"].min_reward_delta == 0.04
+    assert '"reward_count": 3' in captured.out
+    assert '"context_policy_preference": 1' in captured.out
+
+
+def test_cli_rlaif_reward_rejects_negative_weight(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-reward",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--feedback",
+            "rlaif_feedback.jsonl",
+            "--quality-weight",
+            "-0.1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--quality-weight must be non-negative" in captured.err
+
+
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     seen = {}
 
