@@ -7,6 +7,7 @@ from rag_bench.rlaif_policy import (
     BestAverageActionPolicy,
     CheapestActionPolicy,
     FixedActionPolicy,
+    LinearRewardModelPolicy,
     OracleLoggedPolicy,
     RlaifEvalConfig,
     RlaifTrainConfig,
@@ -40,20 +41,58 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
     )
 
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    assert summary["policy_count"] == 4
+    assert summary["policy_count"] == 5
     assert summary["reward_count"] == 4
     assert summary["preference_count"] == 1
     assert policy["runtime_default_replacement"] is False
-    assert set(policy["policies"]) == {"fixed", "cheapest", "best_average", "oracle_logged"}
+    assert set(policy["policies"]) == {
+        "fixed",
+        "cheapest",
+        "best_average",
+        "linear_reward_model",
+        "oracle_logged",
+    }
     assert policy["policies"]["fixed"]["signature"]["context_policy"] == "evidence-aware"
     assert policy["policies"]["best_average"]["signatures"][0]["signature"]["context_policy"] == "evidence-aware"
+    linear_model = policy["policies"]["linear_reward_model"]
+    assert linear_model["training_rows"] == 4
+    assert linear_model["runtime_default_replacement"] is False
+    assert len(linear_model["feature_names"]) == len(linear_model["coefficients"])
 
 
 def test_public_policy_names_match_artifact_keys() -> None:
     assert FixedActionPolicy.policy_type == "fixed"
     assert CheapestActionPolicy.policy_type == "cheapest"
     assert BestAverageActionPolicy.policy_type == "best_average"
+    assert LinearRewardModelPolicy.policy_type == "linear_reward_model"
     assert OracleLoggedPolicy.policy_type == "oracle_logged"
+
+
+def test_linear_reward_model_features_do_not_leak_labels(tmp_path: Path) -> None:
+    rewards_path = tmp_path / "rlaif_rewards.jsonl"
+    policy_path = tmp_path / "rlaif_policy.json"
+    _write_jsonl(
+        rewards_path,
+        [
+            _reward("q1", "bm25", "legacy", 0.40, 0.50, token=0.70),
+            _reward("q1", "bm25", "evidence-aware", 0.80, 0.85, token=0.20),
+            _reward("q2", "hybrid", "adaptive-heuristic", 0.75, 0.82, token=0.35),
+        ],
+    )
+
+    train_offline_selector_policies(RlaifTrainConfig(rewards_path=rewards_path, output_path=policy_path))
+
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    linear_model = policy["policies"]["linear_reward_model"]
+    feature_names = linear_model["feature_names"]
+    forbidden_fragments = ("reward", "quality", "evidence_support", "preference")
+    assert all(
+        all(fragment not in feature_name for fragment in forbidden_fragments)
+        for feature_name in feature_names
+    )
+    assert {"token_cost_norm", "latency_norm", "kv_cost_norm", "top_k_norm"}.issubset(feature_names)
+    assert linear_model["target"] == "reward"
+    assert "exclude reward" in linear_model["label_leakage_guard"]
 
 
 def test_eval_reports_oracle_gap_and_policy_costs(tmp_path: Path) -> None:
@@ -79,10 +118,12 @@ def test_eval_reports_oracle_gap_and_policy_costs(tmp_path: Path) -> None:
     oracle = summary["policy_metrics"]["oracle_logged"]
     best_average = summary["policy_metrics"]["best_average"]
     cheapest = summary["policy_metrics"]["cheapest"]
+    linear = summary["policy_metrics"]["linear_reward_model"]
     assert oracle["oracle_gap"] == 0.0
     assert best_average["mean_reward"] == oracle["mean_reward"]
     assert cheapest["mean_token_cost"] < summary["policy_metrics"]["fixed"]["mean_token_cost"]
     assert best_average["coverage"] == 1.0
+    assert linear["coverage"] == 1.0
     assert out_md.read_text(encoding="utf-8").startswith("# RLAIF Offline Selector Evaluation")
 
 

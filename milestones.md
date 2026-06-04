@@ -86,7 +86,7 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `rlaif-reward` to write `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md` from normalized RLAIF action/feedback files.
 - Preserve missing or ambiguous feedback as `reward=null` instead of converting absent quality into score zero.
 - Add pairwise preference skip reasons for missing quality, ambiguous feedback, small reward deltas, and quality guardrail failures.
-- Add `rlaif-train` to write an offline `rlaif_policy.json` artifact with fixed, cheapest, best-average, and oracle-logged selector baselines.
+- Add `rlaif-train` to write an offline `rlaif_policy.json` artifact with fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged selector baselines.
 - Add `rlaif-eval` to report mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, coverage, and oracle gap.
 - Keep selector artifacts offline-only with `runtime_default_replacement=false`; they do not replace `adaptive-heuristic` in runtime defaults.
 - Run a Phase 1D selector smoke on real Phase 1C.3 outputs joined with RAGAS post-hoc answer relevancy and document it in `docs/reports/phase1d_rlaif_selector_smoke.md`.
@@ -98,6 +98,7 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `scripts/estimate_local_qwen_kv_cache.py` and `docs/reports/local_qwen_kv_estimates.md` for analytical Qwen2.5 KV-cache estimates without loading model weights.
 - Add `rlaif-label-contexts` for resumable context-level RLAIF labels over normalized action rows, including selected/redundant/irrelevant chunk ids, context sufficiency, missing evidence, JSON repair, progress logging, and null-score handling for invalid or missing labels.
 - Add `scripts/summarize_rlaif_context_labels.py` and `docs/reports/phase1d_rlaif_context_labels_template.md` so context-label runs can be summarized for sufficiency, redundancy, missing evidence, dropped chunk-id hallucinations, and context quality.
+- Add the first learned offline selector baseline, `linear_reward_model`, using non-leaking retrieval-context action/cost features and document its held-out result in `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`.
 - Add `rlaif-label-pairs` for direct pairwise AI-judge comparisons of reward-derived retrieval-context action pairs, with A/B/tie/ambiguous decisions, quality/support/efficiency winners, resume support, JSON repair, and null-score handling for invalid or missing pair data.
 - Add `scripts/summarize_rlaif_pairwise_labels.py` and `docs/reports/phase1d_rlaif_pairwise_labels_template.md` so direct pairwise labels can be summarized for reward-preference agreement, disagreement, tie/ambiguous rates, confidence, quality regret, and unsupported-claim risk.
 - Complete the full MiMo answer-label Kaggle run for the Phase 1D selector smoke, rebuild rewards with `rlaif-reward --answer-labels`, rerun held-out split/train/eval, and document the result in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.

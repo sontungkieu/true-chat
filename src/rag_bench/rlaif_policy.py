@@ -12,7 +12,7 @@ from rag_bench.rlaif_schema import stable_record_id
 
 
 POLICY_VERSION = "rlaif-policy-v1"
-POLICY_NAMES = ("fixed", "cheapest", "best_average", "oracle_logged")
+POLICY_NAMES = ("fixed", "cheapest", "best_average", "linear_reward_model", "oracle_logged")
 
 
 @dataclass(frozen=True)
@@ -72,10 +72,29 @@ class OracleLoggedPolicy:
         return max(scored, key=lambda row: (float(row["reward"]), str(row.get("action_id"))))
 
 
+class LinearRewardModelPolicy:
+    policy_type = "linear_reward_model"
+
+    def select(self, group_rewards: list[dict[str, Any]], policy: dict[str, Any]) -> dict[str, Any] | None:
+        model = policy["policies"].get("linear_reward_model", {})
+        candidates = [row for row in group_rewards if _can_featurize(row, model)]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda row: (
+                _linear_model_score(row, model),
+                -_cost_sum(row),
+                str(row.get("action_id")),
+            ),
+        )
+
+
 POLICY_IMPLEMENTATIONS = {
     FixedActionPolicy.policy_type: FixedActionPolicy(),
     CheapestActionPolicy.policy_type: CheapestActionPolicy(),
     BestAverageActionPolicy.policy_type: BestAverageActionPolicy(),
+    LinearRewardModelPolicy.policy_type: LinearRewardModelPolicy(),
     OracleLoggedPolicy.policy_type: OracleLoggedPolicy(),
 }
 
@@ -100,6 +119,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
         signature_stats,
         key=lambda row: (-row["mean_reward"], -row["count"], row["signature_id"]),
     )
+    linear_model = _train_linear_reward_model(scored_rewards)
     policy = {
         "schema_version": POLICY_VERSION,
         "runtime_default_replacement": False,
@@ -130,6 +150,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
                 "selection_rule": "choose the available signature with highest training mean reward",
                 "signatures": best_average_signatures,
             },
+            "linear_reward_model": linear_model,
             "oracle_logged": {
                 "policy_type": "oracle_logged",
                 "selection_rule": "offline upper bound; choose the logged action with highest observed reward",
@@ -229,6 +250,215 @@ def _select_reward(policy_name: str, group_rewards: list[dict[str, Any]], policy
     if policy_impl is None:
         raise ValueError(f"Unknown policy: {policy_name}")
     return policy_impl.select(group_rewards, policy)
+
+
+def _train_linear_reward_model(scored_rewards: list[dict[str, Any]]) -> dict[str, Any]:
+    feature_names = _linear_feature_names(scored_rewards)
+    raw_vectors = [_linear_feature_vector(row, feature_names) for row in scored_rewards]
+    means, stds = _feature_normalization(raw_vectors, feature_names)
+    x_rows = [_normalize_feature_vector(vector, feature_names, means, stds) for vector in raw_vectors]
+    y_values = [float(row["reward"]) for row in scored_rewards]
+    coefficients = _fit_ridge_regression(x_rows, y_values, l2=1e-3)
+    return {
+        "policy_type": "linear_reward_model",
+        "selection_rule": "score candidate actions with a linear model trained on action/context cost features only",
+        "runtime_default_replacement": False,
+        "feature_names": feature_names,
+        "feature_means": means,
+        "feature_stds": stds,
+        "coefficients": coefficients,
+        "training_rows": len(scored_rewards),
+        "target": "reward",
+        "label_leakage_guard": "features exclude reward, quality, evidence_support labels, and preference outcomes",
+    }
+
+
+def _linear_feature_names(rows: list[dict[str, Any]]) -> list[str]:
+    retrievers: set[str] = set()
+    context_policies: set[str] = set()
+    adaptive_profiles: set[str] = set()
+    selected_policies: set[str] = set()
+    generator_models: set[str] = set()
+    for row in rows:
+        signature = _signature(row)
+        retrievers.add(str(signature.get("retrieval_strategy") or "missing"))
+        context_policies.add(str(signature.get("context_policy") or "missing"))
+        adaptive_profiles.add(str(signature.get("adaptive_profile") or "missing"))
+        selected_policies.add(str(signature.get("selected_context_policy") or "missing"))
+        generator_models.add(str(signature.get("generator_model") or "missing"))
+    names = [
+        "bias",
+        "token_cost_norm",
+        "latency_norm",
+        "kv_cost_norm",
+        "budget_norm",
+        "selected_budget_norm",
+        "has_budget",
+        "top_k_norm",
+    ]
+    names.extend(f"retriever={value}" for value in sorted(retrievers))
+    names.extend(f"context_policy={value}" for value in sorted(context_policies))
+    names.extend(f"adaptive_profile={value}" for value in sorted(adaptive_profiles))
+    names.extend(f"selected_context_policy={value}" for value in sorted(selected_policies))
+    names.extend(f"generator_model={value}" for value in sorted(generator_models))
+    return names
+
+
+def _linear_feature_vector(row: dict[str, Any], feature_names: list[str]) -> list[float]:
+    signature = _signature(row)
+    categorical = {
+        "retriever": str(signature.get("retrieval_strategy") or "missing"),
+        "context_policy": str(signature.get("context_policy") or "missing"),
+        "adaptive_profile": str(signature.get("adaptive_profile") or "missing"),
+        "selected_context_policy": str(signature.get("selected_context_policy") or "missing"),
+        "generator_model": str(signature.get("generator_model") or "missing"),
+    }
+    budget = _number_or_none(signature.get("budget_chars"))
+    selected_budget = _number_or_none(signature.get("selected_budget_chars"))
+    values: dict[str, float] = {
+        "bias": 1.0,
+        "token_cost_norm": _number_or_zero(row.get("token_cost_norm")),
+        "latency_norm": _number_or_zero(row.get("latency_norm")),
+        "kv_cost_norm": _number_or_zero(row.get("kv_cost_norm")),
+        "budget_norm": _bounded_norm(budget, 32_000.0),
+        "selected_budget_norm": _bounded_norm(selected_budget, 32_000.0),
+        "has_budget": 1.0 if budget is not None else 0.0,
+        "top_k_norm": _bounded_norm(signature.get("top_k"), 20.0),
+    }
+    for name in feature_names:
+        if name in values:
+            continue
+        if name.startswith("retriever="):
+            values[name] = 1.0 if name.split("=", 1)[1] == categorical["retriever"] else 0.0
+        elif name.startswith("context_policy="):
+            values[name] = 1.0 if name.split("=", 1)[1] == categorical["context_policy"] else 0.0
+        elif name.startswith("adaptive_profile="):
+            values[name] = 1.0 if name.split("=", 1)[1] == categorical["adaptive_profile"] else 0.0
+        elif name.startswith("selected_context_policy="):
+            values[name] = 1.0 if name.split("=", 1)[1] == categorical["selected_context_policy"] else 0.0
+        elif name.startswith("generator_model="):
+            values[name] = 1.0 if name.split("=", 1)[1] == categorical["generator_model"] else 0.0
+        else:
+            values[name] = 0.0
+    return [values.get(name, 0.0) for name in feature_names]
+
+
+def _feature_normalization(vectors: list[list[float]], feature_names: list[str]) -> tuple[list[float], list[float]]:
+    means: list[float] = []
+    stds: list[float] = []
+    for index, name in enumerate(feature_names):
+        if name == "bias":
+            means.append(0.0)
+            stds.append(1.0)
+            continue
+        values = [row[index] for row in vectors]
+        feature_mean = mean(values) if values else 0.0
+        variance = mean([(value - feature_mean) ** 2 for value in values]) if values else 0.0
+        feature_std = variance ** 0.5
+        means.append(feature_mean)
+        stds.append(feature_std if feature_std > 1e-12 else 1.0)
+    return means, stds
+
+
+def _normalize_feature_vector(
+    vector: list[float],
+    feature_names: list[str],
+    means: list[float],
+    stds: list[float],
+) -> list[float]:
+    return [
+        value if feature_names[index] == "bias" else (value - means[index]) / stds[index]
+        for index, value in enumerate(vector)
+    ]
+
+
+def _fit_ridge_regression(x_rows: list[list[float]], y_values: list[float], *, l2: float) -> list[float]:
+    if not x_rows:
+        return []
+    width = len(x_rows[0])
+    xtx = [[0.0 for _ in range(width)] for _ in range(width)]
+    xty = [0.0 for _ in range(width)]
+    for features, target in zip(x_rows, y_values):
+        for i in range(width):
+            xty[i] += features[i] * target
+            for j in range(width):
+                xtx[i][j] += features[i] * features[j]
+    for i in range(width):
+        if i != 0:
+            xtx[i][i] += l2
+    return _solve_linear_system(xtx, xty)
+
+
+def _solve_linear_system(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    size = len(vector)
+    augmented = [row[:] + [vector[index]] for index, row in enumerate(matrix)]
+    for pivot_index in range(size):
+        pivot_row = max(range(pivot_index, size), key=lambda row: abs(augmented[row][pivot_index]))
+        if abs(augmented[pivot_row][pivot_index]) < 1e-12:
+            augmented[pivot_index][pivot_index] += 1e-6
+            pivot_row = pivot_index
+        if pivot_row != pivot_index:
+            augmented[pivot_index], augmented[pivot_row] = augmented[pivot_row], augmented[pivot_index]
+        pivot = augmented[pivot_index][pivot_index]
+        if abs(pivot) < 1e-12:
+            continue
+        for col in range(pivot_index, size + 1):
+            augmented[pivot_index][col] /= pivot
+        for row in range(size):
+            if row == pivot_index:
+                continue
+            factor = augmented[row][pivot_index]
+            if factor == 0:
+                continue
+            for col in range(pivot_index, size + 1):
+                augmented[row][col] -= factor * augmented[pivot_index][col]
+    return [augmented[index][size] for index in range(size)]
+
+
+def _linear_model_score(row: dict[str, Any], model: dict[str, Any]) -> float:
+    feature_names = list(model.get("feature_names") or [])
+    coefficients = [float(value) for value in model.get("coefficients") or []]
+    means = [float(value) for value in model.get("feature_means") or []]
+    stds = [float(value) if float(value) != 0 else 1.0 for value in model.get("feature_stds") or []]
+    if (
+        not feature_names
+        or len(feature_names) != len(coefficients)
+        or len(feature_names) != len(means)
+        or len(feature_names) != len(stds)
+    ):
+        return float("-inf")
+    raw = _linear_feature_vector(row, feature_names)
+    normalized = _normalize_feature_vector(raw, feature_names, means, stds)
+    return sum(coef * value for coef, value in zip(coefficients, normalized))
+
+
+def _can_featurize(row: dict[str, Any], model: dict[str, Any]) -> bool:
+    feature_names = list(model.get("feature_names") or [])
+    coefficients = list(model.get("coefficients") or [])
+    means = list(model.get("feature_means") or [])
+    stds = list(model.get("feature_stds") or [])
+    return bool(feature_names) and len(feature_names) == len(coefficients) == len(means) == len(stds)
+
+
+def _number_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _number_or_zero(value: Any) -> float:
+    number = _number_or_none(value)
+    return number if number is not None else 0.0
+
+
+def _bounded_norm(value: Any, max_value: float) -> float:
+    number = _number_or_none(value)
+    if number is None or max_value <= 0:
+        return 0.0
+    return max(0.0, min(number / max_value, 1.0))
 
 
 def _signature_stats(scored_rewards: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:

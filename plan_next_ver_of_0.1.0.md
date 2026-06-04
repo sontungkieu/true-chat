@@ -234,15 +234,17 @@ Context label schema:
      - `fixed`: choose the most common scored action signature when it is available for a query group.
      - `cheapest`: choose the lowest normalized token + latency + KV cost in the logged query group.
      - `best_average`: choose the available action signature with the highest training mean reward.
+     - `linear_reward_model`: learned offline ridge-regression selector over retrieval-context action/cost features, excluding reward/quality/support labels and preference outcomes.
      - `oracle_logged`: offline upper bound that chooses the highest observed reward in each logged query group.
    - Output `rlaif_policy.json` as an offline selector artifact before any runtime use.
-   - Keep contextual bandit table, logistic/ranking model, and LinUCB as later steps once the reward dataset is large enough.
+   - Keep pairwise ranker, contextual bandit table, and LinUCB as later steps once the reward dataset is large enough.
 
 4. Evaluate against existing baselines
    - Status: offline selector evaluator implemented on `feature/rlaif-retrieval-context-v0`.
    - Status: Phase 1D selector smoke completed and documented in `docs/reports/phase1d_rlaif_selector_smoke.md`.
    - Status: held-out query split/eval implemented and documented in `docs/reports/phase1d_rlaif_heldout_eval.md`.
    - Status: full MiMo answer-label run completed on Kaggle, rewards rebuilt with `--answer-labels`, held-out split/train/eval rerun, and documented in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.
+   - Status: first learned offline selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -275,7 +277,7 @@ Context label schema:
    - `rlaif_context_preferences.jsonl`
    - `split_manifest.json`: deterministic query-level split manifest.
    - `split_summary.md`: query-level split summary.
-   - `rlaif_policy.json`: fixed, cheapest, best-average, and oracle-logged offline selector baselines.
+   - `rlaif_policy.json`: fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
    - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
    - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
@@ -283,6 +285,7 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
    - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
    - `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`: curated held-out query eval report after full MiMo answer labels and `rlaif-reward --answer-labels`.
+   - `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`: curated held-out query eval report for the first learned offline selector baseline.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.
@@ -435,7 +438,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - Build scalar rewards with stable, bounded values.
    - Build context-only pairwise preferences only inside the same query/retriever group.
    - Build retrieval-context preferences across retrievers for the same query/model.
-   - Train fixed, cheapest, best-average, and oracle-logged offline selector baselines.
+   - Train fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged offline selector baselines.
    - Split reward/preference rows by `benchmark + query_id` so action rows for the same query cannot leak across train/eval.
    - Evaluate selector reward, quality, cost, coverage, selected-action distribution, and oracle gap.
    - Enforce quality guardrails so efficiency cannot win over a clearly worse answer.
