@@ -236,6 +236,7 @@ Context label schema:
    - Status: offline selector evaluator implemented on `feature/rlaif-retrieval-context-v0`.
    - Status: Phase 1D selector smoke completed and documented in `docs/reports/phase1d_rlaif_selector_smoke.md`.
    - Status: held-out query split/eval implemented and documented in `docs/reports/phase1d_rlaif_heldout_eval.md`.
+   - Status: full MiMo answer-label run completed on Kaggle, rewards rebuilt with `--answer-labels`, held-out split/train/eval rerun, and documented in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -275,6 +276,7 @@ Context label schema:
    - `rlaif_pairwise_labels_summary.md`: direct pairwise label agreement and risk summary.
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
    - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
+   - `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`: curated held-out query eval report after full MiMo answer labels and `rlaif-reward --answer-labels`.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.

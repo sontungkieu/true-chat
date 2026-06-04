@@ -61,6 +61,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item Pairwise judge hiện tại: thêm \texttt{rlaif-label-pairs} để judge trực tiếp action A/B từ \texttt{rlaif\_preferences.jsonl}, nhưng không bắt buộc tin preference cũ; output có A/B/tie/ambiguous, quality/support/efficiency winner, quality regret, unsupported-claim risk và confidence.
   \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ.
   \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average và oracle-logged baselines.
+  \item AI-judge held-out hiện tại: full MiMo answer-label run trên Kaggle đã hoàn tất; reward được rebuild bằng \texttt{--answer-labels}, rerun split/train/eval và ghi report \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}.
 \end{itemize}
 
 Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit thật, \textbf{chưa} có full context-level judge run, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
@@ -150,6 +151,8 @@ uv run rag-bench rlaif-label-answers \
 \texttt{rlaif-label-answers} chỉ judge từ question, answer và retrieved context đã log; prompt cấm browse và external knowledge. Output ghi incremental nên có thể resume sau khi kernel/local process bị ngắt. Nếu model trả invalid JSON, empty content, thiếu answer hoặc thiếu context, label được ghi là ambiguous với \texttt{quality\_score=null}; không có path nào biến lỗi judge thành score 0.
 
 Script \texttt{scripts/summarize\_rlaif\_labels.py} đọc \texttt{rlaif\_answer\_labels.jsonl} và báo label count, valid/invalid JSON, ambiguous labels, judge provider/model counts, score mean/std, unsupported-claim penalty và correlation với RAGAS answer relevancy khi có \texttt{rlaif\_feedback.jsonl}. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_answer\_labels\_template.md}.
+
+Full MiMo answer-label run hiện có 192 labels, 192 valid JSON, 25 ambiguous labels, 191 scored labels và correlation với RAGAS answer relevancy khoảng 0.277. Report held-out sau khi rebuild reward bằng AI-judge labels nằm ở \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}. Đây là AI-judge feedback, không phải human labels.
 
 \subsection{Context judge labeler}
 

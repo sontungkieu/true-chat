@@ -100,5 +100,6 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `scripts/summarize_rlaif_context_labels.py` and `docs/reports/phase1d_rlaif_context_labels_template.md` so context-label runs can be summarized for sufficiency, redundancy, missing evidence, dropped chunk-id hallucinations, and context quality.
 - Add `rlaif-label-pairs` for direct pairwise AI-judge comparisons of reward-derived retrieval-context action pairs, with A/B/tie/ambiguous decisions, quality/support/efficiency winners, resume support, JSON repair, and null-score handling for invalid or missing pair data.
 - Add `scripts/summarize_rlaif_pairwise_labels.py` and `docs/reports/phase1d_rlaif_pairwise_labels_template.md` so direct pairwise labels can be summarized for reward-preference agreement, disagreement, tie/ambiguous rates, confidence, quality regret, and unsupported-claim risk.
+- Complete the full MiMo answer-label Kaggle run for the Phase 1D selector smoke, rebuild rewards with `rlaif-reward --answer-labels`, rerun held-out split/train/eval, and document the result in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.
 - Keep larger held-out evaluation pending until answer/context labels are richer than RAGAS answer relevancy.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.
