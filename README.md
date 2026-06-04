@@ -298,6 +298,17 @@ uv run rag-bench rlaif-label-contexts \
 
 `rlaif-label-contexts` writes `sufficient`, `selected_chunk_ids`, `redundant_chunk_ids`, `irrelevant_chunk_ids`, `missing_evidence`, `minimality_score`, `evidence_support_score`, and `context_quality_score`. It uses stable chunk ids from the logged retrieved records and drops judge-returned ids that are not present in the action row. It supports the same operational controls as answer labeling, including `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`. Missing context, invalid JSON, and judge errors become ambiguous labels with null scores, not score zero.
 
+Summarize context labels:
+
+```bash
+uv run python scripts/summarize_rlaif_context_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo_summary.json
+```
+
+The summary reports valid/invalid JSON counts, ambiguous labels, sufficiency and missing-evidence counts, average selected/redundant/irrelevant chunk counts, dropped unknown chunk-id counts, and context quality/evidence support/minimality score statistics.
+
 Summarize answer labels:
 
 ```bash

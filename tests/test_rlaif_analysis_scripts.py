@@ -20,6 +20,10 @@ def _load_script(module_name: str, relative_path: str):
 
 
 summarize_labels = _load_script("summarize_rlaif_labels", "scripts/summarize_rlaif_labels.py")
+summarize_context_labels = _load_script(
+    "summarize_rlaif_context_labels",
+    "scripts/summarize_rlaif_context_labels.py",
+)
 kv_estimates = _load_script("estimate_local_qwen_kv_cache", "scripts/estimate_local_qwen_kv_cache.py")
 
 
@@ -93,6 +97,68 @@ def test_qwen_kv_estimate_formula_and_table() -> None:
     assert rows[0]["head_dim"] == 64
     assert rows[0]["kv_bytes"] == 12_582_912
     assert "analytical KV-cache estimates" in kv_estimates.render_markdown({"formula": "f", "batch_size": 1, "dtype_bytes": 2, "rows": rows})
+
+
+def test_summarize_rlaif_context_labels_counts_chunks_scores_and_dropped_ids(tmp_path: Path) -> None:
+    labels_path = tmp_path / "context_labels.jsonl"
+    _write_jsonl(
+        labels_path,
+        [
+            {
+                "action_id": "a1",
+                "judge_provider": "mimo",
+                "judge_model": "mimo-v2.5-pro",
+                "judge_version": "rlaif-context-judge-v1",
+                "sufficient": True,
+                "missing_evidence": False,
+                "selected_chunk_ids": ["doc-1", "doc-3"],
+                "redundant_chunk_ids": ["doc-2"],
+                "irrelevant_chunk_ids": [],
+                "context_quality_score": 0.8,
+                "evidence_support_score": 0.9,
+                "minimality_score": 0.6,
+                "ambiguous": False,
+                "invalid_json": False,
+                "metadata": {
+                    "dropped_unknown_chunk_ids": {
+                        "selected_chunk_ids": ["missing-doc"],
+                        "redundant_chunk_ids": [],
+                    }
+                },
+            },
+            {
+                "action_id": "a2",
+                "judge_provider": "mimo",
+                "judge_model": "mimo-v2.5-pro",
+                "sufficient": False,
+                "missing_evidence": True,
+                "selected_chunk_ids": [],
+                "redundant_chunk_ids": [],
+                "irrelevant_chunk_ids": ["doc-4"],
+                "context_quality_score": None,
+                "ambiguous": True,
+                "invalid_json": True,
+            },
+        ],
+    )
+
+    summary = summarize_context_labels.summarize_context_labels(labels_path)
+
+    assert summary["label_count"] == 2
+    assert summary["valid_json_count"] == 1
+    assert summary["invalid_json_count"] == 1
+    assert summary["ambiguous_count"] == 1
+    assert summary["scored_label_count"] == 1
+    assert summary["sufficient_count"] == 1
+    assert summary["missing_evidence_count"] == 1
+    assert summary["dropped_unknown_chunk_id_count"] == 1
+    assert summary["chunk_count_stats"]["selected_chunk_ids"]["mean"] == 1
+    assert summary["chunk_count_stats"]["redundant_chunk_ids"]["mean"] == 0.5
+    assert summary["chunk_count_stats"]["irrelevant_chunk_ids"]["mean"] == 0.5
+    assert summary["score_stats"]["context_quality_score"]["mean"] == 0.8
+    rendered = summarize_context_labels.render_markdown(summary)
+    assert "RLAIF Context Label Summary" in rendered
+    assert "Dropped unknown chunk ids" in rendered
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:

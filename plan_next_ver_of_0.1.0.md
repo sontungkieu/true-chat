@@ -98,6 +98,7 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Identify selected evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and sufficiency.
    - The labeling path supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, `--judge-model`, JSON repair, progress logging, and incremental writes.
    - Missing contexts, invalid JSON, empty completions, and judge errors become ambiguous labels with null scores, never score zero.
+   - Summarize context labels with `scripts/summarize_rlaif_context_labels.py` to track sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk ids, and context quality statistics.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
@@ -109,6 +110,11 @@ uv run rag-bench rlaif-label-contexts \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
   --limit 50 \
   --resume
+
+uv run python scripts/summarize_rlaif_context_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.json
 ```
 
 Context label schema:
@@ -245,6 +251,7 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
    - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
+   - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - Optional CSV summary for slides/reports.
 
 ## Non-Blocking KV/Qwen Scaffold
@@ -295,6 +302,45 @@ uv run rag-bench rlaif-label-contexts \
   --judge-model mimo-v2.5-pro \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
   --resume
+
+uv run python scripts/summarize_rlaif_context_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.json
+```
+
+After the current Kaggle answer-label job completes, use this auditable path before writing a curated report:
+
+```bash
+uv run python scripts/summarize_rlaif_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --ragas-feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo_summary.json
+
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>_ai_judge
+
+uv run rag-bench rlaif-split \
+  --rewards benchmark_results/rlaif/<run-name>_ai_judge/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>_ai_judge/rlaif_preferences.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>_ai_judge/split_seed42 \
+  --train-ratio 0.8 \
+  --seed 42
+
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/train_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/train_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/rlaif_policy.json
+
+uv run rag-bench rlaif-eval \
+  --rewards benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/eval_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/rlaif_policy.json \
+  --split-manifest benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/split_manifest.json \
+  --out-md benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/rlaif_eval_summary.md
 ```
 
 Offline selector baselines:
@@ -346,6 +392,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - `rag-bench rlaif-build` writes all expected files on a tiny fixture.
    - `rag-bench rlaif-label-answers --dry-run` and `rag-bench rlaif-label-contexts --dry-run` write valid placeholder labels without network calls.
    - `rag-bench rlaif-label-contexts` filters unknown judge-returned chunk ids and preserves null scores for missing/ambiguous labels.
+   - `scripts/summarize_rlaif_context_labels.py` reports sufficiency, missing evidence, chunk selection counts, dropped unknown chunk ids, and score statistics.
    - Labeling commands support `--resume` without duplicating completed action ids.
    - Invalid inputs fail with actionable errors.
    - Output records do not include secrets or provider API keys.
