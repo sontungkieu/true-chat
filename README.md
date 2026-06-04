@@ -186,6 +186,8 @@ Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuris
 
 Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggressive`) and normalized score diagnostics for threshold calibration. These profiles are deterministic heuristics, not learned policies.
 
+Phase 1C.3 starts the RLAIF retrieval-context data layer. The first implementation adds schema-only records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. This is still offline data plumbing: it does not replace `adaptive-heuristic`, train a policy, call a judge, or change runtime retrieval behavior.
+
 Retrieval-only BudgetRAG smoke run:
 
 ```bash
@@ -244,6 +246,13 @@ uv run python scripts/run_budgetrag_matrix.py \
 ```
 
 For `adaptive-heuristic` matrix jobs, each `--context-budgets` value is passed as `--adaptive-medium-budget` for each requested adaptive profile. Non-adaptive policies ignore `--adaptive-profiles`.
+
+RLAIF schema modules:
+
+- `rag_bench.rlaif_schema`: dataclasses for `RetrievalContextAction`, answer/context feedback, reward weights, scalar rewards, and preferences.
+- `rag_bench.retrieval_context_actions`: helper for converting BudgetRAG `query_results.jsonl` rows into normalized retrieval-context actions.
+
+The planned RLAIF CLI commands (`rlaif-build`, `rlaif-label-answers`, `rlaif-label-contexts`, and `rlaif-train`) are intentionally not enabled yet. The next implementation step is the dataset builder that reads existing BudgetRAG outputs and writes `rlaif_actions.jsonl` plus feedback stubs.
 
 Summarize local matrix outputs:
 

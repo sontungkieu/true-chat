@@ -37,6 +37,7 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 ## Phase 1C.3 Implementation Plan: Feedback Layer
 
 1. Normalize action rows
+   - Status: schema baseline implemented on `feature/rlaif-retrieval-context-v0`; full dataset builder pending.
    - Read one or more `query_results.jsonl` files from BudgetRAG runs.
    - Extract stable keys: benchmark, query id, question, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected adaptive action, generator model, answer, references, context metrics, latency, and token usage.
    - Assign an `action_id` that is deterministic across runs.
@@ -54,12 +55,14 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 ```
 
 2. Normalize feedback sources
+   - Status: schema baseline implemented; extraction from existing outputs pending.
    - Use gold metrics when present: exact match and token F1.
    - Use RAGAS/MiMo judge fields when present: answer relevancy, faithfulness, answer correctness, and judge rationale.
    - Record feedback provenance explicitly: `gold`, `ragas`, `mimo_judge`, `heuristic`, or `missing`.
    - Do not silently treat missing feedback as zero accuracy.
 
 3. Add answer-labeling when feedback is absent
+   - Status: pending.
    - If judge fields are not present, implement an explicit answer-labeling path instead of leaving everything as `missing`.
    - The labeling path must support `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, and `--judge-model`.
    - It should write incrementally so a long MiMo judge run can resume safely.
@@ -75,6 +78,7 @@ uv run rag-bench rlaif-label-answers \
 ```
 
 4. Add context-level RLAIF feedback
+   - Status: schema baseline implemented; judge labeling path pending.
    - Judge candidate retrieved/context chunks before generation.
    - Identify selected evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and sufficiency.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
@@ -127,6 +131,7 @@ Context label schema:
 ## Phase 1D Implementation Plan: RLAIF Reward And Preference Layer
 
 1. Build scalar rewards
+   - Status: schema baseline implemented; dataset-level reward builder pending.
    - Convert quality, efficiency, and latency into a bounded scalar reward.
    - Default priority: answer quality dominates efficiency.
    - Proposed default formula:
@@ -151,6 +156,7 @@ Context label schema:
    - Do not use KV savings as the only positive efficiency reward. Very short contexts must still lose when quality or support drops.
 
 2. Build pairwise preferences
+   - Status: schema baseline implemented; dataset-level preference builder pending.
    - Build two preference sets:
      - `context_policy_preference`: group by benchmark + query id + retriever + top-k + generator model, then compare context policies/budgets inside the same retriever.
      - `retrieval_context_preference`: group by benchmark + query id + top-k + generator model, then compare retrieval strategy + context policy combinations across retrievers.
