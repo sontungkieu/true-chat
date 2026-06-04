@@ -9,7 +9,7 @@ from statistics import mean
 from typing import Any, Iterable
 
 from rag_bench.io import write_jsonl
-from rag_bench.rlaif_schema import RlaifPreference, RlaifReward, RlaifRewardWeights
+from rag_bench.rlaif_schema import RlaifPreference, RlaifReward, RlaifRewardWeights, stable_record_id
 
 
 @dataclass(frozen=True)
@@ -118,6 +118,9 @@ def _reward_for_action(
         "feedback_missing_reason": feedback.get("missing_reason"),
         "feedback_ambiguous": bool(feedback.get("ambiguous", False)),
         "raw_costs": scales.raw_costs(action),
+        "query_group": _query_group_summary(action),
+        "action_signature": _action_summary(action),
+        "action_signature_id": _action_signature_id(action),
     }
 
     if quality is None or bool(feedback.get("ambiguous", False)):
@@ -319,6 +322,19 @@ def _action_summary(action: dict[str, Any]) -> dict[str, Any]:
         "selected_budget_chars": action.get("selected_budget_chars"),
         "generator_model": action.get("generator_model"),
     }
+
+
+def _query_group_summary(action: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "benchmark": action.get("benchmark"),
+        "query_id": action.get("query_id"),
+        "top_k": action.get("top_k"),
+        "generator_model": action.get("generator_model"),
+    }
+
+
+def _action_signature_id(action: dict[str, Any]) -> str:
+    return stable_record_id("rlaif-action-signature-v1", _action_summary(action), length=12)
 
 
 def _build_summary(

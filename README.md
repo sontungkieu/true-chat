@@ -186,7 +186,7 @@ Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuris
 
 Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggressive`) and normalized score diagnostics for threshold calibration. These profiles are deterministic heuristics, not learned policies.
 
-Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. Full-context or legacy rows without an explicit context budget use `budget_chars=null` as a stable action dimension. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. The `rlaif-reward` command turns those normalized files into scalar rewards and pairwise preferences with quality guardrails. This is still offline data plumbing: it does not replace `adaptive-heuristic`, train a policy, call a judge, or change runtime retrieval behavior.
+Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. Full-context or legacy rows without an explicit context budget use `budget_chars=null` as a stable action dimension. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. The `rlaif-reward` command turns those normalized files into scalar rewards and pairwise preferences with quality guardrails. The `rlaif-train` and `rlaif-eval` commands build and evaluate offline selector baselines from those logged reward rows. This is still offline data plumbing: it does not replace `adaptive-heuristic`, call a judge, or change runtime retrieval behavior.
 
 Retrieval-only BudgetRAG smoke run:
 
@@ -253,6 +253,7 @@ RLAIF schema modules:
 - `rag_bench.retrieval_context_actions`: helper for converting BudgetRAG `query_results.jsonl` rows into normalized retrieval-context actions.
 - `rag_bench.rlaif_build`: dataset builder for normalized action and answer-feedback rows.
 - `rag_bench.rlaif_reward`: reward and pairwise preference builder over normalized RLAIF datasets.
+- `rag_bench.rlaif_policy`: offline selector baselines over logged RLAIF reward rows.
 
 Build a normalized RLAIF dataset from one matrix directory or one or more `query_results.jsonl` files:
 
@@ -262,7 +263,7 @@ uv run rag-bench rlaif-build \
   --output-dir benchmark_results/rlaif/<run-name>
 ```
 
-The builder preserves answer text, retrieved source records, context metrics, retrieval metrics, latency, token usage, KV estimates, and answer feedback provenance. Gold EM/F1 labels are used when present; otherwise it records RAGAS fields or existing AI judge fields. AI judge feedback uses `provenance=ai_judge` and stores the concrete `judge_provider`/`judge_model` such as MiMo, DeepSeek, or Groq instead of mislabeling non-MiMo judges as heuristic. If no labels exist, the feedback row stays `provenance=missing` with a concrete `missing_reason`. Generation failures are marked as ambiguous missing feedback, not as score zero. The planned judge and training commands (`rlaif-label-answers`, `rlaif-label-contexts`, and `rlaif-train`) remain intentionally disabled until the normalized dataset path is stable.
+The builder preserves answer text, retrieved source records, context metrics, retrieval metrics, latency, token usage, KV estimates, and answer feedback provenance. Gold EM/F1 labels are used when present; otherwise it records RAGAS fields or existing AI judge fields. AI judge feedback uses `provenance=ai_judge` and stores the concrete `judge_provider`/`judge_model` such as MiMo, DeepSeek, or Groq instead of mislabeling non-MiMo judges as heuristic. If no labels exist, the feedback row stays `provenance=missing` with a concrete `missing_reason`. Generation failures are marked as ambiguous missing feedback, not as score zero. The planned judge commands (`rlaif-label-answers` and `rlaif-label-contexts`) remain intentionally disabled until the normalized dataset path is stable.
 
 Build scalar rewards and pairwise preferences:
 
@@ -281,6 +282,22 @@ uv run rag-bench rlaif-reward \
 ```
 
 `rlaif-reward` writes `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md`. Missing or ambiguous feedback produces `reward=null` with `reward_mode=missing_quality` or `reward_mode=ambiguous_feedback`; it is not converted to score zero. Preferences are generated only within comparable query groups and are skipped when the higher-reward action violates the configured quality-regret guardrail.
+
+Build and evaluate offline selector baselines:
+
+```bash
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_policy.json
+
+uv run rag-bench rlaif-eval \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>/rlaif_policy.json \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_eval_summary.md
+```
+
+`rlaif-train` writes fixed, cheapest, best-average, and oracle-logged selector baselines. The policy artifact sets `runtime_default_replacement=false`; it is an offline evaluation artifact and does not replace the default `adaptive-heuristic` runtime policy. `rlaif-eval` reports mean reward, quality, normalized token/latency/KV costs, selected action distribution, coverage, and oracle gap.
 
 Summarize local matrix outputs:
 

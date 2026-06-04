@@ -178,19 +178,18 @@ Context label schema:
      - reason code
 
 3. Train the first offline policy
+   - Status: offline selector baselines implemented on `feature/rlaif-retrieval-context-v0`.
    - V1 should be lightweight and auditable, not PPO/DPO fine-tuning.
-   - Start with an offline contextual bandit table or logistic/ranking model over existing features:
-     - query length
-     - candidate count
-     - score gap/entropy/confidence
-     - top document length stats
-     - retrieval strategy
-     - fusion strategy
-     - requested budget
-     - fixed policy/adaptive profile
-   - Output a learned selector artifact that can be evaluated offline before any runtime use.
+   - Implemented baselines:
+     - `fixed`: choose the most common scored action signature when it is available for a query group.
+     - `cheapest`: choose the lowest normalized token + latency + KV cost in the logged query group.
+     - `best_average`: choose the available action signature with the highest training mean reward.
+     - `oracle_logged`: offline upper bound that chooses the highest observed reward in each logged query group.
+   - Output `rlaif_policy.json` as an offline selector artifact before any runtime use.
+   - Keep contextual bandit table, logistic/ranking model, and LinUCB as later steps once the reward dataset is large enough.
 
 4. Evaluate against existing baselines
+   - Status: offline selector evaluator implemented on `feature/rlaif-retrieval-context-v0`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -202,17 +201,24 @@ Context label schema:
      - latency
      - preference win rate
      - abstention/ambiguous rate
+   - Implemented first-pass metrics:
+     - mean reward
+     - mean quality
+     - normalized token, latency, and KV cost
+     - selected action distribution
+     - scored coverage and selection coverage
+     - oracle gap
    - The learned policy must not replace `adaptive-heuristic` by default until it beats baseline under quality guardrails.
    - The learned RLAIF/bandit policy must not replace `adaptive-heuristic` as the default runtime policy until it passes offline evaluation and quality guardrails.
 
 5. Outputs
-   - Status: `rlaif-reward` writes the first three files below; policy/eval artifacts remain pending.
+   - Status: `rlaif-reward`, `rlaif-train`, and `rlaif-eval` write the implemented files below; context labeling outputs remain pending.
    - `rlaif_rewards.jsonl`
    - `rlaif_preferences.jsonl`
    - `rlaif_reward_summary.md`
    - `rlaif_context_preferences.jsonl`
-   - `rlaif_policy.json`
-   - `rlaif_eval_summary.md`
+   - `rlaif_policy.json`: fixed, cheapest, best-average, and oracle-logged offline selector baselines.
+   - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
    - Optional CSV summary for slides/reports.
 
 ## Non-Blocking KV/Qwen Scaffold
@@ -264,13 +270,18 @@ uv run rag-bench rlaif-label-contexts \
   --resume
 ```
 
-Optional follow-up:
+Offline selector baselines:
 
 ```bash
 uv run rag-bench rlaif-train \
-  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
   --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_policy.json
+
+uv run rag-bench rlaif-eval \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>/rlaif_policy.json \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_eval_summary.md
 ```
 
 Default output directory:
@@ -289,6 +300,8 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - Build scalar rewards with stable, bounded values.
    - Build context-only pairwise preferences only inside the same query/retriever group.
    - Build retrieval-context preferences across retrievers for the same query/model.
+   - Train fixed, cheapest, best-average, and oracle-logged offline selector baselines.
+   - Evaluate selector reward, quality, cost, coverage, selected-action distribution, and oracle gap.
    - Enforce quality guardrails so efficiency cannot win over a clearly worse answer.
    - Enforce context sufficiency guardrails so minimality cannot win over missing evidence.
    - Reject ambiguous or invalid judge rows.

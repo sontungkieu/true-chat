@@ -86,4 +86,7 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `rlaif-reward` to write `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md` from normalized RLAIF action/feedback files.
 - Preserve missing or ambiguous feedback as `reward=null` instead of converting absent quality into score zero.
 - Add pairwise preference skip reasons for missing quality, ambiguous feedback, small reward deltas, and quality guardrail failures.
+- Add `rlaif-train` to write an offline `rlaif_policy.json` artifact with fixed, cheapest, best-average, and oracle-logged selector baselines.
+- Add `rlaif-eval` to report mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, coverage, and oracle gap.
+- Keep selector artifacts offline-only with `runtime_default_replacement=false`; they do not replace `adaptive-heuristic` in runtime defaults.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

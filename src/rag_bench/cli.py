@@ -19,6 +19,12 @@ from rag_bench.adaptive_budget import ADAPTIVE_PROFILES
 from rag_bench.kv_estimator import KV_MODEL_PROFILES
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.rlaif_build import RlaifBuildConfig, build_rlaif_dataset
+from rag_bench.rlaif_policy import (
+    RlaifEvalConfig,
+    RlaifTrainConfig,
+    evaluate_offline_selector_policies,
+    train_offline_selector_policies,
+)
 from rag_bench.rlaif_reward import RlaifRewardConfig, build_rlaif_rewards
 from rag_bench.runner import RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
@@ -42,6 +48,10 @@ def main(argv: list[str] | None = None) -> int:
         return _rlaif_build(args)
     if args.command == "rlaif-reward":
         return _rlaif_reward(args)
+    if args.command == "rlaif-train":
+        return _rlaif_train(args)
+    if args.command == "rlaif-eval":
+        return _rlaif_eval(args)
     parser.print_help()
     return 1
 
@@ -281,6 +291,37 @@ def build_parser() -> argparse.ArgumentParser:
     rlaif_reward_parser.add_argument("--unsupported-weight", type=float, default=1.0)
     rlaif_reward_parser.add_argument("--min-reward-delta", type=float, default=0.03)
     rlaif_reward_parser.add_argument("--max-quality-regret", type=float, default=0.02)
+
+    rlaif_train_parser = subparsers.add_parser(
+        "rlaif-train",
+        help="Build offline selector baseline policy artifacts from RLAIF reward rows.",
+    )
+    rlaif_train_parser.add_argument("--rewards", type=Path, required=True, help="Path to rlaif_rewards.jsonl.")
+    rlaif_train_parser.add_argument(
+        "--preferences",
+        type=Path,
+        default=None,
+        help="Optional path to rlaif_preferences.jsonl for provenance and coverage accounting.",
+    )
+    rlaif_train_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Output path for rlaif_policy.json.",
+    )
+
+    rlaif_eval_parser = subparsers.add_parser(
+        "rlaif-eval",
+        help="Evaluate offline selector policies on logged RLAIF reward rows.",
+    )
+    rlaif_eval_parser.add_argument("--rewards", type=Path, required=True, help="Path to rlaif_rewards.jsonl.")
+    rlaif_eval_parser.add_argument("--policy", type=Path, required=True, help="Path to rlaif_policy.json.")
+    rlaif_eval_parser.add_argument(
+        "--out-md",
+        type=Path,
+        default=None,
+        help="Optional markdown output path for the selector evaluation summary.",
+    )
     return parser
 
 
@@ -585,6 +626,67 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
                 "preference_type_counts": summary["preference_type_counts"],
                 "preference_skip_reason_counts": summary["preference_skip_reason_counts"],
                 "invalid_row_count": summary["invalid_row_count"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _rlaif_train(args: argparse.Namespace) -> int:
+    try:
+        summary = train_offline_selector_policies(
+            RlaifTrainConfig(
+                rewards_path=args.rewards,
+                preferences_path=args.preferences,
+                output_path=args.output,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rlaif-train failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "output_path": summary["output_path"],
+                "policy_count": summary["policy_count"],
+                "reward_count": summary["reward_count"],
+                "scored_reward_count": summary["scored_reward_count"],
+                "preference_count": summary["preference_count"],
+                "query_group_count": summary["query_group_count"],
+                "signature_count": summary["signature_count"],
+                "runtime_default_replacement": summary["runtime_default_replacement"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _rlaif_eval(args: argparse.Namespace) -> int:
+    try:
+        summary = evaluate_offline_selector_policies(
+            RlaifEvalConfig(
+                rewards_path=args.rewards,
+                policy_path=args.policy,
+                out_md=args.out_md,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rlaif-eval failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "query_group_count": summary["query_group_count"],
+                "policy_metrics": summary["policy_metrics"],
+                "runtime_default_replacement": summary["runtime_default_replacement"],
             },
             ensure_ascii=False,
             indent=2,

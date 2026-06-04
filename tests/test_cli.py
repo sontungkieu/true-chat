@@ -196,6 +196,84 @@ def test_cli_rlaif_reward_rejects_negative_weight(capsys) -> None:
     assert "--quality-weight must be non-negative" in captured.err
 
 
+def test_cli_rlaif_train_smoke_with_mocked_trainer(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_train_offline_selector_policies(config):
+        seen["config"] = config
+        return {
+            "output_path": str(tmp_path / "rlaif_policy.json"),
+            "policy_count": 4,
+            "reward_count": 8,
+            "scored_reward_count": 7,
+            "preference_count": 3,
+            "query_group_count": 2,
+            "signature_count": 4,
+            "runtime_default_replacement": False,
+        }
+
+    monkeypatch.setattr(cli, "train_offline_selector_policies", fake_train_offline_selector_policies)
+
+    exit_code = cli.main(
+        [
+            "rlaif-train",
+            "--rewards",
+            str(tmp_path / "rlaif_rewards.jsonl"),
+            "--preferences",
+            str(tmp_path / "rlaif_preferences.jsonl"),
+            "--output",
+            str(tmp_path / "rlaif_policy.json"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
+    assert seen["config"].preferences_path == tmp_path / "rlaif_preferences.jsonl"
+    assert seen["config"].output_path == tmp_path / "rlaif_policy.json"
+    assert '"policy_count": 4' in captured.out
+    assert '"runtime_default_replacement": false' in captured.out
+
+
+def test_cli_rlaif_eval_smoke_with_mocked_evaluator(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_evaluate_offline_selector_policies(config):
+        seen["config"] = config
+        return {
+            "query_group_count": 2,
+            "policy_metrics": {
+                "fixed": {"coverage": 1.0, "mean_reward": 0.5},
+                "cheapest": {"coverage": 1.0, "mean_reward": 0.6},
+                "best_average": {"coverage": 1.0, "mean_reward": 0.7},
+                "oracle_logged": {"coverage": 1.0, "mean_reward": 0.8},
+            },
+            "runtime_default_replacement": False,
+        }
+
+    monkeypatch.setattr(cli, "evaluate_offline_selector_policies", fake_evaluate_offline_selector_policies)
+
+    exit_code = cli.main(
+        [
+            "rlaif-eval",
+            "--rewards",
+            str(tmp_path / "rlaif_rewards.jsonl"),
+            "--policy",
+            str(tmp_path / "rlaif_policy.json"),
+            "--out-md",
+            str(tmp_path / "rlaif_eval_summary.md"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
+    assert seen["config"].policy_path == tmp_path / "rlaif_policy.json"
+    assert seen["config"].out_md == tmp_path / "rlaif_eval_summary.md"
+    assert '"query_group_count": 2' in captured.out
+    assert '"best_average"' in captured.out
+
+
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     seen = {}
 
