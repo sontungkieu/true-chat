@@ -1,0 +1,177 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\IfFileExists{newtxtext.sty}{%
+  \usepackage{newtxtext}
+  \usepackage{newtxmath}
+}{%
+  \usepackage{mathptmx}
+}
+\usepackage[margin=2.35cm]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\sloppy
+
+\title{\textbf{Báo cáo kỹ thuật: BudgetRAG và RLAIF cho lựa chọn retrieval--context}}
+\author{Branch: \texttt{feature/rlaif-retrieval-context-v0}}
+\date{Ngày 04 tháng 06 năm 2026}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
+\toprule
+Mốc code hiện tại & \texttt{78cf83d} -- \texttt{feat(rlaif): build normalized action and feedback datasets} \\
+Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
+Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
+Trạng thái test gần nhất & \texttt{142 passed} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Tóm tắt}
+
+BudgetRAG hiện đã chuyển từ một hệ thống so sánh chiến thuật context-budget thủ công sang một nền tảng có thể tạo dữ liệu RLAIF offline. Điểm thay đổi quan trọng là action không còn chỉ là ``giữ bao nhiêu context'', mà là một \textbf{retrieval--context action}: chọn retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected context action và generator model.
+
+Hai commit gần nhất tạo nền cho Phase 1C.3:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{fdefb63}: định nghĩa schema cho action, answer feedback, context feedback, scalar reward và preference.
+  \item \texttt{78cf83d}: thêm \texttt{rlaif-build} để đọc BudgetRAG output và ghi các dataset RLAIF chuẩn hóa.
+\end{itemize}
+
+Đây vẫn là bước dữ liệu offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit, \textbf{chưa} gọi judge mới, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
+
+\section{Bối cảnh nghiên cứu}
+
+Project nên được đặt tại giao điểm của sáu cụm nghiên cứu: RAG, evaluation, prompt/context compression, KV-cache compression, GraphRAG/retrieval strategy selection, và RLAIF/contextual bandit.
+
+RAG đặt nền cho việc kết hợp parametric memory với retrieved external memory trong generation \cite{lewis2020rag}. BEIR cung cấp chuẩn đánh giá retrieval đa domain và cho thấy retriever không có một cấu hình tốt tuyệt đối trên mọi tập \cite{thakur2021beir}. RAGAS bổ sung góc nhìn evaluation ở cấp RAG, đặc biệt là faithfulness, answer relevance và context relevance \cite{es2023ragas}.
+
+BudgetRAG khác các prompt compression chung như LLMLingua, LongLLMLingua và Selective Context \cite{jiang2023llmlingua,jiang2023longllmlingua,li2023selectivecontext} ở chỗ compression được coi là một \textbf{action trong bài toán retrieval-grounded decision}. Policy phải quyết định giữ bằng chứng nào dưới ràng buộc chất lượng, token, latency và estimated KV, thay vì chỉ nén prompt theo một mục tiêu cố định.
+
+Các hướng KV-cache như H2O, StreamingLLM, KIVI, SnapKV và PyramidKV \cite{zhang2023h2o,xiao2023streamingllm,liu2024kivi,li2024snapkv,cai2024pyramidkv} can thiệp sâu hơn vào runtime/model cache. BudgetRAG hiện đi theo hướng ít xâm lấn hơn: giảm context trước inference, sau đó dùng context-level RLAIF labels làm bằng chứng cho bước evidence mask/KV retention proof of concept.
+
+GraphRAG nhấn mạnh vai trò của graph-based text index cho các truy vấn global hoặc sensemaking \cite{edge2024graphrag}. Vì vậy action space của Phase 1D phải bao gồm retrieval strategy, không chỉ context budget.
+
+RLAIF và preference learning cung cấp cách biến feedback từ AI judge thành reward/preference \cite{bai2022constitutional,rafailov2023dpo}. Với BudgetRAG, feedback này không nhằm alignment chatbot tổng quát, mà nhằm chấm \textbf{context sufficiency} và \textbf{grounded answer quality}. Vì mỗi query chỉ cần một lựa chọn retrieval--context ở một bước, offline contextual bandit là formulation đầu tiên hợp lý hơn PPO/GRPO \cite{li2010contextualbandit}.
+
+\section{Định vị so với related work}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm} >{\raggedright\arraybackslash}p{4.3cm} >{\raggedright\arraybackslash}p{6.7cm}}
+\toprule
+\textbf{Research line} & \textbf{Trọng tâm} & \textbf{Vị trí của BudgetRAG} \\
+\midrule
+RAG & Retrieve external evidence cho generation & Thêm bài toán phân bổ context theo tài nguyên và chất lượng. \\
+BEIR/RAGAS & Đánh giá retrieval/RAG & Mở rộng metric bằng token, latency, estimated KV và feedback provenance. \\
+Prompt compression & Prompt/context compression & Biến compression thành query-level decision action trong RAG. \\
+KV-cache methods & Runtime KV compression/pruning & Bắt đầu model-agnostic, sau đó dùng evidence labels cho KV retention. \\
+RLAIF/DPO & AI/preference feedback & Label context sufficiency và grounded answer quality. \\
+Contextual bandit & Học one-step action policy từ feedback & Học retrieval--context action dưới reward có quality guardrail. \\
+\bottomrule
+\end{longtable}
+
+\section{Trạng thái implementation hiện tại}
+
+\subsection{Schema}
+
+Module \texttt{rag\_bench.rlaif\_schema} định nghĩa:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{RetrievalContextAction}: state/action ở cấp query, bao gồm retriever, fusion, top-k, context policy, budget, adaptive profile, selected context policy/budget và generator model.
+  \item \texttt{RlaifAnswerFeedback}: feedback cấp answer với provenance \texttt{gold}, \texttt{ragas}, \texttt{mimo\_judge}, \texttt{heuristic}, \texttt{missing}.
+  \item \texttt{RlaifContextFeedback}: feedback cấp context với sufficient, selected/redundant/irrelevant chunks, missing evidence, minimality score, evidence support score và context quality score.
+  \item \texttt{RlaifReward}: reward tách quality/support/token/latency/KV/error/unsupported claim.
+  \item \texttt{RlaifPreference}: preference type cho context-policy, retrieval-context và context-sufficiency.
+\end{itemize}
+
+Action id deterministic là một điểm đúng hướng: id gồm benchmark, query id, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected context action và generator model, nhưng loại source run id để nhiều lần chạy cùng cấu hình có thể merge được.
+
+\subsection{Dataset builder}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-build \
+  --inputs benchmark_results/budgetrag/<matrix-run> \
+  --output-dir benchmark_results/rlaif/<run-name>
+\end{verbatim}
+
+Builder thực hiện:
+
+\begin{itemize}[leftmargin=*]
+  \item discover mọi \texttt{query\_results.jsonl} trong input file hoặc directory;
+  \item convert từng row thành normalized action qua \texttt{action\_from\_budgetrag\_row};
+  \item giữ observation payload: answer text, retrieved records, context metrics, retrieval metrics, retrieval metadata, KV estimate, latency, token usage, generation error/retry/rate-limit metadata;
+  \item tạo answer feedback theo thứ tự: gold EM/F1, RAGAS fields, MiMo/judge fields, rồi missing;
+  \item ghi summary với provenance counts, missing reason counts, generation error count và invalid rows.
+\end{itemize}
+
+Quan trọng: missing feedback không bị gán score 0. Generation skipped, generation error và missing answer được ghi bằng \texttt{missing\_reason} riêng, trong đó generation error được đánh dấu \texttt{ambiguous=True}.
+
+\section{Hai điểm cần harden trước reward/preference}
+
+Pasted review đã chỉ ra hai điểm yếu hợp lý cần sửa trước khi xây reward/preference builder.
+
+\subsection{Judge provenance cho non-MiMo}
+
+Hiện \texttt{\_feedback\_from\_judge} map provider khác \texttt{mimo} thành \texttt{heuristic}. Điều này có thể làm DeepSeek hoặc Groq judge bị ghi nhầm là heuristic. Cách sửa nên là một trong hai hướng:
+
+\begin{itemize}[leftmargin=*]
+  \item mở rộng provenance thành \texttt{ai\_judge} và lưu provider cụ thể ở \texttt{judge\_provider}; hoặc
+  \item thêm provenance riêng như \texttt{deepseek\_judge}, \texttt{groq\_judge}, \texttt{mimo\_judge}.
+\end{itemize}
+
+Khuyến nghị thực dụng: dùng \texttt{ai\_judge} để schema gọn, còn provider/model nằm trong metadata. Điều này phù hợp với RLAIF đa judge.
+
+\subsection{Full-context/legacy action không có explicit budget}
+
+\texttt{RetrievalContextAction.budget\_chars} hiện là positive int bắt buộc. Với legacy/full action hoặc output cũ không có explicit budget, converter có thể invalid. Nên cho phép:
+
+\begin{verbatim}
+budget_chars: int | None
+\end{verbatim}
+
+Nếu \texttt{budget\_chars=None}, action id vẫn ổn định và biểu diễn đúng ``full-context'' hoặc legacy baseline. Điều này hợp hơn với Phase 1D, vì baseline full/legacy phải có mặt trong action space.
+
+\section{Roadmap tiếp theo}
+
+Thứ tự tiếp theo nên giữ như sau:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Harden schema/builder}: sửa judge provenance và full-context budget, thêm tests cho DeepSeek/Groq judge và legacy/full rows.
+  \item \textbf{Reward/preference builder}: tạo \texttt{rlaif\_rewards.jsonl} và \texttt{rlaif\_preferences.jsonl}, có quality-regret guardrail.
+  \item \textbf{Judge labeling stubs}: \texttt{rlaif-label-answers} và \texttt{rlaif-label-contexts} có \texttt{--dry-run}, \texttt{--resume}, \texttt{--limit}, \texttt{--max-errors}; skip sạch nếu thiếu API key.
+  \item \textbf{Offline selector baseline}: fixed, cheapest, best-average, oracle và simple ranking baseline. Chưa cần LinUCB phức tạp khi data chưa đủ.
+  \item \textbf{Contextual bandit thật}: chỉ sau khi reward/preference coverage đủ và offline eval cho thấy không làm giảm answer quality.
+\end{enumerate}
+
+Guardrail chính phải giữ: learned RLAIF/bandit policy không được thay \texttt{adaptive-heuristic} làm default runtime policy trước khi pass offline evaluation và quality guardrails. Web-search actions chỉ là live stress-test actions, không trộn với reproducible BEIR benchmark claims.
+
+\section{Kết luận}
+
+Repo hiện đã có engineering story tốt hơn trước: plan checkpoint, schema checkpoint, dataset builder checkpoint và test suite pass. Bổ sung research grounding giúp báo cáo không còn giống một pipeline tự phát, mà đứng tại giao điểm của RAG evaluation, prompt/context compression, KV-cache compression, RLAIF và contextual bandit learning.
+
+Điểm cần làm ngay không phải train policy, mà là harden provenance/budget rồi mới xây reward/preference builder. Đây là đường đi đúng để RLAIF trong project trở thành một cơ chế học action có dữ liệu và guardrail, không phải một nhãn ``RL'' gắn sau.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

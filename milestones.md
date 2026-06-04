@@ -14,7 +14,7 @@ Status: implemented and validated on `feature/budgetrag-phase1b`; pending final 
 ## Notes
 
 - Version bump: N/A. This repo currently has no `VERSION` or `versioning.py`.
-- PDF rebuild: N/A. This repo currently has no `pdf/` source directory.
+- PDF report: `pdf/main.pdf` is generated from `pdf/main.tex` and `pdf/references.bib`; LaTeX intermediates must be cleaned after each rebuild.
 - Mindmap update: N/A. No `*.xmind`, `*.drawio`, or `*.mm` files are tracked in this repo.
 
 ## BudgetRAG Phase 1B.1
