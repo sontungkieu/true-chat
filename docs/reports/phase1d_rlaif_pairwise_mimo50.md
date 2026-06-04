@@ -131,7 +131,7 @@ This is useful rather than bad: it shows scalar reward calibration may overvalue
 
 ## Next Steps
 
-1. Add a calibration experiment that lowers the effect of small quality/support deltas when the direct pairwise judge says answer quality is tied.
+1. Add a calibration experiment that lowers the effect of small quality/support deltas when the direct pairwise judge says answer quality is tied. Initial diagnostics are now documented in `docs/reports/phase1d_rlaif_pairwise_calibration_diagnostics.md`.
 2. Run `rlaif-label-contexts` on a small subset to check context sufficiency and selected/redundant chunks.
 3. Repeat pairwise labeling on a more diverse preference sample after context labels are populated.
 4. Keep `runtime_default_replacement=false` until larger held-out and pairwise audits pass quality guardrails.

@@ -336,6 +336,21 @@ uv run python scripts/summarize_rlaif_pairwise_labels.py \
   --out-json benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo_summary.json
 ```
 
+Diagnose reward-calibration mismatches from direct pairwise labels:
+
+```bash
+uv run python scripts/diagnose_rlaif_pairwise_calibration.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --quality-tie-threshold 0.10 \
+  --support-tie-threshold 0.20 \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_pairwise_calibration.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_pairwise_calibration.json
+```
+
+`diagnose_rlaif_pairwise_calibration.py` is analysis-only. It flags small quality/support deltas where the direct pairwise judge treats answer quality or support as tied and prefers the cheaper action. The output is intended to guide a future explicit `reward_calibration_v1_candidate`; it does not change `rlaif-reward` defaults.
+
 The summary reports A/B/tie/ambiguous counts, agreement and disagreement with reward-derived preferences, confidence statistics, quality-regret counts, unsupported-claim risk counts, and judge provider/model counts.
 
 Summarize answer labels:

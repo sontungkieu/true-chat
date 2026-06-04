@@ -113,6 +113,8 @@ uv run python scripts/summarize_rlaif_labels.py \
    - This is for reward/preference calibration and selector analysis only; do not train DPO/reward model or replace runtime defaults in v1.
    - Initial MiMo-50 audit result: 50 valid JSON labels, 2 ambiguous timeout labels, 41 A wins, 7 B wins, 0 ties, and 0.854 agreement over non-ambiguous decisions.
    - The observed disagreements cluster around cases where scalar reward prefers slightly higher quality/support scores while the direct judge treats both answers as acceptable or correct abstentions and then favors lower resource cost.
+   - Pairwise-calibrated diagnostics are implemented in `scripts/diagnose_rlaif_pairwise_calibration.py`.
+   - Initial diagnostic result with candidate thresholds `quality=0.10` and `support=0.20`: 38 small quality/support delta pairs, 35 cheaper-wins-when-tied, and 5 scalar-over-quality disagreements, all in `query_id=128`.
 
 ```bash
 uv run rag-bench rlaif-label-pairs \

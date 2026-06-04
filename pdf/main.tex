@@ -38,7 +38,7 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, answer/context/pairwise-label summaries và Qwen KV estimates \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
 Trạng thái test gần nhất & \texttt{195 passed} \\
@@ -63,6 +63,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average và oracle-logged baselines.
   \item AI-judge held-out hiện tại: full MiMo answer-label run trên Kaggle đã hoàn tất; reward được rebuild bằng \texttt{--answer-labels}, rerun split/train/eval và ghi report \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}.
   \item Direct pairwise audit hiện tại: chạy MiMo trên 50 reward-derived preference pairs, ghi 50 valid JSON labels, 2 ambiguous timeouts, 41 A wins, 7 B wins và agreement 0.854 trên non-ambiguous decisions; report nằm ở \texttt{docs/reports/phase1d\_rlaif\_pairwise\_mimo50.md}.
+  \item Pairwise calibration diagnostics hiện tại: thêm \texttt{scripts/diagnose\_rlaif\_pairwise\_calibration.py}; MiMo-50 diagnostics ghi 38 small quality/support delta pairs, 35 cheaper-wins-when-tied và 5 scalar-over-quality disagreements.
 \end{itemize}
 
 Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit thật, \textbf{chưa} có full context-level judge run, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
@@ -216,6 +217,25 @@ Mean confidence & 0.914 \\
 
 Các disagreement đều nằm trong cùng một query group, nơi scalar reward thích action có quality/support score cao hơn một chút, còn direct pairwise judge xem hai câu trả lời đều acceptable hoặc đều là correct abstention rồi chọn action rẻ hơn. Điều này cho thấy hướng calibration tiếp theo nên giảm ảnh hưởng của quality delta nhỏ khi direct judge đánh dấu answer quality/evidence support là tie.
 
+Script \texttt{scripts/diagnose\_rlaif\_pairwise\_calibration.py} join pairwise labels với reward/action rows để tìm candidate calibration pattern. Với ngưỡng candidate \texttt{quality=0.10} và \texttt{support=0.20}, MiMo-50 diagnostics có kết quả:
+
+\begin{center}
+\begin{tabular}{l r}
+\toprule
+Metric & Value \\
+\midrule
+Valid non-ambiguous decisions & 48 \\
+Small quality/support delta pairs & 38 \\
+Cheaper wins when quality/support tied & 35 \\
+Scalar-over-quality disagreements & 5 \\
+Scalar-over-quality disagreement rate & 0.104 \\
+Cheaper-win rate when quality/support tied & 0.921 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Đây là diagnostic analysis-only, chưa đổi công thức reward. Candidate rule sau này nên được bật bằng flag riêng: nếu quality/support gaps nằm trong tie band và không có unsupported-claim risk khác biệt, giảm ảnh hưởng của quality/support delta nhỏ rồi để token, latency và KV efficiency quyết định mạnh hơn.
+
 \subsection{Reward/preference builder}
 
 Command hiện có:
@@ -331,7 +351,7 @@ Thứ tự tiếp theo nên giữ như sau:
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Context judge run}: chạy \texttt{rlaif-label-contexts} trên subset nhỏ sau khi answer-label và pairwise audit đã ổn, rồi dùng labels này để tạo context-sufficiency preferences.
   \item \textbf{Context label report}: chạy \texttt{scripts/summarize\_rlaif\_context\_labels.py} và điền \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md}.
-  \item \textbf{Reward calibration}: dùng MiMo-50 pairwise disagreements để thử calibration nhẹ, đặc biệt giảm ảnh hưởng của quality/support delta nhỏ khi direct pairwise judge đánh dấu quality/support là tie.
+  \item \textbf{Reward calibration candidate}: thêm mode \texttt{reward\_calibration\_v1\_candidate} bằng flag riêng, dùng MiMo-50 pairwise diagnostics để giảm ảnh hưởng của quality/support delta nhỏ khi direct pairwise judge đánh dấu quality/support là tie.
   \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
   \item \textbf{Simple reward model/ranking baseline}: dùng feature table nhẹ khi reward/preference coverage đủ hơn baseline bảng.
   \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.

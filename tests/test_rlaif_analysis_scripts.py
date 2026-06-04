@@ -28,6 +28,10 @@ summarize_pairwise_labels = _load_script(
     "summarize_rlaif_pairwise_labels",
     "scripts/summarize_rlaif_pairwise_labels.py",
 )
+pairwise_calibration = _load_script(
+    "diagnose_rlaif_pairwise_calibration",
+    "scripts/diagnose_rlaif_pairwise_calibration.py",
+)
 kv_estimates = _load_script("estimate_local_qwen_kv_cache", "scripts/estimate_local_qwen_kv_cache.py")
 
 
@@ -240,6 +244,100 @@ def test_summarize_rlaif_pairwise_labels_counts_agreement_and_confidence(tmp_pat
     rendered = summarize_pairwise_labels.render_markdown(summary)
     assert "RLAIF Pairwise Label Summary" in rendered
     assert "Agreement counts compare" in rendered
+
+
+def test_pairwise_calibration_diagnoses_small_delta_cheaper_disagreement(tmp_path: Path) -> None:
+    labels_path = tmp_path / "pairwise_labels.jsonl"
+    rewards_path = tmp_path / "rewards.jsonl"
+    actions_path = tmp_path / "actions.jsonl"
+    _write_jsonl(
+        labels_path,
+        [
+            {
+                "preference_id": "p1",
+                "query_id": "q1",
+                "action_a_id": "a1",
+                "action_b_id": "b1",
+                "chosen": "B",
+                "tie": False,
+                "ambiguous": False,
+                "invalid_json": False,
+                "answer_quality_winner": "tie",
+                "evidence_support_winner": "tie",
+                "short_rationale": "Both answers are acceptable, but B is cheaper.",
+            },
+            {
+                "preference_id": "p2",
+                "query_id": "q2",
+                "action_a_id": "a2",
+                "action_b_id": "b2",
+                "chosen": "A",
+                "tie": False,
+                "ambiguous": False,
+                "invalid_json": False,
+                "answer_quality_winner": "A",
+                "evidence_support_winner": "A",
+            },
+            {
+                "preference_id": "p3",
+                "query_id": "q3",
+                "action_a_id": "a3",
+                "action_b_id": "b3",
+                "chosen": None,
+                "ambiguous": True,
+                "invalid_json": False,
+            },
+        ],
+    )
+    _write_jsonl(
+        rewards_path,
+        [
+            _reward("a1", quality=0.92, support=0.91, token=0.4, latency=0.2, kv=0.4, reward=0.8),
+            _reward("b1", quality=0.90, support=0.90, token=0.1, latency=0.1, kv=0.1, reward=0.7),
+            _reward("a2", quality=1.0, support=1.0, token=0.2, latency=0.2, kv=0.2, reward=0.9),
+            _reward("b2", quality=0.5, support=0.5, token=0.1, latency=0.1, kv=0.1, reward=0.4),
+        ],
+    )
+    _write_jsonl(
+        actions_path,
+        [
+            {"action_id": "a1", "retriever": "bm25", "context_policy": "evidence-aware", "budget_chars": 4000},
+            {"action_id": "b1", "retriever": "bm25", "context_policy": "adaptive-heuristic", "budget_chars": 16000},
+        ],
+    )
+
+    summary = pairwise_calibration.diagnose_pairwise_calibration(
+        labels_path=labels_path,
+        rewards_path=rewards_path,
+        actions_path=actions_path,
+        quality_tie_threshold=0.03,
+        support_tie_threshold=0.03,
+    )
+
+    assert summary["label_count"] == 3
+    assert summary["valid_decision_count"] == 2
+    assert summary["small_quality_delta_pairs"] == 1
+    assert summary["cheaper_wins_when_quality_tied"] == 1
+    assert summary["scalar_over_quality_disagreements"] == 1
+    assert summary["query_counts_for_scalar_over_quality_disagreements"] == {"q1": 1}
+    assert summary["suggested_delta_threshold"]["quality"] == 0.020000000000000018
+    rendered = pairwise_calibration.render_markdown(summary)
+    assert "RLAIF Pairwise Calibration Diagnostics" in rendered
+    assert "Both answers are acceptable" in rendered
+
+
+def _reward(action_id: str, *, quality: float, support: float, token: float, latency: float, kv: float, reward: float) -> dict:
+    return {
+        "action_id": action_id,
+        "reward": reward,
+        "reward_components": {
+            "quality": quality,
+            "evidence_support": support,
+            "token_cost_norm": token,
+            "latency_norm": latency,
+            "kv_cost_norm": kv,
+        },
+    }
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
