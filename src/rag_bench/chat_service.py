@@ -275,8 +275,8 @@ class RagChatService:
                     max_completion_tokens=self.config.max_completion_tokens if max_tokens is None else max_tokens,
                 )
                 if generation.error:
-                    raise RuntimeError(generation.error)
-                answer = _format_dictionary_answer(retrieval.hits, generation.answer)
+                    retrieval_metadata["dictionary_generation_error"] = generation.error
+                answer = format_dictionary_answer(retrieval.hits, generation.answer)
             else:
                 generation = GenerationResult(
                     answer="",
@@ -1283,7 +1283,9 @@ def _format_image_answer(query: str, hits: list[RetrievalHit], *, language: str 
     return f"Found {len(hits)} image result(s) for '{query}'."
 
 
-def _format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str:
+def format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str:
+    if not hits:
+        return ""
     first = hits[0]
     raw = str(first.metadata.get("raw_docx_text") or first.text or "").strip()
     header = f"Mục từ gốc [{first.doc_id}]:"
@@ -1294,6 +1296,9 @@ def _format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str
     if cleaned:
         parts.append("Giải thích:\n" + cleaned)
     return "\n\n".join(parts)
+
+
+_format_dictionary_answer = format_dictionary_answer
 
 
 def _format_no_dictionary_answer(query: str) -> str:

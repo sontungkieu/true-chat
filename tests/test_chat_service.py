@@ -196,6 +196,51 @@ class FakeImageRewriteLLM(FakeLLM):
         )
 
 
+class FakeEmptyDictionaryLLM(FakeLLM):
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_completion_tokens: int = 512,
+    ) -> GenerationResult:
+        self.messages = messages
+        self.model = model
+        self.temperature = temperature
+        self.max_completion_tokens = max_completion_tokens
+        return GenerationResult(
+            answer="",
+            key_alias=self.alias,
+            attempted_aliases=[self.alias],
+            latency_s=0.03,
+            retry_count=0,
+        )
+
+
+class FakeErrorDictionaryLLM(FakeLLM):
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_completion_tokens: int = 512,
+    ) -> GenerationResult:
+        self.messages = messages
+        self.model = model
+        self.temperature = temperature
+        self.max_completion_tokens = max_completion_tokens
+        return GenerationResult(
+            answer="",
+            key_alias=self.alias,
+            attempted_aliases=[self.alias],
+            latency_s=0.03,
+            retry_count=0,
+            error="provider timeout",
+        )
+
+
 class FakeKeywordLLM(FakeLLM):
     def __init__(self) -> None:
         super().__init__()
@@ -622,6 +667,55 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     assert lookup["object"] == "dictionary.lookup"
     assert lookup["retriever"] == "dictionary-graph"
     assert lookup["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
+
+
+def test_dictionary_mode_returns_raw_entry_when_generation_is_empty() -> None:
+    dictionary_retriever = FakeDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=dictionary_retriever,
+        llm=FakeEmptyDictionaryLLM(),
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict AMONIT"}], language="vi")
+    content = result.response["choices"][0]["message"]["content"]
+
+    assert content == "Mục từ gốc [A-0001]:\n\nAMONIT, thuốc nổ phá."
+    assert "Giải thích:" not in content
+
+
+def test_dictionary_mode_falls_back_to_raw_entry_on_generation_error() -> None:
+    dictionary_retriever = FakeDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=dictionary_retriever,
+        llm=FakeErrorDictionaryLLM(),
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict AMONIT"}], language="vi")
+    content = result.response["choices"][0]["message"]["content"]
+
+    assert content.startswith("Mục từ gốc [A-0001]:")
+    assert "AMONIT, thuốc nổ phá." in content
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_generation_error"] == "provider timeout"
 
 
 def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:

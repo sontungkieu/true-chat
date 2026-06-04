@@ -687,6 +687,20 @@ class DictionaryGraphRetriever:
                 for index, strict_text in enumerate(self._strict_texts):
                     if phrase in f" {strict_text} ":
                         index_scores[index] = max(index_scores.get(index, 0.0), phrase_score)
+                        match_modes[index] = "strict"
+                        strict_canonical_match = True
+            elif 2 <= len(query_key) <= 3 and query_key != _dictionary_fold_text(query_key):
+                phrase = f" {query_key} "
+                for index, strict_text in enumerate(self._strict_texts):
+                    if phrase in f" {strict_text} ":
+                        text_score = 0.9 + _dictionary_abbreviation_priority(
+                            query_key,
+                            self._documents[index],
+                            alias_exact=False,
+                        )
+                        index_scores[index] = max(index_scores.get(index, 0.0), text_score)
+                        match_modes[index] = "strict"
+                        strict_canonical_match = True
             elif len(query_key) >= 3:
                 phrase = f" {query_key} "
                 for index, strict_text in enumerate(self._strict_texts):
@@ -698,7 +712,12 @@ class DictionaryGraphRetriever:
                 match_modes[index] = "strict"
                 strict_canonical_match = True
             for index in self._alias_strict_indexes.get(query_key, []):
-                index_scores[index] = max(index_scores.get(index, 0.0), 1.35)
+                alias_score = 1.35 + _dictionary_abbreviation_priority(
+                    query_key,
+                    self._documents[index],
+                    alias_exact=True,
+                )
+                index_scores[index] = max(index_scores.get(index, 0.0), alias_score)
                 match_modes[index] = "strict"
                 strict_canonical_match = True
             for index in self._concept_strict_indexes.get(query_key, []):
@@ -735,10 +754,20 @@ class DictionaryGraphRetriever:
                     index_scores[index] = max(index_scores.get(index, 0.0), 1.55)
                     match_modes[index] = "folded"
                 for index, score in self._abbreviation_scores.get(query_key, {}).items():
-                    index_scores[index] = max(index_scores.get(index, 0.0), score)
+                    boosted_score = score + _dictionary_abbreviation_priority(
+                        query_key,
+                        self._documents[index],
+                        alias_exact=False,
+                    )
+                    index_scores[index] = max(index_scores.get(index, 0.0), boosted_score)
                     match_modes[index] = "folded"
                 for index in self._alias_indexes.get(query_key, []):
-                    index_scores[index] = max(index_scores.get(index, 0.0), 1.15)
+                    alias_score = 1.15 + _dictionary_abbreviation_priority(
+                        query_key,
+                        self._documents[index],
+                        alias_exact=True,
+                    )
+                    index_scores[index] = max(index_scores.get(index, 0.0), alias_score)
                     match_modes[index] = "folded"
                 for index in self._concept_indexes.get(query_key, []):
                     index_scores[index] = max(index_scores.get(index, 0.0), 0.75)
@@ -1281,8 +1310,7 @@ def _dictionary_query_key(text: str) -> str:
 
 
 def _dictionary_query_keys(text: str) -> list[str]:
-    normalized = re.sub(r"\s+", " ", text).strip().lower()
-    normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized)
+    normalized = _dictionary_query_text(text, strict=False)
     segments = [segment.strip() for segment in re.split(r"[,;]+", normalized) if segment.strip()]
     keys: list[str] = []
     for segment in segments or [normalized]:
@@ -1291,8 +1319,7 @@ def _dictionary_query_keys(text: str) -> list[str]:
 
 
 def _dictionary_strict_query_keys(text: str) -> list[str]:
-    normalized = re.sub(r"\s+", " ", text).strip().lower()
-    normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized)
+    normalized = _dictionary_query_text(text, strict=True)
     segments = [segment.strip() for segment in re.split(r"[,;]+", normalized) if segment.strip()]
     keys: list[str] = []
     for segment in segments or [normalized]:
@@ -1301,11 +1328,28 @@ def _dictionary_strict_query_keys(text: str) -> list[str]:
 
 
 def _dictionary_highlight_terms(text: str) -> tuple[str, ...]:
-    normalized = re.sub(r"\s+", " ", text).strip()
-    normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized, flags=re.IGNORECASE)
+    normalized = _dictionary_query_text(text, strict=True)
     terms = [segment.strip() for segment in re.split(r"[,;]+", normalized) if segment.strip()]
     terms = [term for term in terms if len(_dictionary_fold_text(term)) >= 2]
     return _dedupe_nonempty(terms)
+
+
+def _dictionary_query_text(text: str, *, strict: bool) -> str:
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+    normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"^(tra|tìm|tim|lookup|xem|giải thích|giai thich)\s+",
+        "",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\s+(là gì|la gi|nghĩa là gì|nghia la gi|trong từ điển(?: pháo binh)?|trong tu dien(?: phao binh)?)$",
+        "",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _dictionary_headword_partial_match(query_key: str, headword_key: str) -> bool:
@@ -1362,6 +1406,49 @@ def _abbreviation_score(abbreviation_key: str, headword_key: str, alias_keys: li
     if abbreviation_key in alias_keys:
         return 0.75
     return 0.6
+
+
+def _dictionary_abbreviation_priority(query_key: str, doc: Document, *, alias_exact: bool) -> float:
+    compact_query = str(query_key or "").replace(" ", "")
+    if not _dictionary_short_abbreviation_key(compact_query):
+        return 0.0
+    headword = str(doc.metadata.get("headword") or doc.title or "")
+    priority = 0.0
+    strict_initial = _dictionary_initial_key(headword, strict=True)
+    folded_initial = _dictionary_initial_key(headword, strict=False)
+    folded_query = _dictionary_fold_text(compact_query).replace(" ", "")
+    if compact_query in {strict_initial, folded_initial} or folded_query in {strict_initial, folded_initial}:
+        priority += 0.18
+    if alias_exact:
+        priority += 0.35
+    headword_folded = _dictionary_fold_text(headword)
+    alias_folded = {_dictionary_fold_text(alias) for alias in _metadata_text_values(doc.metadata.get("aliases"))}
+    if headword_folded and headword_folded in alias_folded:
+        priority += 0.08
+    if 1 <= len(_dictionary_strict_text(headword).split()) <= 2:
+        priority += 0.12
+    if _dictionary_person_like_entry(doc):
+        priority -= 0.28
+    return priority
+
+
+def _dictionary_short_abbreviation_key(value: str) -> bool:
+    compact = re.sub(r"\W+", "", str(value or ""), flags=re.UNICODE)
+    return 2 <= len(compact) <= 8 and any(character.isalpha() for character in compact)
+
+
+def _dictionary_initial_key(text: str, *, strict: bool) -> str:
+    normalized = _dictionary_strict_text(text) if strict else _dictionary_fold_text(text)
+    return "".join(token[0] for token in normalized.split() if token and token[0].isalpha())
+
+
+def _dictionary_person_like_entry(doc: Document) -> bool:
+    metadata = doc.metadata
+    text = _dictionary_fold_text(" ".join([str(doc.title or ""), doc.text[:500], " ".join(_metadata_text_values(metadata.get("concepts")))]))
+    markers = ("anh hung", "ah llvtnd", "nhap ngu", "dai ta", "que ", "sinh nam", "1927")
+    if sum(1 for marker in markers if marker in text) >= 2:
+        return True
+    return False
 
 
 def _metadata_text_values(value: Any) -> list[str]:

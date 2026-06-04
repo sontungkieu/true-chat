@@ -15,6 +15,14 @@ from rag_bench.chat_service import (
     DEFAULT_MIMO_MODELS,
     DEFAULT_PROXY_MODEL_ID,
 )
+from rag_bench.dictionary_autoresearch import (
+    DEFAULT_AUTORESEARCH_ARTIFACT,
+    DEFAULT_AUTORESEARCH_LETTERS,
+    DEFAULT_AUTORESEARCH_OUTPUT_DIR,
+    DictionaryAutoresearchConfig,
+    run_dictionary_autoresearch,
+)
+from rag_bench.dictionary import DEFAULT_DICTIONARY_SOURCE_DIR
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.runner import RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
@@ -31,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "serve":
         return _serve(args)
+    if args.command == "autoresearch-dictionary":
+        return _autoresearch_dictionary(args)
     parser.print_help()
     return 1
 
@@ -166,6 +176,66 @@ def build_parser() -> argparse.ArgumentParser:
         default="per-key",
         help="Use per-key buckets or one shared bucket for org-level limits.",
     )
+
+    autoresearch_parser = subparsers.add_parser(
+        "autoresearch-dictionary",
+        help="Run offline Red/Blue autoresearch over the local PB dictionary.",
+    )
+    autoresearch_parser.add_argument("--artifact-dir", type=Path, default=DEFAULT_AUTORESEARCH_ARTIFACT)
+    autoresearch_parser.add_argument("--source-dir", type=Path, default=DEFAULT_DICTIONARY_SOURCE_DIR)
+    autoresearch_parser.add_argument(
+        "--letters",
+        default=",".join(DEFAULT_AUTORESEARCH_LETTERS),
+        help="Comma-separated fallback DOCX letters.",
+    )
+    autoresearch_parser.add_argument("--output-root", type=Path, default=DEFAULT_AUTORESEARCH_OUTPUT_DIR)
+    autoresearch_parser.add_argument("--run-name", default=None)
+    autoresearch_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume an interrupted autoresearch run from its existing cases.jsonl/rounds.jsonl.",
+    )
+    autoresearch_parser.add_argument(
+        "--feedback-run-dir",
+        type=Path,
+        action="append",
+        default=[],
+        help="Previous autoresearch run directory to mine for adaptive Red cases. Repeatable.",
+    )
+    autoresearch_parser.add_argument("--rounds", type=int, default=1)
+    autoresearch_parser.add_argument("--limit", type=int, default=20)
+    autoresearch_parser.add_argument("--top-k", type=int, default=5)
+    autoresearch_parser.add_argument("--max-context-chars", type=int, default=2500)
+    autoresearch_parser.add_argument("--max-completion-tokens", type=int, default=512)
+    autoresearch_parser.add_argument("--source-classification", choices=("semi-private", "private"), default="semi-private")
+    autoresearch_parser.add_argument("--provider", choices=("mimo", "local"), default="mimo")
+    autoresearch_parser.add_argument("--model", default="mimo-v2.5-pro")
+    autoresearch_parser.add_argument("--dry-run-model", action="store_true", help="Skip answer generation and LLM judging.")
+    autoresearch_parser.add_argument(
+        "--trusted-model",
+        action="append",
+        default=[],
+        help="Local model id allowed to process private dictionary sources. Repeatable.",
+    )
+    autoresearch_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"))
+    autoresearch_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
+    autoresearch_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
+    autoresearch_parser.add_argument("--local-env-file", type=Path, default=None)
+    autoresearch_parser.add_argument("--local-api-key-var", default="LOCAL_API_KEY")
+    autoresearch_parser.add_argument("--local-base-url", default="http://127.0.0.1:8000/v1")
+    autoresearch_parser.add_argument("--confirmations", type=int, default=2)
+    autoresearch_parser.add_argument(
+        "--judge-json-retries",
+        type=int,
+        default=2,
+        help="Retry answer judge calls when the model does not return parseable JSON.",
+    )
+    autoresearch_parser.add_argument(
+        "--no-strict-acronym-rank",
+        action="store_true",
+        help="Do not require short abbreviation/adversarial acronym cases to rank the expected entry first.",
+    )
+    autoresearch_parser.add_argument("--quiet", action="store_true", help="Disable autoresearch progress logs.")
     return parser
 
 
@@ -346,6 +416,49 @@ def _serve(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001 - CLI should show concise startup errors.
         print(f"rag-bench serve failed: {exc}", file=sys.stderr)
         return 1
+    return 0
+
+
+def _autoresearch_dictionary(args: argparse.Namespace) -> int:
+    letters = tuple(item.strip() for item in args.letters.split(",") if item.strip())
+    if not letters:
+        print("--letters must include at least one value.", file=sys.stderr)
+        return 2
+    config = DictionaryAutoresearchConfig(
+        artifact_dir=args.artifact_dir,
+        source_dir=args.source_dir,
+        letters=letters,
+        output_root=args.output_root,
+        run_name=args.run_name,
+        rounds=args.rounds,
+        limit=args.limit,
+        top_k=args.top_k,
+        max_context_chars=args.max_context_chars,
+        max_completion_tokens=args.max_completion_tokens,
+        source_classification=args.source_classification,
+        provider=args.provider,
+        model=args.model,
+        dry_run_model=args.dry_run_model,
+        trusted_models=tuple(args.trusted_model or ()),
+        mimo_env_file=args.mimo_env_file,
+        mimo_api_key_var=args.mimo_api_key_var,
+        mimo_base_url=args.mimo_base_url,
+        local_env_file=args.local_env_file,
+        local_api_key_var=args.local_api_key_var,
+        local_base_url=args.local_base_url,
+        confirmations=args.confirmations,
+        judge_json_retries=args.judge_json_retries,
+        strict_acronym_rank=not args.no_strict_acronym_rank,
+        progress=not args.quiet,
+        feedback_run_dirs=tuple(args.feedback_run_dir or ()),
+        resume=args.resume,
+    )
+    try:
+        summary = run_dictionary_autoresearch(config)
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rag-bench autoresearch-dictionary failed: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 

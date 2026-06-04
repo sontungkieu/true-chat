@@ -335,6 +335,28 @@ Status: implemented on `main`; the current working tree hardens the Kaggle full-
    - Show the deployed runtime version in Local settings as the active commit id.
    - Add a desktop-only draggable resize handle for the document side panel while keeping mobile full-screen.
 
+38. Add dictionary autoresearch self-play
+   - Status: implemented on branch `feat/dictionary-autoresearch-selfplay`.
+   - Add offline `rag-bench autoresearch-dictionary` Red/Blue loop for dictionary semantic failure discovery.
+   - Generate adversarial dictionary cases from `semantic_corner_cases.md` seeds plus the local artifact/source index.
+   - Judge retrieval truth locally, optionally call MiMo/local model for answer truth, and cluster stable failures before creating Codex tasks.
+   - Write every run into an isolated `runs/dictionary_autoresearch/<timestamp-or-run-name>/` folder.
+   - Write `cases.jsonl`, `rounds.jsonl`, `failures.jsonl`, `coordinator_decisions.jsonl`, `coordinator_decisions.md`, `summary.md`, `codex_session.md`, and `codex_tasks.md`.
+   - Append `rounds.jsonl` incrementally after each case, print CLI progress unless `--quiet` is set, and retry answer judge calls that return invalid JSON.
+   - Add `--resume` for interrupted runs: reuse existing `cases.jsonl`, skip completed `(round_index, case_id)` rows in `rounds.jsonl`, append missing evaluations, and finalize summary/coordinator outputs.
+   - Judge dictionary answers through the same user-facing formatter as production, so raw dictionary entries are included before optional model explanations.
+   - Add deterministic raw-entry answer judgement: expected formatted entry passes without LLM judge, while a formatted answer headed by the wrong entry id fails immediately.
+   - Harden dictionary chat answers so empty or errored generation still returns the retrieved raw entry and records provider errors in metadata.
+   - Add strict accented abbreviation evidence for dictionary retrieval, covering `ÂK` so `ẨM KẾ` outranks folded/inferred `AK` matches such as `ÁP KẾ`.
+   - Add short-abbreviation scoring that keeps `PB` on `PHÁO BINH`, downweights biography-like person entries for bare acronym lookup, and keeps `BĐC` on `BÀN ĐẾ CỐI` ahead of `BÙI ĐÌNH CƯ` unless context says otherwise.
+   - Strip natural lookup wrappers such as `tra`, `... là gì`, and `... trong từ điển pháo binh` before dictionary direct matching.
+   - Gate Red-generated abbreviations on alias/text evidence and choose corpus-distinctive definition phrases so the coordinator does not chase synthetic false positives.
+   - Add Red acronym-collision strategy: mine multi-meaning abbreviations, create context probes such as `BĐC tháo súng` / `BĐC 1951`, mark ambiguous bare generated abbreviations, and require rank #1 for seed/feedback/context acronym cases by default.
+   - Add adaptive Red feedback via repeatable `--feedback-run-dir`: confirmed failures, candidate failures, and near-miss ranks are replayed or mutated before broad corpus exploration; rejected coordinator decisions are skipped.
+   - Mutate candidate/near-miss feedback queries into natural lookup wrappers (`<term> là gì`, `tra <term>`) so the next run catches user-facing lookup normalization failures.
+   - Keep Codex as coordinator: Red/Blue agents produce evidence only; coordinator decisions gate worker tasks or code edits.
+   - Keep private source classifications blocked from MiMo/Groq by requiring a trusted local model.
+
 ## Verification
 
 - `uv lock --check`
@@ -364,6 +386,7 @@ Status: implemented on `main`; the current working tree hardens the Kaggle full-
 - Confirm `/v1/dictionary/lookup` returns graph metadata for typed graph matches while exact/direct strict matches remain ranked first.
 - Confirm `score_min`/`score_max` filter sources before prompt construction and `sort_by_score` reranks surviving hits by top score.
 - Validate a production dictionary graph run with `uv run --frozen python scripts/validate_dictionary_graph.py --run-dir runs/pb_dictionary_abcdf_prod_graph --min-entry-coverage 0.98 --max-invalid-edge-rate 0.03`.
+- Run dictionary autoresearch smoke with `uv run --frozen rag-bench autoresearch-dictionary --dry-run-model --limit 5 --rounds 1`.
 
 ## Benchmark Snapshot
 

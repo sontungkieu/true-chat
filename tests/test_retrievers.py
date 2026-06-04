@@ -374,6 +374,18 @@ def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> 
             text="PHÁO BINH BIÊN CHẾ, gọi chung các phân đội pháo binh.",
             metadata={"kind": "dictionary", "headword": "PHÁO BINH BIÊN CHẾ", "aliases": ["PBBC"]},
         ),
+        Document(
+            doc_id="base:N-0011",
+            title="NGÀY TRUYỀN THỐNG PHÁO BINH",
+            text="NGÀY TRUYỀN THỐNG PHÁO BINH, ngày truyền thống vẻ vang của PB QĐNDVN.",
+            metadata={"kind": "dictionary", "headword": "NGÀY TRUYỀN THỐNG PHÁO BINH", "aliases": ["PB"]},
+        ),
+        Document(
+            doc_id="base:P-0154",
+            title="PHÓNG BỒI",
+            text="PHÓNG BỒI, phương pháp bắn trong pháo binh. PB dùng trong một số tài liệu.",
+            metadata={"kind": "dictionary", "headword": "PHÓNG BỒI", "aliases": ["PB"]},
+        ),
     ]
     retriever = DictionaryGraphRetriever()
     retriever.build(docs)
@@ -383,6 +395,93 @@ def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> 
 
     assert pb.hits[0].doc_id == "base:P-0023"
     assert pbbc.hits[0].doc_id == "base:P-0025"
+
+
+def test_dictionary_graph_retriever_does_not_promote_person_initials_over_technical_abbreviation() -> None:
+    docs = [
+        Document(
+            doc_id="base:B-0158",
+            title="BÙI ĐÌNH CƯ",
+            text=(
+                "BÙI ĐÌNH CƯ (Bùi Văn Mười), Ah LLVTND. "
+                "Trong trận đánh, BĐC dũng cảm dùng đèn pin chiếu sáng mục tiêu."
+            ),
+            metadata={
+                "kind": "dictionary",
+                "headword": "BÙI ĐÌNH CƯ",
+                "aliases": ["Bùi Văn Mười"],
+                "category": "khác",
+                "concepts": ["Anh hùng Lực lượng vũ trang nhân dân"],
+            },
+        ),
+        Document(
+            doc_id="base:B-0011",
+            title="BÀN ĐẾ CỐI",
+            text="BÀN ĐẾ CỐI, bộ phận của cối dùng làm bệ tì. BĐC có thể tháo rời súng để mang vác.",
+            metadata={"kind": "dictionary", "headword": "BÀN ĐẾ CỐI", "concepts": ["cối", "bàn đế"]},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "BĐC"), top_k=2)
+
+    assert result.hits[0].doc_id == "base:B-0011"
+    assert result.hits[1].doc_id == "base:B-0158"
+
+
+def test_dictionary_graph_retriever_strips_lookup_wrappers_for_abbreviations() -> None:
+    docs = [
+        Document(
+            doc_id="base:P-0023",
+            title="PHÁO BINH",
+            text="PHÁO BINH, lực lượng tác chiến. PB là binh chủng hỏa lực.",
+            metadata={"kind": "dictionary", "headword": "PHÁO BINH", "aliases": ["PB", "Pháo binh"]},
+        ),
+        Document(
+            doc_id="base:B-0007",
+            title="BÃI TẬP CHUYÊN NGÀNH",
+            text="BÃI TẬP CHUYÊN NGÀNH, bãi tập của binh chủng. BTCN có nhiều khí tài.",
+            metadata={"kind": "dictionary", "headword": "BÃI TẬP CHUYÊN NGÀNH", "aliases": ["BTCN"]},
+        ),
+        Document(
+            doc_id="base:B-0011",
+            title="BÀN ĐẾ CỐI",
+            text="BÀN ĐẾ CỐI, bộ phận của cối. BĐC có thể tháo rời súng để mang vác.",
+            metadata={"kind": "dictionary", "headword": "BÀN ĐẾ CỐI"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    assert retriever.search(Query("q1", "pb là gì"), top_k=3).hits[0].doc_id == "base:P-0023"
+    assert retriever.search(Query("q2", "tra BĐC"), top_k=3).hits[0].doc_id == "base:B-0011"
+    assert retriever.search(Query("q3", "BTCN trong từ điển pháo binh"), top_k=3).hits[0].doc_id == "base:B-0007"
+
+
+def test_dictionary_graph_retriever_prefers_strict_accented_abbreviation_text_evidence() -> None:
+    docs = [
+        Document(
+            doc_id="base:A-0007",
+            title="ÁP KẾ",
+            text="ÁP KẾ, khí tài đo áp suất. Có AK lỏng và AK kim loại.",
+            metadata={"kind": "dictionary", "headword": "ÁP KẾ"},
+        ),
+        Document(
+            doc_id="base:A-0011",
+            title="ẨM KẾ",
+            text="ẨM KẾ, khí tài khí tượng đo độ ẩm không khí. Trong ÂK sử dụng các chất liệu nhạy.",
+            metadata={"kind": "dictionary", "headword": "ẨM KẾ"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "ÂK"), top_k=2)
+
+    assert result.hits[0].doc_id == "base:A-0011"
+    assert result.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert result.hits[0].metadata["dictionary_direct_score"] >= 0.9
 
 
 def test_dictionary_graph_retriever_prefers_exact_phrase_mentions_over_generic_headwords() -> None:
