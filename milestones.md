@@ -90,5 +90,7 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `rlaif-eval` to report mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, coverage, and oracle gap.
 - Keep selector artifacts offline-only with `runtime_default_replacement=false`; they do not replace `adaptive-heuristic` in runtime defaults.
 - Run a Phase 1D selector smoke on real Phase 1C.3 outputs joined with RAGAS post-hoc answer relevancy and document it in `docs/reports/phase1d_rlaif_selector_smoke.md`.
-- Keep held-out query evaluation pending; the current selector smoke is a resubstitution sanity check, not a generalization claim.
+- Add `rlaif-split` for deterministic held-out splits by `benchmark + query_id`, keeping all actions for the same query in one split and dropping cross-split preferences.
+- Run held-out selector evaluation with `--split-manifest` and document it in `docs/reports/phase1d_rlaif_heldout_eval.md`.
+- Keep larger held-out evaluation pending until answer/context labels are richer than RAGAS answer relevancy.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

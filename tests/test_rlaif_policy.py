@@ -110,6 +110,55 @@ def test_eval_keeps_missing_reward_separate_from_zero(tmp_path: Path) -> None:
     assert cheapest["mean_reward"] == 0.72
 
 
+def test_oracle_gap_is_paired_on_selected_query_groups(tmp_path: Path) -> None:
+    rewards_path = tmp_path / "rlaif_rewards.jsonl"
+    policy_path = tmp_path / "rlaif_policy.json"
+    rows = [
+        _reward("q1", "bm25", "legacy", 0.10, 0.20, token=0.60),
+        _reward("q1", "bm25", "evidence-aware", 0.90, 0.95, token=0.30),
+        _reward("q2", "bm25", "evidence-aware", 0.80, 0.85, token=0.32),
+    ]
+    _write_jsonl(rewards_path, rows)
+    legacy_signature = rows[0]["metadata"]["action_signature"]  # type: ignore[index]
+    legacy_signature_id = rows[0]["metadata"]["action_signature_id"]  # type: ignore[index]
+    evidence_signature = rows[1]["metadata"]["action_signature"]  # type: ignore[index]
+    evidence_signature_id = rows[1]["metadata"]["action_signature_id"]  # type: ignore[index]
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "rlaif-policy-v1",
+                "runtime_default_replacement": False,
+                "policies": {
+                    "fixed": {
+                        "policy_type": "fixed",
+                        "signature_id": legacy_signature_id,
+                        "signature": legacy_signature,
+                    },
+                    "cheapest": {"policy_type": "cheapest"},
+                    "best_average": {
+                        "policy_type": "best_average",
+                        "signatures": [
+                            {"signature_id": legacy_signature_id, "signature": legacy_signature},
+                            {"signature_id": evidence_signature_id, "signature": evidence_signature},
+                        ],
+                    },
+                    "oracle_logged": {"policy_type": "oracle_logged"},
+                },
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = evaluate_offline_selector_policies(RlaifEvalConfig(rewards_path=rewards_path, policy_path=policy_path))
+
+    fixed = summary["policy_metrics"]["fixed"]
+    assert fixed["selected_count"] == 1
+    assert fixed["mean_reward"] == 0.10
+    assert fixed["oracle_gap"] == 0.80
+
+
 def test_train_requires_scored_rewards(tmp_path: Path) -> None:
     rewards_path = tmp_path / "rlaif_rewards.jsonl"
     _write_jsonl(rewards_path, [_reward("q1", "bm25", "legacy", None, None)])

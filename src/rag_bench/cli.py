@@ -26,6 +26,7 @@ from rag_bench.rlaif_policy import (
     train_offline_selector_policies,
 )
 from rag_bench.rlaif_reward import RlaifRewardConfig, build_rlaif_rewards
+from rag_bench.rlaif_split import RlaifSplitConfig, split_rlaif_by_query
 from rag_bench.runner import RunConfig, run_benchmark
 from rag_bench.server import ServeConfig, serve_proxy
 
@@ -48,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
         return _rlaif_build(args)
     if args.command == "rlaif-reward":
         return _rlaif_reward(args)
+    if args.command == "rlaif-split":
+        return _rlaif_split(args)
     if args.command == "rlaif-train":
         return _rlaif_train(args)
     if args.command == "rlaif-eval":
@@ -292,6 +295,16 @@ def build_parser() -> argparse.ArgumentParser:
     rlaif_reward_parser.add_argument("--min-reward-delta", type=float, default=0.03)
     rlaif_reward_parser.add_argument("--max-quality-regret", type=float, default=0.02)
 
+    rlaif_split_parser = subparsers.add_parser(
+        "rlaif-split",
+        help="Create deterministic query-level train/eval splits for RLAIF rewards and preferences.",
+    )
+    rlaif_split_parser.add_argument("--rewards", type=Path, required=True, help="Path to rlaif_rewards.jsonl.")
+    rlaif_split_parser.add_argument("--preferences", type=Path, required=True, help="Path to rlaif_preferences.jsonl.")
+    rlaif_split_parser.add_argument("--output-dir", type=Path, required=True, help="Directory for split outputs.")
+    rlaif_split_parser.add_argument("--train-ratio", type=float, default=0.8)
+    rlaif_split_parser.add_argument("--seed", type=int, default=42)
+
     rlaif_train_parser = subparsers.add_parser(
         "rlaif-train",
         help="Build offline selector baseline policy artifacts from RLAIF reward rows.",
@@ -321,6 +334,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional markdown output path for the selector evaluation summary.",
+    )
+    rlaif_eval_parser.add_argument(
+        "--split-manifest",
+        type=Path,
+        default=None,
+        help="Optional split_manifest.json proving held-out query evaluation.",
     )
     return parser
 
@@ -635,6 +654,47 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rlaif_split(args: argparse.Namespace) -> int:
+    if not 0.0 < args.train_ratio < 1.0:
+        print("--train-ratio must be greater than 0 and less than 1.", file=sys.stderr)
+        return 2
+    try:
+        summary = split_rlaif_by_query(
+            RlaifSplitConfig(
+                rewards_path=args.rewards,
+                preferences_path=args.preferences,
+                output_dir=args.output_dir,
+                train_ratio=args.train_ratio,
+                seed=args.seed,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rlaif-split failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "output_dir": summary["output_dir"],
+                "seed": summary["seed"],
+                "train_ratio": summary["train_ratio"],
+                "train_query_count": summary["train_query_count"],
+                "eval_query_count": summary["eval_query_count"],
+                "train_reward_rows": summary["train_reward_rows"],
+                "eval_reward_rows": summary["eval_reward_rows"],
+                "train_preferences": summary["train_preferences"],
+                "eval_preferences": summary["eval_preferences"],
+                "dropped_cross_split_preferences": summary["dropped_cross_split_preferences"],
+                "dropped_missing_action_preferences": summary["dropped_missing_action_preferences"],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def _rlaif_train(args: argparse.Namespace) -> int:
     try:
         summary = train_offline_selector_policies(
@@ -675,6 +735,7 @@ def _rlaif_eval(args: argparse.Namespace) -> int:
                 rewards_path=args.rewards,
                 policy_path=args.policy,
                 out_md=args.out_md,
+                split_manifest_path=args.split_manifest,
             )
         )
     except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
@@ -687,6 +748,8 @@ def _rlaif_eval(args: argparse.Namespace) -> int:
                 "query_group_count": summary["query_group_count"],
                 "policy_metrics": summary["policy_metrics"],
                 "runtime_default_replacement": summary["runtime_default_replacement"],
+                "held_out_query_eval": summary["held_out_query_eval"],
+                "split_manifest_path": summary["split_manifest_path"],
             },
             ensure_ascii=False,
             indent=2,

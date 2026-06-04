@@ -38,10 +38,10 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-reward}, \texttt{rlaif-train}, \texttt{rlaif-eval}, hardening \texttt{ai\_judge} provenance và optional full-context budget \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-reward}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, hardening \texttt{ai\_judge} provenance và optional full-context budget \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{158 passed} \\
+Trạng thái test gần nhất & \texttt{164 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -57,7 +57,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item \texttt{78cf83d}: thêm \texttt{rlaif-build} để đọc BudgetRAG output và ghi các dataset RLAIF chuẩn hóa.
   \item Hardening hiện tại: chuẩn hóa AI judge provenance thành \texttt{ai\_judge} và cho phép full-context/legacy action không có explicit budget.
   \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa.
-  \item Offline selector hiện tại: thêm \texttt{rlaif-train} và \texttt{rlaif-eval} cho fixed, cheapest, best-average và oracle-logged baselines.
+  \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average và oracle-logged baselines.
 \end{itemize}
 
 Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit thật, \textbf{chưa} gọi judge mới, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
@@ -162,16 +162,26 @@ Guardrail quan trọng: nếu feedback thiếu quality hoặc ambiguous, reward 
 Command hiện có:
 
 \begin{verbatim}
-uv run rag-bench rlaif-train \
+uv run rag-bench rlaif-split \
   --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
   --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
-  --output benchmark_results/rlaif/<run-name>/rlaif_policy.json
+  --output-dir benchmark_results/rlaif/<run-name>/split_seed42 \
+  --train-ratio 0.8 \
+  --seed 42
+
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/train_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/split_seed42/train_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json
 
 uv run rag-bench rlaif-eval \
-  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
-  --policy benchmark_results/rlaif/<run-name>/rlaif_policy.json \
-  --out-md benchmark_results/rlaif/<run-name>/rlaif_eval_summary.md
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/eval_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json \
+  --out-md benchmark_results/rlaif/<run-name>/split_seed42/rlaif_eval_summary.md \
+  --split-manifest benchmark_results/rlaif/<run-name>/split_seed42/split_manifest.json
 \end{verbatim}
+
+\texttt{rlaif-split} chia theo \texttt{benchmark + query\_id}, không chia random theo action row. Tất cả action của cùng một query luôn nằm cùng train hoặc eval split. Preference chỉ được giữ nếu cả chosen/rejected action cùng nằm trong train hoặc cùng nằm trong eval; preference cắt ngang split bị drop và được đếm trong manifest.
 
 \texttt{rlaif-train} hiện tạo bốn baseline offline:
 
@@ -182,7 +192,9 @@ uv run rag-bench rlaif-eval \
   \item \texttt{oracle-logged}: upper bound offline, chọn action có reward quan sát cao nhất trong cùng query group.
 \end{itemize}
 
-\texttt{rlaif-eval} báo cáo mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, scored coverage, selection coverage và oracle gap. Policy artifact luôn ghi \texttt{runtime\_default\_replacement=false}; nó là artifact đánh giá offline, không thay runtime default.
+\texttt{rlaif-eval} báo cáo mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, scored coverage, selection coverage và paired oracle gap. Khi truyền \texttt{--split-manifest}, summary ghi \texttt{held\_out\_query\_eval=true}. Policy artifact luôn ghi \texttt{runtime\_default\_replacement=false}; nó là artifact đánh giá offline, không thay runtime default.
+
+Held-out smoke hiện tại dùng split seed 42 trên reward rows đã join RAGAS. Split có 27 train queries, 7 eval queries, 178 train reward rows, 14 eval reward rows, 572 train preferences và 6 eval preferences. Trên eval set, \texttt{best-average} đạt mean reward 0.425 và mean quality 0.538 với coverage 0.889; \texttt{cheapest} đạt mean reward 0.377 và mean quality 0.476 với coverage 1.0. Kết quả này củng cố trade-off chính: tiết kiệm token/KV đơn thuần làm giảm quality, còn selector tốt cần giữ quality guardrail.
 
 \section{Hai điểm đã harden trước reward/preference}
 
@@ -217,6 +229,7 @@ Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Judge labeling stubs}: \texttt{rlaif-label-answers} và \texttt{rlaif-label-contexts} có \texttt{--dry-run}, \texttt{--resume}, \texttt{--limit}, \texttt{--max-errors}; skip sạch nếu thiếu API key.
+  \item \textbf{Richer RLAIF labels}: thêm answer correctness, faithfulness, unsupported claims và context sufficiency trước khi học model phức tạp.
   \item \textbf{Simple reward model/ranking baseline}: dùng feature table nhẹ khi reward/preference coverage đủ hơn baseline bảng.
   \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.
 \end{enumerate}

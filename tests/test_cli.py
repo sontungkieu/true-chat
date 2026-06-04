@@ -196,6 +196,73 @@ def test_cli_rlaif_reward_rejects_negative_weight(capsys) -> None:
     assert "--quality-weight must be non-negative" in captured.err
 
 
+def test_cli_rlaif_split_smoke_with_mocked_splitter(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_split_rlaif_by_query(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "split"),
+            "seed": 42,
+            "train_ratio": 0.8,
+            "train_query_count": 8,
+            "eval_query_count": 2,
+            "train_reward_rows": 80,
+            "eval_reward_rows": 20,
+            "train_preferences": 30,
+            "eval_preferences": 5,
+            "dropped_cross_split_preferences": 4,
+            "dropped_missing_action_preferences": 1,
+        }
+
+    monkeypatch.setattr(cli, "split_rlaif_by_query", fake_split_rlaif_by_query)
+
+    exit_code = cli.main(
+        [
+            "rlaif-split",
+            "--rewards",
+            str(tmp_path / "rlaif_rewards.jsonl"),
+            "--preferences",
+            str(tmp_path / "rlaif_preferences.jsonl"),
+            "--output-dir",
+            str(tmp_path / "split"),
+            "--train-ratio",
+            "0.8",
+            "--seed",
+            "42",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
+    assert seen["config"].preferences_path == tmp_path / "rlaif_preferences.jsonl"
+    assert seen["config"].output_dir == tmp_path / "split"
+    assert seen["config"].train_ratio == 0.8
+    assert seen["config"].seed == 42
+    assert '"dropped_cross_split_preferences": 4' in captured.out
+
+
+def test_cli_rlaif_split_rejects_invalid_train_ratio(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-split",
+            "--rewards",
+            "rlaif_rewards.jsonl",
+            "--preferences",
+            "rlaif_preferences.jsonl",
+            "--output-dir",
+            "split",
+            "--train-ratio",
+            "1.0",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--train-ratio must be greater than 0 and less than 1" in captured.err
+
+
 def test_cli_rlaif_train_smoke_with_mocked_trainer(monkeypatch, tmp_path: Path, capsys) -> None:
     seen = {}
 
@@ -249,6 +316,8 @@ def test_cli_rlaif_eval_smoke_with_mocked_evaluator(monkeypatch, tmp_path: Path,
                 "oracle_logged": {"coverage": 1.0, "mean_reward": 0.8},
             },
             "runtime_default_replacement": False,
+            "held_out_query_eval": True,
+            "split_manifest_path": str(tmp_path / "split_manifest.json"),
         }
 
     monkeypatch.setattr(cli, "evaluate_offline_selector_policies", fake_evaluate_offline_selector_policies)
@@ -262,6 +331,8 @@ def test_cli_rlaif_eval_smoke_with_mocked_evaluator(monkeypatch, tmp_path: Path,
             str(tmp_path / "rlaif_policy.json"),
             "--out-md",
             str(tmp_path / "rlaif_eval_summary.md"),
+            "--split-manifest",
+            str(tmp_path / "split_manifest.json"),
         ]
     )
 
@@ -270,8 +341,10 @@ def test_cli_rlaif_eval_smoke_with_mocked_evaluator(monkeypatch, tmp_path: Path,
     assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
     assert seen["config"].policy_path == tmp_path / "rlaif_policy.json"
     assert seen["config"].out_md == tmp_path / "rlaif_eval_summary.md"
+    assert seen["config"].split_manifest_path == tmp_path / "split_manifest.json"
     assert '"query_group_count": 2' in captured.out
     assert '"best_average"' in captured.out
+    assert '"held_out_query_eval": true' in captured.out
 
 
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:

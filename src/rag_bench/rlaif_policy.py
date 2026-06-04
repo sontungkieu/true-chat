@@ -27,6 +27,7 @@ class RlaifEvalConfig:
     rewards_path: Path
     policy_path: Path
     out_md: Path | None = None
+    split_manifest_path: Path | None = None
 
 
 class FixedActionPolicy:
@@ -155,13 +156,21 @@ def evaluate_offline_selector_policies(config: RlaifEvalConfig) -> dict[str, Any
     policy = json.loads(config.policy_path.read_text(encoding="utf-8"))
     if policy.get("schema_version") != POLICY_VERSION:
         raise ValueError(f"Unsupported policy schema_version: {policy.get('schema_version')}")
+    if config.split_manifest_path is not None and not config.split_manifest_path.is_file():
+        raise ValueError(f"Split manifest path does not exist: {config.split_manifest_path}")
+    split_manifest = (
+        json.loads(config.split_manifest_path.read_text(encoding="utf-8"))
+        if config.split_manifest_path is not None
+        else None
+    )
 
     groups = _group_rewards(rewards)
-    oracle_metrics = _evaluate_policy("oracle_logged", groups, policy)
+    oracle_selected = _select_by_group("oracle_logged", groups, policy)
     policy_metrics = {}
     for policy_name in POLICY_NAMES:
-        metrics = _evaluate_policy(policy_name, groups, policy)
-        metrics["oracle_gap"] = _oracle_gap(oracle_metrics, metrics)
+        selected = _select_by_group(policy_name, groups, policy)
+        metrics = _policy_metrics(selected, group_count=len(groups))
+        metrics["oracle_gap"] = _paired_oracle_gap(oracle_selected, selected)
         policy_metrics[policy_name] = metrics
 
     summary = {
@@ -170,6 +179,9 @@ def evaluate_offline_selector_policies(config: RlaifEvalConfig) -> dict[str, Any
         "query_group_count": len(groups),
         "policy_metrics": policy_metrics,
         "runtime_default_replacement": False,
+        "held_out_query_eval": split_manifest is not None,
+        "split_manifest_path": str(config.split_manifest_path) if config.split_manifest_path is not None else None,
+        "split_manifest": _split_manifest_summary(split_manifest),
     }
     if config.out_md is not None:
         config.out_md.parent.mkdir(parents=True, exist_ok=True)
@@ -177,14 +189,25 @@ def evaluate_offline_selector_policies(config: RlaifEvalConfig) -> dict[str, Any
     return summary
 
 
-def _evaluate_policy(policy_name: str, groups: dict[tuple[Any, ...], list[dict[str, Any]]], policy: dict[str, Any]) -> dict[str, Any]:
-    selected: list[dict[str, Any] | None] = []
-    for group_rewards in groups.values():
-        selected.append(_select_reward(policy_name, group_rewards, policy))
-    selected_rows = [row for row in selected if row is not None]
+def _select_by_group(
+    policy_name: str,
+    groups: dict[tuple[Any, ...], list[dict[str, Any]]],
+    policy: dict[str, Any],
+) -> dict[tuple[Any, ...], dict[str, Any] | None]:
+    return {
+        group_key: _select_reward(policy_name, group_rewards, policy)
+        for group_key, group_rewards in groups.items()
+    }
+
+
+def _policy_metrics(
+    selected_by_group: dict[tuple[Any, ...], dict[str, Any] | None],
+    *,
+    group_count: int,
+) -> dict[str, Any]:
+    selected_rows = [row for row in selected_by_group.values() if row is not None]
     scored_rows = [row for row in selected_rows if _is_scored(row)]
     distribution = Counter(_signature_id(row) for row in selected_rows)
-    group_count = len(groups)
     return {
         "query_group_count": group_count,
         "selected_count": len(selected_rows),
@@ -311,10 +334,21 @@ def _ratio(numerator: int, denominator: int) -> float:
     return numerator / denominator
 
 
-def _oracle_gap(oracle_metrics: dict[str, Any], metrics: dict[str, Any]) -> float | None:
-    if oracle_metrics.get("mean_reward") is None or metrics.get("mean_reward") is None:
+def _paired_oracle_gap(
+    oracle_selected: dict[tuple[Any, ...], dict[str, Any] | None],
+    policy_selected: dict[tuple[Any, ...], dict[str, Any] | None],
+) -> float | None:
+    gaps = []
+    for group_key, selected in policy_selected.items():
+        oracle = oracle_selected.get(group_key)
+        if selected is None or oracle is None:
+            continue
+        if not _is_scored(selected) or not _is_scored(oracle):
+            continue
+        gaps.append(float(oracle["reward"]) - float(selected["reward"]))
+    if not gaps:
         return None
-    return float(oracle_metrics["mean_reward"]) - float(metrics["mean_reward"])
+    return mean(gaps)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -331,6 +365,22 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _split_manifest_summary(manifest: dict[str, Any] | None) -> dict[str, Any] | None:
+    if manifest is None:
+        return None
+    return {
+        "schema_version": manifest.get("schema_version"),
+        "split_rule": manifest.get("split_rule"),
+        "seed": manifest.get("seed"),
+        "train_ratio": manifest.get("train_ratio"),
+        "train_query_count": manifest.get("train_query_count"),
+        "eval_query_count": manifest.get("eval_query_count"),
+        "train_reward_rows": manifest.get("train_reward_rows"),
+        "eval_reward_rows": manifest.get("eval_reward_rows"),
+        "dropped_cross_split_preferences": manifest.get("dropped_cross_split_preferences"),
+    }
+
+
 def _render_eval_markdown(summary: dict[str, Any]) -> str:
     lines = [
         "# RLAIF Offline Selector Evaluation",
@@ -339,10 +389,17 @@ def _render_eval_markdown(summary: dict[str, Any]) -> str:
         f"- Policy: `{summary['policy_path']}`",
         f"- Query groups: {summary['query_group_count']}",
         f"- Runtime default replacement: `{summary['runtime_default_replacement']}`",
-        "",
-        "| Policy | Coverage | Mean reward | Mean quality | Token cost | Latency | KV cost | Oracle gap | Selected | Missing reward |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"- Held-out query eval: `{summary['held_out_query_eval']}`",
     ]
+    if summary["split_manifest_path"] is not None:
+        lines.append(f"- Split manifest: `{summary['split_manifest_path']}`")
+    lines.extend(
+        [
+            "",
+            "| Policy | Coverage | Mean reward | Mean quality | Token cost | Latency | KV cost | Oracle gap | Selected | Missing reward |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
     for policy_name in POLICY_NAMES:
         metrics = summary["policy_metrics"][policy_name]
         lines.append(

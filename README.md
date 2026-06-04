@@ -186,7 +186,7 @@ Phase 1C.1 adds a larger retrieval-only validation snapshot for `adaptive-heuris
 
 Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggressive`) and normalized score diagnostics for threshold calibration. These profiles are deterministic heuristics, not learned policies.
 
-Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. Full-context or legacy rows without an explicit context budget use `budget_chars=null` as a stable action dimension. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. The `rlaif-reward` command turns those normalized files into scalar rewards and pairwise preferences with quality guardrails. The `rlaif-train` and `rlaif-eval` commands build and evaluate offline selector baselines from those logged reward rows. This is still offline data plumbing: it does not replace `adaptive-heuristic`, call a judge, or change runtime retrieval behavior.
+Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. Full-context or legacy rows without an explicit context budget use `budget_chars=null` as a stable action dimension. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. The `rlaif-reward` command turns those normalized files into scalar rewards and pairwise preferences with quality guardrails. The `rlaif-split`, `rlaif-train`, and `rlaif-eval` commands create query-level held-out splits and evaluate offline selector baselines from logged reward rows. This is still offline data plumbing: it does not replace `adaptive-heuristic`, call a judge, or change runtime retrieval behavior.
 
 Retrieval-only BudgetRAG smoke run:
 
@@ -253,6 +253,7 @@ RLAIF schema modules:
 - `rag_bench.retrieval_context_actions`: helper for converting BudgetRAG `query_results.jsonl` rows into normalized retrieval-context actions.
 - `rag_bench.rlaif_build`: dataset builder for normalized action and answer-feedback rows.
 - `rag_bench.rlaif_reward`: reward and pairwise preference builder over normalized RLAIF datasets.
+- `rag_bench.rlaif_split`: deterministic query-level train/eval splitter for RLAIF reward and preference rows.
 - `rag_bench.rlaif_policy`: offline selector baselines over logged RLAIF reward rows.
 
 Build a normalized RLAIF dataset from one matrix directory or one or more `query_results.jsonl` files:
@@ -286,18 +287,26 @@ uv run rag-bench rlaif-reward \
 Build and evaluate offline selector baselines:
 
 ```bash
-uv run rag-bench rlaif-train \
+uv run rag-bench rlaif-split \
   --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
   --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
-  --output benchmark_results/rlaif/<run-name>/rlaif_policy.json
+  --output-dir benchmark_results/rlaif/<run-name>/split_seed42 \
+  --train-ratio 0.8 \
+  --seed 42
+
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/train_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/split_seed42/train_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json
 
 uv run rag-bench rlaif-eval \
-  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
-  --policy benchmark_results/rlaif/<run-name>/rlaif_policy.json \
-  --out-md benchmark_results/rlaif/<run-name>/rlaif_eval_summary.md
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/eval_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json \
+  --out-md benchmark_results/rlaif/<run-name>/split_seed42/rlaif_eval_summary.md \
+  --split-manifest benchmark_results/rlaif/<run-name>/split_seed42/split_manifest.json
 ```
 
-`rlaif-train` writes fixed, cheapest, best-average, and oracle-logged selector baselines. The policy artifact sets `runtime_default_replacement=false`; it is an offline evaluation artifact and does not replace the default `adaptive-heuristic` runtime policy. `rlaif-eval` reports mean reward, quality, normalized token/latency/KV costs, selected action distribution, coverage, and oracle gap.
+`rlaif-split` writes `train_rewards.jsonl`, `eval_rewards.jsonl`, `train_preferences.jsonl`, `eval_preferences.jsonl`, `split_manifest.json`, and `split_summary.md`. It splits by `benchmark + query_id`, not by random action rows, so all actions for the same query stay in the same split. Preferences crossing the split boundary are dropped and counted in the manifest. `rlaif-train` writes fixed, cheapest, best-average, and oracle-logged selector baselines. The policy artifact sets `runtime_default_replacement=false`; it is an offline evaluation artifact and does not replace the default `adaptive-heuristic` runtime policy. `rlaif-eval` reports mean reward, quality, normalized token/latency/KV costs, selected action distribution, coverage, and paired oracle gap. When `--split-manifest` is provided, the eval summary records `held_out_query_eval=true`.
 
 Summarize local matrix outputs:
 

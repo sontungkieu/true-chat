@@ -191,6 +191,7 @@ Context label schema:
 4. Evaluate against existing baselines
    - Status: offline selector evaluator implemented on `feature/rlaif-retrieval-context-v0`.
    - Status: Phase 1D selector smoke completed and documented in `docs/reports/phase1d_rlaif_selector_smoke.md`.
+   - Status: held-out query split/eval implemented and documented in `docs/reports/phase1d_rlaif_heldout_eval.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -211,8 +212,9 @@ Context label schema:
      - oracle gap
    - The learned policy must not replace `adaptive-heuristic` by default until it beats baseline under quality guardrails.
    - The learned RLAIF/bandit policy must not replace `adaptive-heuristic` as the default runtime policy until it passes offline evaluation and quality guardrails.
-   - Current smoke caveat: `rlaif-train` and `rlaif-eval` used the same RAGAS-joined logged rewards, so it is a resubstitution/offline sanity check rather than held-out generalization.
-   - Next evaluator change: add a held-out query split such as `--split-by-query 0.8`, or support explicit train/eval reward files.
+   - Current smoke caveat: the first selector smoke used the same RAGAS-joined logged rewards for train/eval, so it is a resubstitution/offline sanity check rather than held-out generalization.
+   - Current held-out result: `rlaif-split` writes deterministic `benchmark + query_id` train/eval files and `rlaif-eval --split-manifest` records `held_out_query_eval=true`.
+   - Next evaluator change: run larger held-out splits after answer/context labels are richer than RAGAS answer relevancy.
 
 5. Outputs
    - Status: `rlaif-reward`, `rlaif-train`, and `rlaif-eval` write the implemented files below; context labeling outputs remain pending.
@@ -220,9 +222,12 @@ Context label schema:
    - `rlaif_preferences.jsonl`
    - `rlaif_reward_summary.md`
    - `rlaif_context_preferences.jsonl`
+   - `split_manifest.json`: deterministic query-level split manifest.
+   - `split_summary.md`: query-level split summary.
    - `rlaif_policy.json`: fixed, cheapest, best-average, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
+   - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
    - Optional CSV summary for slides/reports.
 
 ## Non-Blocking KV/Qwen Scaffold
@@ -277,15 +282,23 @@ uv run rag-bench rlaif-label-contexts \
 Offline selector baselines:
 
 ```bash
-uv run rag-bench rlaif-train \
+uv run rag-bench rlaif-split \
   --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
   --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
-  --output benchmark_results/rlaif/<run-name>/rlaif_policy.json
+  --output-dir benchmark_results/rlaif/<run-name>/split_seed42 \
+  --train-ratio 0.8 \
+  --seed 42
+
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/train_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/split_seed42/train_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json
 
 uv run rag-bench rlaif-eval \
-  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
-  --policy benchmark_results/rlaif/<run-name>/rlaif_policy.json \
-  --out-md benchmark_results/rlaif/<run-name>/rlaif_eval_summary.md
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/eval_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json \
+  --out-md benchmark_results/rlaif/<run-name>/split_seed42/rlaif_eval_summary.md \
+  --split-manifest benchmark_results/rlaif/<run-name>/split_seed42/split_manifest.json
 ```
 
 Default output directory:
@@ -305,6 +318,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - Build context-only pairwise preferences only inside the same query/retriever group.
    - Build retrieval-context preferences across retrievers for the same query/model.
    - Train fixed, cheapest, best-average, and oracle-logged offline selector baselines.
+   - Split reward/preference rows by `benchmark + query_id` so action rows for the same query cannot leak across train/eval.
    - Evaluate selector reward, quality, cost, coverage, selected-action distribution, and oracle gap.
    - Enforce quality guardrails so efficiency cannot win over a clearly worse answer.
    - Enforce context sufficiency guardrails so minimality cannot win over missing evidence.

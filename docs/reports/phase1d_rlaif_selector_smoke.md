@@ -151,7 +151,7 @@ Top selected action labels:
 
 ## Next Steps
 
-1. Add a held-out split, for example `--split-by-query 0.8`, or run `rlaif-train` on `train_rewards.jsonl` and `rlaif-eval` on `eval_rewards.jsonl`.
+1. Completed follow-up: held-out query evaluation is now documented in `docs/reports/phase1d_rlaif_heldout_eval.md`.
 2. Add `rlaif-label-answers` and `rlaif-label-contexts` with `--dry-run`, `--resume`, and missing-key skip behavior.
 3. Extend quality labels beyond answer relevancy: answer correctness, faithfulness, unsupported claims, and context evidence sufficiency.
 4. Only after held-out quality guardrails pass, consider a simple reward model or contextual bandit baseline.
