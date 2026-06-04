@@ -89,4 +89,6 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `rlaif-train` to write an offline `rlaif_policy.json` artifact with fixed, cheapest, best-average, and oracle-logged selector baselines.
 - Add `rlaif-eval` to report mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, coverage, and oracle gap.
 - Keep selector artifacts offline-only with `runtime_default_replacement=false`; they do not replace `adaptive-heuristic` in runtime defaults.
+- Run a Phase 1D selector smoke on real Phase 1C.3 outputs joined with RAGAS post-hoc answer relevancy and document it in `docs/reports/phase1d_rlaif_selector_smoke.md`.
+- Keep held-out query evaluation pending; the current selector smoke is a resubstitution sanity check, not a generalization claim.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

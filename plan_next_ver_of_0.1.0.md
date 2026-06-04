@@ -190,6 +190,7 @@ Context label schema:
 
 4. Evaluate against existing baselines
    - Status: offline selector evaluator implemented on `feature/rlaif-retrieval-context-v0`.
+   - Status: Phase 1D selector smoke completed and documented in `docs/reports/phase1d_rlaif_selector_smoke.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -210,6 +211,8 @@ Context label schema:
      - oracle gap
    - The learned policy must not replace `adaptive-heuristic` by default until it beats baseline under quality guardrails.
    - The learned RLAIF/bandit policy must not replace `adaptive-heuristic` as the default runtime policy until it passes offline evaluation and quality guardrails.
+   - Current smoke caveat: `rlaif-train` and `rlaif-eval` used the same RAGAS-joined logged rewards, so it is a resubstitution/offline sanity check rather than held-out generalization.
+   - Next evaluator change: add a held-out query split such as `--split-by-query 0.8`, or support explicit train/eval reward files.
 
 5. Outputs
    - Status: `rlaif-reward`, `rlaif-train`, and `rlaif-eval` write the implemented files below; context labeling outputs remain pending.
@@ -219,6 +222,7 @@ Context label schema:
    - `rlaif_context_preferences.jsonl`
    - `rlaif_policy.json`: fixed, cheapest, best-average, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
+   - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
    - Optional CSV summary for slides/reports.
 
 ## Non-Blocking KV/Qwen Scaffold
