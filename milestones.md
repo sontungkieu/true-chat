@@ -56,3 +56,25 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c2`; pendi
 - Add normalized score gap, normalized score entropy, and score confidence diagnostics.
 - Extend matrix and summary tooling for adaptive profile comparisons.
 - Run SciFact BM25 profile calibration matrix with 50 queries and document the threshold calibration results.
+
+## BudgetRAG Phase 1C.3
+
+Status: planned on `internship`.
+
+- Add a normalized answer-quality and context-evidence feedback layer for BudgetRAG action rows.
+- Keep gold metrics, RAGAS/MiMo judge scores, missing labels, and ambiguous judge results separate.
+- Add explicit answer and context judge labeling paths with dry-run/resume support.
+- Label minimal evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and context sufficiency.
+- Produce auditable feedback artifacts that can be reused by Phase 1D RLAIF.
+- Do not treat missing answer feedback as zero accuracy.
+
+## BudgetRAG Phase 1D
+
+Status: planned on `internship`.
+
+- Implement offline RLAIF reward and preference builders over Phase 1C.3 feedback.
+- Include retrieval strategy, fusion strategy, context policy, budget, adaptive profile, and generator model in the action space.
+- Keep answer quality and evidence support as primary reward terms while token, latency, and estimated KV costs remain bounded penalties.
+- Add quality guardrails so a cheaper context policy cannot win when it clearly harms answer quality.
+- Build both context-only preferences and retrieval-context preferences.
+- Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.
