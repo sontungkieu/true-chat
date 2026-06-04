@@ -103,7 +103,7 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
 4b. Add direct pairwise RLAIF labels
-   - Status: `rlaif-label-pairs` CLI implemented; full pairwise judge run remains pending.
+   - Status: `rlaif-label-pairs` CLI implemented; a 50-pair MiMo audit has been run and documented in `docs/reports/phase1d_rlaif_pairwise_mimo50.md`.
    - Use `rlaif_preferences.jsonl` only as a source of comparable action pairs.
    - Present Action A as the reward-derived chosen action and Action B as the rejected action, but instruct the judge to decide independently.
    - Judge only from logged question, answers, retrieved contexts, and resource costs; do not browse or use external knowledge.
@@ -111,6 +111,8 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Invalid JSON, missing actions, missing rewards, missing answers, and missing contexts become ambiguous labels with null confidence, never score zero.
    - Summarize pairwise labels with `scripts/summarize_rlaif_pairwise_labels.py` to track A/B/tie/ambiguous counts, reward-preference agreement, disagreement, confidence, quality regret, and unsupported-claim risk.
    - This is for reward/preference calibration and selector analysis only; do not train DPO/reward model or replace runtime defaults in v1.
+   - Initial MiMo-50 audit result: 50 valid JSON labels, 2 ambiguous timeout labels, 41 A wins, 7 B wins, 0 ties, and 0.854 agreement over non-ambiguous decisions.
+   - The observed disagreements cluster around cases where scalar reward prefers slightly higher quality/support scores while the direct judge treats both answers as acceptable or correct abstentions and then favors lower resource cost.
 
 ```bash
 uv run rag-bench rlaif-label-pairs \
@@ -171,6 +173,7 @@ Context label schema:
    - `rlaif_actions.jsonl`: one normalized candidate action per query/run.
    - `rlaif_feedback.jsonl`: one feedback record per candidate action.
    - `rlaif_answer_labels.jsonl`: explicit judge labels for answers when source runs do not already contain judge fields.
+   - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward/preference calibration.
    - `rlaif_context_labels.jsonl`: context-level RLAIF labels per action.
    - `rlaif_context_preferences.jsonl`: context sufficiency/minimality preference rows.
    - `rlaif_feedback_summary.md`: coverage, missing-label reasons, quality distributions, and judge source counts.

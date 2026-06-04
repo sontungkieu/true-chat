@@ -38,7 +38,7 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, answer/context-label summaries và Qwen KV estimates \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, answer/context/pairwise-label summaries và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
 Trạng thái test gần nhất & \texttt{195 passed} \\
@@ -62,6 +62,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ.
   \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average và oracle-logged baselines.
   \item AI-judge held-out hiện tại: full MiMo answer-label run trên Kaggle đã hoàn tất; reward được rebuild bằng \texttt{--answer-labels}, rerun split/train/eval và ghi report \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}.
+  \item Direct pairwise audit hiện tại: chạy MiMo trên 50 reward-derived preference pairs, ghi 50 valid JSON labels, 2 ambiguous timeouts, 41 A wins, 7 B wins và agreement 0.854 trên non-ambiguous decisions; report nằm ở \texttt{docs/reports/phase1d\_rlaif\_pairwise\_mimo50.md}.
 \end{itemize}
 
 Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit thật, \textbf{chưa} có full context-level judge run, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
@@ -193,6 +194,28 @@ uv run rag-bench rlaif-label-pairs \
 
 Script \texttt{scripts/summarize\_rlaif\_pairwise\_labels.py} đọc \texttt{rlaif\_pairwise\_labels.jsonl} và báo A/B/tie/ambiguous counts, agreement/disagreement với reward-derived preference, confidence statistics, quality-regret count, unsupported-claim risk count và judge provider/model counts. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_pairwise\_labels\_template.md}.
 
+MiMo-50 audit đầu tiên trên reward/preference set đã rebuild bằng full MiMo answer labels có kết quả:
+
+\begin{center}
+\begin{tabular}{l r}
+\toprule
+Metric & Value \\
+\midrule
+Pair labels & 50 \\
+Valid JSON & 50 \\
+Invalid JSON & 0 \\
+Ambiguous/timeouts & 2 \\
+A wins & 41 \\
+B wins & 7 \\
+Ties & 0 \\
+Agreement over non-ambiguous decisions & 0.854 \\
+Mean confidence & 0.914 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Các disagreement đều nằm trong cùng một query group, nơi scalar reward thích action có quality/support score cao hơn một chút, còn direct pairwise judge xem hai câu trả lời đều acceptable hoặc đều là correct abstention rồi chọn action rẻ hơn. Điều này cho thấy hướng calibration tiếp theo nên giảm ảnh hưởng của quality delta nhỏ khi direct judge đánh dấu answer quality/evidence support là tie.
+
 \subsection{Reward/preference builder}
 
 Command hiện có:
@@ -306,11 +329,10 @@ Report \texttt{docs/reports/local\_qwen\_kv\_estimates.md} hiện ghi bảng cho
 Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Hoàn tất answer judge run}: download output Kaggle, chạy \texttt{scripts/summarize\_rlaif\_labels.py}, rebuild reward bằng \texttt{--answer-labels}, rồi rerun split/train/eval.
-  \item \textbf{Context judge run}: chạy \texttt{rlaif-label-contexts} sau khi answer-label pipeline ổn, rồi dùng labels này để tạo context-sufficiency preferences.
+  \item \textbf{Context judge run}: chạy \texttt{rlaif-label-contexts} trên subset nhỏ sau khi answer-label và pairwise audit đã ổn, rồi dùng labels này để tạo context-sufficiency preferences.
   \item \textbf{Context label report}: chạy \texttt{scripts/summarize\_rlaif\_context\_labels.py} và điền \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md}.
-  \item \textbf{Pairwise judge run}: chạy \texttt{rlaif-label-pairs} trên subset preference, rồi chạy \texttt{scripts/summarize\_rlaif\_pairwise\_labels.py} để đo reward-derived preference có khớp direct AI preference không.
-  \item \textbf{Richer RLAIF labels}: thêm answer correctness, faithfulness, unsupported claims và context sufficiency trước khi học model phức tạp.
+  \item \textbf{Reward calibration}: dùng MiMo-50 pairwise disagreements để thử calibration nhẹ, đặc biệt giảm ảnh hưởng của quality/support delta nhỏ khi direct pairwise judge đánh dấu quality/support là tie.
+  \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
   \item \textbf{Simple reward model/ranking baseline}: dùng feature table nhẹ khi reward/preference coverage đủ hơn baseline bảng.
   \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.
 \end{enumerate}
