@@ -6,14 +6,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 
-FeedbackProvenance = Literal["gold", "ragas", "mimo_judge", "heuristic", "missing"]
+FeedbackProvenance = Literal["gold", "ragas", "ai_judge", "mimo_judge", "heuristic", "missing"]
 PreferenceType = Literal[
     "context_policy_preference",
     "retrieval_context_preference",
     "context_sufficiency_preference",
 ]
 
-VALID_PROVENANCE = {"gold", "ragas", "mimo_judge", "heuristic", "missing"}
+VALID_PROVENANCE = {"gold", "ragas", "ai_judge", "mimo_judge", "heuristic", "missing"}
 VALID_PREFERENCE_TYPES = {
     "context_policy_preference",
     "retrieval_context_preference",
@@ -29,7 +29,7 @@ class RetrievalContextAction:
     retrieval_strategy: str
     top_k: int
     context_policy: str
-    budget_chars: int
+    budget_chars: int | None
     fusion_strategy: str | None = None
     adaptive_profile: str | None = None
     selected_context_policy: str | None = None
@@ -45,7 +45,8 @@ class RetrievalContextAction:
         _require_text("retrieval_strategy", self.retrieval_strategy)
         _require_text("context_policy", self.context_policy)
         _require_positive_int("top_k", self.top_k)
-        _require_positive_int("budget_chars", self.budget_chars)
+        if self.budget_chars is not None:
+            _require_positive_int("budget_chars", self.budget_chars)
         if self.selected_budget_chars is not None:
             _require_positive_int("selected_budget_chars", self.selected_budget_chars)
 

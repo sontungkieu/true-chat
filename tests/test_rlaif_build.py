@@ -100,7 +100,7 @@ def test_rlaif_build_records_invalid_rows_without_stopping(tmp_path: Path) -> No
     assert feedback[0]["query_id"] == "q1"
 
 
-def test_answer_feedback_uses_ragas_then_mimo_when_gold_is_absent() -> None:
+def test_answer_feedback_uses_ragas_then_ai_judge_when_gold_is_absent() -> None:
     ragas_row = _query_result_row(
         run_id="run-a",
         retriever="bm25",
@@ -117,6 +117,18 @@ def test_answer_feedback_uses_ragas_then_mimo_when_gold_is_absent() -> None:
         token_f1=None,
         mimo_judge={"score": 0.9, "judge_provider": "mimo", "judge_model": "mimo-v2.5-pro"},
     )
+    deepseek_row = _query_result_row(
+        run_id="run-c",
+        retriever="bm25",
+        query_id="q3",
+        exact_match=None,
+        token_f1=None,
+    )
+    deepseek_row["answer_judge"] = {
+        "quality_score": 0.8,
+        "judge_provider": "deepseek",
+        "judge_model": "deepseek-r1",
+    }
 
     ragas_feedback = answer_feedback_from_budgetrag_row(
         ragas_row,
@@ -126,12 +138,21 @@ def test_answer_feedback_uses_ragas_then_mimo_when_gold_is_absent() -> None:
         mimo_row,
         action_id=action_from_budgetrag_row(mimo_row).action_id,
     )
+    deepseek_feedback = answer_feedback_from_budgetrag_row(
+        deepseek_row,
+        action_id=action_from_budgetrag_row(deepseek_row).action_id,
+    )
 
     assert ragas_feedback.provenance == "ragas"
     assert ragas_feedback.quality_score == 0.7
-    assert mimo_feedback.provenance == "mimo_judge"
+    assert mimo_feedback.provenance == "ai_judge"
     assert mimo_feedback.quality_score == 0.9
+    assert mimo_feedback.judge_provider == "mimo"
     assert mimo_feedback.judge_model == "mimo-v2.5-pro"
+    assert deepseek_feedback.provenance == "ai_judge"
+    assert deepseek_feedback.judge_provider == "deepseek"
+    assert deepseek_feedback.judge_model == "deepseek-r1"
+    assert deepseek_feedback.quality_score == 0.8
 
 
 def test_multiple_runs_same_query_create_multiple_action_rows(tmp_path: Path) -> None:
@@ -154,6 +175,33 @@ def test_multiple_runs_same_query_create_multiple_action_rows(tmp_path: Path) ->
     assert summary["action_count"] == 2
     assert len({row["action_id"] for row in actions}) == 2
     assert {row["retrieval_strategy"] for row in actions} == {"bm25", "graph-bm25"}
+
+
+def test_legacy_full_context_row_without_budget_still_builds(tmp_path: Path) -> None:
+    run_dir = tmp_path / "legacy"
+    row = _query_result_row(
+        run_id="run-legacy",
+        retriever="bm25",
+        query_id="q1",
+        context_policy="legacy",
+    )
+    row["experiment"].pop("context_budget_chars")
+    row["context_budget"].pop("budget_chars")
+    row["context_budget"].pop("selected_budget_chars")
+
+    _write_jsonl(run_dir / "query_results.jsonl", [row])
+
+    summary = build_rlaif_dataset(
+        RlaifBuildConfig(inputs=(run_dir,), output_dir=tmp_path / "out")
+    )
+    actions = _read_jsonl(tmp_path / "out" / "rlaif_actions.jsonl")
+
+    assert summary["action_count"] == 1
+    assert summary["invalid_row_count"] == 0
+    assert actions[0]["context_policy"] == "legacy"
+    assert actions[0]["budget_chars"] is None
+    assert actions[0]["selected_budget_chars"] is None
+    assert action_from_budgetrag_row(row).budget_chars is None
 
 
 def _query_result_row(

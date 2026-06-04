@@ -66,7 +66,9 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add deterministic action ids that include retriever, fusion strategy, context policy, budget, adaptive profile, selected context action, and generator model while excluding source run ids.
 - Add `rlaif-build` to convert BudgetRAG `query_results.jsonl` outputs into `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md`.
 - Preserve answer text, retrieved records, context metrics, retrieval metrics, latency, token usage, KV estimates, feedback provenance, and missing-label reasons in offline datasets.
-- Keep gold metrics, RAGAS/MiMo judge scores, missing labels, and ambiguous judge results separate.
+- Keep gold metrics, RAGAS/AI judge scores, missing labels, and ambiguous judge results separate.
+- Harden AI judge provenance so MiMo, DeepSeek, Groq, and future judge rows use auditable provider/model fields instead of falling back to `heuristic`.
+- Allow legacy/full-context action rows without an explicit budget by preserving `budget_chars=null` as a stable action dimension.
 - Add explicit answer and context judge labeling paths with dry-run/resume support.
 - Label minimal evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and context sufficiency.
 - Produce auditable feedback artifacts that can be reused by Phase 1D RLAIF.

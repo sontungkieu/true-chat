@@ -95,6 +95,34 @@ def test_action_from_budgetrag_row_captures_retrieval_context_dimensions() -> No
     assert action.metadata["dataset_id"] == "beir/scifact/test"
 
 
+def test_retrieval_context_action_allows_full_context_without_budget() -> None:
+    action = RetrievalContextAction(
+        benchmark="scifact",
+        query_id="q1",
+        question="What is alpha?",
+        retrieval_strategy="bm25",
+        top_k=5,
+        context_policy="legacy",
+        budget_chars=None,
+        generator_model="mimo-v2.5-pro",
+    )
+
+    assert action.budget_chars is None
+    assert action.identity_payload()["budget_chars"] is None
+
+    with pytest.raises(ValueError, match="budget_chars"):
+        RetrievalContextAction(
+            benchmark="scifact",
+            query_id="q1",
+            question="What is alpha?",
+            retrieval_strategy="bm25",
+            top_k=5,
+            context_policy="legacy",
+            budget_chars=0,
+            generator_model="mimo-v2.5-pro",
+        )
+
+
 def test_answer_feedback_keeps_missing_feedback_distinct_from_zero_score() -> None:
     feedback = RlaifAnswerFeedback(
         action_id="a1",

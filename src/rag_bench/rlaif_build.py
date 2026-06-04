@@ -192,11 +192,11 @@ def _feedback_from_judge(row: dict[str, Any], *, action_id: str, query_id: str) 
     quality_values = [value for value in (quality_score, answer_correctness, answer_relevancy, faithfulness) if value is not None]
     if not quality_values:
         return None
-    provider = _optional_text(_first_value(source, "judge_provider", "provider")) or "mimo"
+    provider = (_optional_text(_first_value(source, "judge_provider", "provider")) or "unknown").strip().lower()
     return RlaifAnswerFeedback(
         action_id=action_id,
         query_id=query_id,
-        provenance="mimo_judge" if provider == "mimo" else "heuristic",
+        provenance="ai_judge",
         quality_score=quality_score if quality_score is not None else mean(quality_values),
         answer_relevancy=answer_relevancy,
         faithfulness=faithfulness,

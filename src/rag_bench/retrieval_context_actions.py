@@ -23,7 +23,7 @@ def action_from_budgetrag_row(row: dict[str, Any]) -> RetrievalContextAction:
         experiment.get("context_policy"),
         context_budget.get("policy"),
     )
-    budget_chars = _first_int(context_budget.get("budget_chars"), experiment.get("context_budget_chars"))
+    budget_chars = _first_optional_int(context_budget.get("budget_chars"), experiment.get("context_budget_chars"))
     top_k = _first_int(row.get("top_k"), experiment.get("top_k"))
 
     return RetrievalContextAction(

@@ -39,7 +39,7 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 1. Normalize action rows
    - Status: dataset builder implemented on `feature/rlaif-retrieval-context-v0`.
    - Read one or more `query_results.jsonl` files from BudgetRAG runs.
-   - Extract stable keys: benchmark, query id, question, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected adaptive action, generator model, answer, references, context metrics, latency, and token usage.
+   - Extract stable keys: benchmark, query id, question, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected adaptive action, generator model, answer, references, context metrics, latency, and token usage.
    - Assign an `action_id` that is deterministic across runs.
    - Represent actions with both retrieval and context dimensions:
 
@@ -55,11 +55,14 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 ```
 
 2. Normalize feedback sources
-   - Status: dataset builder implemented for gold, existing RAGAS fields, existing MiMo/judge fields, and missing-label reasons.
+   - Status: dataset builder implemented for gold, existing RAGAS fields, existing AI judge fields, and missing-label reasons.
    - Use gold metrics when present: exact match and token F1.
-   - Use RAGAS/MiMo judge fields when present: answer relevancy, faithfulness, answer correctness, and judge rationale.
-   - Record feedback provenance explicitly: `gold`, `ragas`, `mimo_judge`, `heuristic`, or `missing`.
+   - Use RAGAS/AI judge fields when present: answer relevancy, faithfulness, answer correctness, and judge rationale.
+   - Record feedback provenance explicitly: `gold`, `ragas`, `ai_judge`, `mimo_judge` for backward compatibility, `heuristic`, or `missing`.
+   - Store concrete AI judge identity in `judge_provider` and `judge_model` so MiMo, DeepSeek, and Groq rows are auditable without being mislabeled as heuristic.
    - Do not silently treat missing feedback as zero accuracy.
+
+   Note: full-context or legacy baseline rows without an explicit context budget are valid and use `budget_chars: null` in the action identity payload.
 
 3. Add answer-labeling when feedback is absent
    - Status: pending.
@@ -110,7 +113,7 @@ Context label schema:
   "context_quality_score": 0.85,
   "judge_provider": "mimo",
   "judge_model": "mimo-v2.5-pro",
-  "provenance": "mimo_judge"
+  "provenance": "ai_judge"
 }
 ```
 
