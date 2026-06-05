@@ -12,6 +12,7 @@ from rag_bench.rlaif_policy import (
     OracleLoggedPolicy,
     RlaifEvalConfig,
     RlaifTrainConfig,
+    ShrinkageSmoothedBestAveragePolicy,
     SmoothedLinearSelectorPolicy,
     evaluate_offline_selector_policies,
     train_offline_selector_policies,
@@ -43,7 +44,7 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
     )
 
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    assert summary["policy_count"] == 7
+    assert summary["policy_count"] == 8
     assert summary["reward_count"] == 4
     assert summary["preference_count"] == 1
     assert policy["runtime_default_replacement"] is False
@@ -52,6 +53,7 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
         "cheapest",
         "best_average",
         "family_smoothed_best_average",
+        "shrinkage_smoothed_best_average",
         "linear_reward_model",
         "smoothed_linear_selector",
         "oracle_logged",
@@ -60,6 +62,10 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
     assert policy["policies"]["best_average"]["signatures"][0]["signature"]["context_policy"] == "evidence-aware"
     assert policy["policies"]["family_smoothed_best_average"]["retrieval_context_families"]
     assert policy["policies"]["family_smoothed_best_average"]["context_policies"]
+    shrinkage = policy["policies"]["shrinkage_smoothed_best_average"]
+    assert shrinkage["runtime_default_replacement"] is False
+    assert shrinkage["alpha"]["exact_signature"] > 0
+    assert shrinkage["retrieval_context_families"]
     linear_model = policy["policies"]["linear_reward_model"]
     assert linear_model["training_rows"] == 4
     assert linear_model["runtime_default_replacement"] is False
@@ -75,6 +81,7 @@ def test_public_policy_names_match_artifact_keys() -> None:
     assert CheapestActionPolicy.policy_type == "cheapest"
     assert BestAverageActionPolicy.policy_type == "best_average"
     assert FamilySmoothedBestAveragePolicy.policy_type == "family_smoothed_best_average"
+    assert ShrinkageSmoothedBestAveragePolicy.policy_type == "shrinkage_smoothed_best_average"
     assert LinearRewardModelPolicy.policy_type == "linear_reward_model"
     assert SmoothedLinearSelectorPolicy.policy_type == "smoothed_linear_selector"
     assert OracleLoggedPolicy.policy_type == "oracle_logged"
@@ -198,6 +205,58 @@ def test_family_smoothed_selector_backs_off_for_unseen_exact_signature(tmp_path:
     assert family_smoothed["coverage"] == 1.0
     assert family_smoothed["mean_reward"] == 0.75
     assert smoothed_linear["coverage"] == 1.0
+
+
+def test_shrinkage_selector_scores_rows_instead_of_hard_backoff() -> None:
+    legacy_seen_low = _reward("q3", "bm25", "legacy", 0.20, 0.40, token=0.12)
+    evidence_unseen_high = _reward("q3", "bm25", "evidence-aware", 0.75, 0.82, token=0.35)
+    policy = {
+        "policies": {
+            "shrinkage_smoothed_best_average": {
+                "alpha": {
+                    "exact_signature": 4.0,
+                    "retrieval_context_family": 4.0,
+                    "context_policy": 4.0,
+                },
+                "global": {"count": 10, "mean_reward": 0.50},
+                "signatures": [
+                    {
+                        "signature_id": legacy_seen_low["metadata"]["action_signature_id"],  # type: ignore[index]
+                        "count": 10,
+                        "mean_reward": 0.20,
+                    }
+                ],
+                "retrieval_context_families": [
+                    {
+                        "family_id": "bm25|legacy|none|none",
+                        "count": 10,
+                        "mean_reward": 0.20,
+                    },
+                    {
+                        "family_id": "bm25|evidence-aware|<=4k|none",
+                        "count": 10,
+                        "mean_reward": 0.80,
+                    },
+                ],
+                "context_policies": [
+                    {
+                        "context_policy_id": "legacy",
+                        "count": 10,
+                        "mean_reward": 0.20,
+                    },
+                    {
+                        "context_policy_id": "evidence-aware",
+                        "count": 10,
+                        "mean_reward": 0.80,
+                    },
+                ],
+            }
+        }
+    }
+
+    selected = ShrinkageSmoothedBestAveragePolicy().select([legacy_seen_low, evidence_unseen_high], policy)
+
+    assert selected is evidence_unseen_high
 
 
 def test_smoothed_linear_selector_uses_family_mean_when_exact_signature_missing() -> None:

@@ -17,6 +17,7 @@ POLICY_NAMES = (
     "cheapest",
     "best_average",
     "family_smoothed_best_average",
+    "shrinkage_smoothed_best_average",
     "linear_reward_model",
     "smoothed_linear_selector",
     "oracle_logged",
@@ -95,6 +96,30 @@ class FamilySmoothedBestAveragePolicy:
         return None
 
 
+class ShrinkageSmoothedBestAveragePolicy:
+    policy_type = "shrinkage_smoothed_best_average"
+
+    def select(self, group_rewards: list[dict[str, Any]], policy: dict[str, Any]) -> dict[str, Any] | None:
+        policy_config = policy["policies"].get("shrinkage_smoothed_best_average", {})
+        candidates = [
+            (row, score)
+            for row in group_rewards
+            if (score := _shrinkage_smoothed_score(row, policy_config)) is not None
+        ]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda item: (
+                item[1]["smoothed_mean_reward"],
+                item[1]["effective_count"],
+                item[1]["specificity"],
+                -_cost_sum(item[0]),
+                str(item[0].get("action_id")),
+            ),
+        )[0]
+
+
 class OracleLoggedPolicy:
     policy_type = "oracle_logged"
 
@@ -146,6 +171,7 @@ POLICY_IMPLEMENTATIONS = {
     CheapestActionPolicy.policy_type: CheapestActionPolicy(),
     BestAverageActionPolicy.policy_type: BestAverageActionPolicy(),
     FamilySmoothedBestAveragePolicy.policy_type: FamilySmoothedBestAveragePolicy(),
+    ShrinkageSmoothedBestAveragePolicy.policy_type: ShrinkageSmoothedBestAveragePolicy(),
     LinearRewardModelPolicy.policy_type: LinearRewardModelPolicy(),
     SmoothedLinearSelectorPolicy.policy_type: SmoothedLinearSelectorPolicy(),
     OracleLoggedPolicy.policy_type: OracleLoggedPolicy(),
@@ -173,6 +199,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
         key=lambda row: (-row["mean_reward"], -row["count"], row["signature_id"]),
     )
     family_smoothed = _train_family_smoothed_best_average(scored_rewards, signature_stats)
+    shrinkage_smoothed = _train_shrinkage_smoothed_best_average(scored_rewards, signature_stats)
     linear_model = _train_linear_reward_model(scored_rewards)
     smoothed_linear = _train_smoothed_linear_selector(scored_rewards)
     policy = {
@@ -206,6 +233,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
                 "signatures": best_average_signatures,
             },
             "family_smoothed_best_average": family_smoothed,
+            "shrinkage_smoothed_best_average": shrinkage_smoothed,
             "linear_reward_model": linear_model,
             "smoothed_linear_selector": smoothed_linear,
             "oracle_logged": {
@@ -388,6 +416,45 @@ def _train_family_smoothed_best_average(
     }
 
 
+def _train_shrinkage_smoothed_best_average(
+    scored_rewards: list[dict[str, Any]],
+    signature_stats: list[dict[str, Any]],
+) -> dict[str, Any]:
+    family_stats = _family_stats(
+        scored_rewards,
+        key_fn=_retrieval_context_family_id,
+        payload_fn=_retrieval_context_family_payload,
+        id_name="family_id",
+    )
+    context_policy_stats = _family_stats(
+        scored_rewards,
+        key_fn=_context_policy_id,
+        payload_fn=_context_policy_payload,
+        id_name="context_policy_id",
+    )
+    return {
+        "policy_type": "shrinkage_smoothed_best_average",
+        "selection_rule": "score every candidate by its best available train statistic, shrinking exact signatures toward retrieval-context families, families toward context policies, and context policies toward the global mean",
+        "runtime_default_replacement": False,
+        "alpha": {
+            "exact_signature": 4.0,
+            "retrieval_context_family": 4.0,
+            "context_policy": 4.0,
+        },
+        "global": {
+            "count": len(scored_rewards),
+            "mean_reward": _mean_field(scored_rewards, "reward"),
+            "mean_quality": _mean_field(scored_rewards, "quality"),
+        },
+        "signatures": sorted(
+            signature_stats,
+            key=lambda row: (-row["count"], -(row["mean_reward"] or 0.0), row["signature_id"]),
+        ),
+        "retrieval_context_families": family_stats,
+        "context_policies": context_policy_stats,
+    }
+
+
 def _family_smoothed_score(row: dict[str, Any], policy_config: dict[str, Any], *, level: str) -> dict[str, Any] | None:
     signature_stats = {
         str(item.get("signature_id")): item
@@ -420,6 +487,79 @@ def _family_smoothed_score(row: dict[str, Any], policy_config: dict[str, Any], *
         "key": key,
         "count": int(stats.get("count") or 0),
         "mean_reward": float(stats["mean_reward"]),
+    }
+
+
+def _shrinkage_smoothed_score(row: dict[str, Any], policy_config: dict[str, Any]) -> dict[str, Any] | None:
+    global_stats = policy_config.get("global") if isinstance(policy_config.get("global"), dict) else {}
+    global_mean = _number_or_none(global_stats.get("mean_reward"))
+    if global_mean is None:
+        return None
+
+    alpha = policy_config.get("alpha") if isinstance(policy_config.get("alpha"), dict) else {}
+    alpha_context = _positive_number(alpha.get("context_policy"), default=4.0)
+    alpha_family = _positive_number(alpha.get("retrieval_context_family"), default=4.0)
+    alpha_exact = _positive_number(alpha.get("exact_signature"), default=4.0)
+
+    context_stats = _stats_lookup(
+        policy_config.get("context_policies"),
+        "context_policy_id",
+        _context_policy_id(row),
+    )
+    context_score = _shrink_mean(
+        stats=context_stats,
+        parent_mean=global_mean,
+        alpha=alpha_context,
+    )
+
+    family_stats = _stats_lookup(
+        policy_config.get("retrieval_context_families"),
+        "family_id",
+        _retrieval_context_family_id(row),
+    )
+    family_score = _shrink_mean(
+        stats=family_stats,
+        parent_mean=context_score["smoothed_mean_reward"],
+        alpha=alpha_family,
+    )
+
+    signature_stats = _stats_lookup(
+        policy_config.get("signatures"),
+        "signature_id",
+        _signature_id(row),
+    )
+    exact_score = _shrink_mean(
+        stats=signature_stats,
+        parent_mean=family_score["smoothed_mean_reward"],
+        alpha=alpha_exact,
+    )
+
+    if signature_stats is not None:
+        level = "exact_signature"
+        specificity = 3
+        score = exact_score
+    elif family_stats is not None:
+        level = "retrieval_context_family"
+        specificity = 2
+        score = family_score
+    elif context_stats is not None:
+        level = "context_policy"
+        specificity = 1
+        score = context_score
+    else:
+        level = "global"
+        specificity = 0
+        score = {
+            "count": int(global_stats.get("count") or 0),
+            "mean_reward": global_mean,
+            "smoothed_mean_reward": global_mean,
+        }
+    return {
+        "level": level,
+        "specificity": specificity,
+        "effective_count": int(score.get("count") or 0),
+        "mean_reward": float(score["mean_reward"]),
+        "smoothed_mean_reward": float(score["smoothed_mean_reward"]),
     }
 
 
@@ -793,6 +933,44 @@ def _aggregate_lookup(
         if isinstance(row, dict) and str(row.get(id_name)) == key:
             return row
     return None
+
+
+def _stats_lookup(bucket: Any, id_name: str, key: str) -> dict[str, Any] | None:
+    if not isinstance(bucket, list):
+        return None
+    for row in bucket:
+        if isinstance(row, dict) and str(row.get(id_name)) == key:
+            return row
+    return None
+
+
+def _shrink_mean(*, stats: dict[str, Any] | None, parent_mean: float, alpha: float) -> dict[str, Any]:
+    if stats is None:
+        return {
+            "count": 0,
+            "mean_reward": parent_mean,
+            "smoothed_mean_reward": parent_mean,
+        }
+    count = int(stats.get("count") or 0)
+    mean_reward = _number_or_none(stats.get("mean_reward"))
+    if count <= 0 or mean_reward is None:
+        return {
+            "count": count,
+            "mean_reward": parent_mean,
+            "smoothed_mean_reward": parent_mean,
+        }
+    return {
+        "count": count,
+        "mean_reward": mean_reward,
+        "smoothed_mean_reward": ((count * mean_reward) + (alpha * parent_mean)) / (count + alpha),
+    }
+
+
+def _positive_number(value: Any, *, default: float) -> float:
+    number = _number_or_none(value)
+    if number is None or number <= 0:
+        return default
+    return number
 
 
 def _fixed_signature(signature_stats: list[dict[str, Any]]) -> dict[str, Any]:

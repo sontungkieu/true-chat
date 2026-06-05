@@ -235,6 +235,7 @@ Context label schema:
      - `cheapest`: choose the lowest normalized token + latency + KV cost in the logged query group.
      - `best_average`: choose the available action signature with the highest training mean reward.
      - `family_smoothed_best_average`: back off from exact signature mean reward to retrieval-context-family and context-policy mean reward.
+     - `shrinkage_smoothed_best_average`: score each row with empirical-Bayes shrinkage from exact signature to retrieval-context family, context policy, and global train means.
      - `linear_reward_model`: learned offline ridge-regression selector over retrieval-context action/cost features, excluding reward/quality/support labels and preference outcomes.
      - `smoothed_linear_selector`: learned offline ridge-regression selector with train-only aggregate reward means/counts for exact signatures, retrieval-context families, context policies, and retrievers.
      - `oracle_logged`: offline upper bound that chooses the highest observed reward in each logged query group.
@@ -251,6 +252,7 @@ Context label schema:
    - Status: action coverage/signature sparsity diagnostics implemented and documented in `docs/reports/phase1d_rlaif_action_coverage.md`.
    - Status: family-smoothed selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`.
    - Status: smoothed linear selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_smoothed_linear_selector_eval.md`.
+   - Status: shrinkage-smoothed selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -277,7 +279,10 @@ Context label schema:
    - Current action coverage result: exact signatures cover about 0.911 held-out eval groups, matching `best_average` coverage; collapsed retrieval-context families cover 1.000, suggesting family-level backoff before a pairwise ranker.
    - Current family-smoothed result: coverage reaches 1.000 and oracle gap improves over `best_average`, but mean reward/quality still trail exact-signature `best_average`.
    - Current smoothed-linear result: coverage stays 1.000 and reward/oracle gap improve slightly over `linear_reward_model`, but it still does not beat `best_average` or `family_smoothed_best_average` on the six-seed mean.
-   - Next evaluator change: run context-level labels on a small subset and/or add more logged query groups before moving to pairwise ranker.
+   - Current shrinkage-smoothed result: coverage stays 1.000, reward improves to 0.602, quality to 0.773, and oracle gap to 0.070; this is the strongest full-coverage non-oracle baseline so far, but still trails `best_average` on reward/quality.
+   - Pairwise calibration limitation: `pairwise_tie_v1` currently changes preference construction and diagnostics, but reward-based selectors still train on scalar reward rows; pairwise preferences affect selection only after a pairwise ranker or calibrated scalar reward path is added.
+   - Cost-feature limitation: current selector cost features are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before pre-generation selection.
+   - Next evaluator change: run context-level labels on a small subset, expand logged query groups and retriever diversity, then add a pairwise ranker.
 
 5. Outputs
    - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and the `rlaif-label-contexts` skeleton write the implemented files below; a full context-label run remains pending.
@@ -287,7 +292,7 @@ Context label schema:
    - `rlaif_context_preferences.jsonl`
    - `split_manifest.json`: deterministic query-level split manifest.
    - `split_summary.md`: query-level split summary.
-   - `rlaif_policy.json`: fixed, cheapest, best-average, `family_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged offline selector baselines.
+   - `rlaif_policy.json`: fixed, cheapest, best-average, `family_smoothed_best_average`, `shrinkage_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
    - `selector_sweep_summary.md`: multi-seed selector mean/std report.
    - `rlaif_action_coverage.md`: action signature sparsity and split coverage diagnostics.
@@ -302,6 +307,7 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_action_coverage.md`: curated action coverage and signature sparsity report.
    - `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`: curated family-smoothed selector report.
    - `docs/reports/phase1d_rlaif_v2_smoothed_linear_selector_eval.md`: curated smoothed-linear selector report.
+   - `docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md`: curated shrinkage-smoothed selector report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.
@@ -454,7 +460,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - Build scalar rewards with stable, bounded values.
    - Build context-only pairwise preferences only inside the same query/retriever group.
    - Build retrieval-context preferences across retrievers for the same query/model.
-   - Train fixed, cheapest, best-average, `family_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged offline selector baselines.
+   - Train fixed, cheapest, best-average, `family_smoothed_best_average`, `shrinkage_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged offline selector baselines.
    - Split reward/preference rows by `benchmark + query_id` so action rows for the same query cannot leak across train/eval.
    - Evaluate selector reward, quality, cost, coverage, selected-action distribution, and oracle gap.
    - Enforce quality guardrails so efficiency cannot win over a clearly worse answer.

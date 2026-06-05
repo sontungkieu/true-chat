@@ -33,6 +33,7 @@ and does not claim online RL or online generalization.
 | `cheapest` | 1.000 +/- 0.000 | 0.577 +/- 0.159 | 0.770 +/- 0.152 | 0.162 +/- 0.024 | 0.081 +/- 0.011 | 0.213 +/- 0.034 | 0.094 +/- 0.058 |
 | `best_average` | 0.911 +/- 0.050 | 0.618 +/- 0.147 | 0.794 +/- 0.125 | 0.178 +/- 0.034 | 0.081 +/- 0.017 | 0.240 +/- 0.049 | 0.080 +/- 0.050 |
 | `family_smoothed_best_average` | 1.000 +/- 0.000 | 0.598 +/- 0.138 | 0.767 +/- 0.122 | 0.176 +/- 0.033 | 0.093 +/- 0.022 | 0.238 +/- 0.046 | 0.074 +/- 0.047 |
+| `shrinkage_smoothed_best_average` | 1.000 +/- 0.000 | 0.602 +/- 0.117 | 0.773 +/- 0.097 | 0.183 +/- 0.033 | 0.125 +/- 0.033 | 0.255 +/- 0.048 | 0.070 +/- 0.040 |
 | `linear_reward_model` | 1.000 +/- 0.000 | 0.586 +/- 0.153 | 0.774 +/- 0.110 | 0.197 +/- 0.031 | 0.126 +/- 0.033 | 0.269 +/- 0.045 | 0.086 +/- 0.042 |
 | `smoothed_linear_selector` | 1.000 +/- 0.000 | 0.595 +/- 0.137 | 0.767 +/- 0.122 | 0.188 +/- 0.041 | 0.126 +/- 0.033 | 0.250 +/- 0.046 | 0.076 +/- 0.046 |
 | `oracle_logged` | 1.000 +/- 0.000 | 0.671 +/- 0.134 | 0.834 +/- 0.138 | 0.166 +/- 0.030 | 0.081 +/- 0.012 | 0.221 +/- 0.048 | 0.000 +/- 0.000 |
@@ -45,6 +46,8 @@ The seed-42 result was positive but somewhat optimistic. Across six seeds:
   (`0.586` vs `0.577`) and oracle gap (`0.086` vs `0.094`).
 - `family_smoothed_best_average` keeps full coverage and improves over `linear_reward_model`
   on mean reward and oracle gap, but trails `best_average` on mean quality.
+- `shrinkage_smoothed_best_average` is now the strongest full-coverage non-oracle selector
+  by reward and oracle gap, but still trails `best_average` on reward/quality.
 - `smoothed_linear_selector` keeps full coverage and improves over `linear_reward_model`
   on mean reward and oracle gap, but the gain is modest and it still trails
   `family_smoothed_best_average`.
@@ -75,10 +78,11 @@ while seeds 1, 4, 5 were more favorable to `linear_reward_model` than the cheape
 
 ## Next Step
 
-Action coverage diagnostics confirmed exact-signature sparsity, and the follow-up
-`smoothed_linear_selector` showed that train-only aggregate mean features help but do not yet
-beat family smoothing or exact-signature averaging. The next useful step should be richer
-context-level RLAIF labels or more logged query groups before a pairwise ranker:
+Action coverage diagnostics confirmed exact-signature sparsity. Family smoothing, smoothed linear
+features, and shrinkage repair coverage, but reward-based selectors still train from scalar reward
+rows. `pairwise_tie_v1` affects preference construction only; it will affect selection after a
+pairwise ranker or calibrated scalar reward path is implemented. The next useful step should be
+richer context-level RLAIF labels or more logged query groups before a pairwise ranker:
 
 ```text
 rlaif-label-contexts subset
