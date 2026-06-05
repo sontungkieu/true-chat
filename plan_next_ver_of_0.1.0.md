@@ -97,6 +97,7 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Judge candidate retrieved/context chunks before generation.
    - Identify selected evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and sufficiency.
    - The labeling path supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, `--judge-model`, JSON repair, progress logging, and incremental writes.
+   - MiMo key loading now prefers the process environment before local `--env-file`, so private Kaggle jobs can inject `MIMO_API_KEY` without creating `.secrets/.env` in the cloned repo.
    - Missing contexts, invalid JSON, empty completions, and judge errors become ambiguous labels with null scores, never score zero.
    - Summarize context labels with `scripts/summarize_rlaif_context_labels.py` to track sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk ids, and context quality statistics.
    - Current subset result: 50 valid JSON labels, 0 invalid JSON, 0 errors, 4 ambiguous rows, 18 sufficient rows, 29 insufficient rows, mean context quality 0.478, mean evidence support 0.410, and mean selected chunks 1.38.

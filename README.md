@@ -282,7 +282,7 @@ uv run rag-bench rlaif-label-answers \
   --max-completion-tokens 4096
 ```
 
-`rlaif-label-answers` writes incrementally and supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`. It instructs the judge not to browse and not to use external knowledge. Invalid JSON, empty MiMo completions, missing answers, and missing context become ambiguous labels with `quality_score=null`; they are not converted into score zero. MiMo V2.5 often spends hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
+`rlaif-label-answers` writes incrementally and supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`. It instructs the judge not to browse and not to use external knowledge. MiMo credentials can come from the process environment, for example a private Kaggle notebook that sets `MIMO_API_KEY`, or from `--env-file` when running locally. Invalid JSON, empty MiMo completions, missing answers, and missing context become ambiguous labels with `quality_score=null`; they are not converted into score zero. MiMo V2.5 often spends hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
 
 Label context sufficiency with an AI judge using only the logged question, optional answer, and retrieved chunks:
 
@@ -297,7 +297,7 @@ uv run rag-bench rlaif-label-contexts \
   --max-completion-tokens 4096
 ```
 
-`rlaif-label-contexts` writes `sufficient`, `selected_chunk_ids`, `redundant_chunk_ids`, `irrelevant_chunk_ids`, `missing_evidence`, `minimality_score`, `evidence_support_score`, and `context_quality_score`. It uses stable chunk ids from the logged retrieved records and drops judge-returned ids that are not present in the action row. It supports the same operational controls as answer labeling, including `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`. Missing context, invalid JSON, and judge errors become ambiguous labels with null scores, not score zero.
+`rlaif-label-contexts` writes `sufficient`, `selected_chunk_ids`, `redundant_chunk_ids`, `irrelevant_chunk_ids`, `missing_evidence`, `minimality_score`, `evidence_support_score`, and `context_quality_score`. It uses stable chunk ids from the logged retrieved records and drops judge-returned ids that are not present in the action row. It supports the same operational controls as answer labeling, including `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--sleep-seconds`, and `--progress-every`, and it uses the same process-env-first MiMo key loading as answer labeling. Missing context, invalid JSON, and judge errors become ambiguous labels with null scores, not score zero.
 
 Summarize context labels:
 

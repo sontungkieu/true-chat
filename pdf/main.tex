@@ -153,7 +153,7 @@ uv run rag-bench rlaif-label-answers \
   --max-completion-tokens 4096
 \end{verbatim}
 
-\texttt{rlaif-label-answers} chỉ judge từ question, answer và retrieved context đã log; prompt cấm browse và external knowledge. Output ghi incremental nên có thể resume sau khi kernel/local process bị ngắt. Nếu model trả invalid JSON, empty content, thiếu answer hoặc thiếu context, label được ghi là ambiguous với \texttt{quality\_score=null}; không có path nào biến lỗi judge thành score 0.
+\texttt{rlaif-label-answers} chỉ judge từ question, answer và retrieved context đã log; prompt cấm browse và external knowledge. Output ghi incremental nên có thể resume sau khi kernel/local process bị ngắt. MiMo key được đọc ưu tiên từ process environment, ví dụ private Kaggle notebook set \texttt{MIMO\_API\_KEY}; nếu biến môi trường không có thì mới fallback về \texttt{--env-file} local. Nếu model trả invalid JSON, empty content, thiếu answer hoặc thiếu context, label được ghi là ambiguous với \texttt{quality\_score=null}; không có path nào biến lỗi judge thành score 0.
 
 Script \texttt{scripts/summarize\_rlaif\_labels.py} đọc \texttt{rlaif\_answer\_labels.jsonl} và báo label count, valid/invalid JSON, ambiguous labels, judge provider/model counts, score mean/std, unsupported-claim penalty và correlation với RAGAS answer relevancy khi có \texttt{rlaif\_feedback.jsonl}. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_answer\_labels\_template.md}.
 
@@ -174,7 +174,7 @@ uv run rag-bench rlaif-label-contexts \
   --max-completion-tokens 4096
 \end{verbatim}
 
-\texttt{rlaif-label-contexts} judge chỉ từ question, optional logged answer và retrieved chunks đã log. Output ghi \texttt{sufficient}, \texttt{selected\_chunk\_ids}, \texttt{redundant\_chunk\_ids}, \texttt{irrelevant\_chunk\_ids}, \texttt{missing\_evidence}, \texttt{minimality\_score}, \texttt{evidence\_support\_score} và \texttt{context\_quality\_score}. Nếu judge trả chunk id không thuộc action row, id đó bị drop và ghi vào metadata. Missing context, invalid JSON, empty completion hoặc judge error đều thành ambiguous label với score \texttt{null}, không thành 0.
+\texttt{rlaif-label-contexts} judge chỉ từ question, optional logged answer và retrieved chunks đã log. Output ghi \texttt{sufficient}, \texttt{selected\_chunk\_ids}, \texttt{redundant\_chunk\_ids}, \texttt{irrelevant\_chunk\_ids}, \texttt{missing\_evidence}, \texttt{minimality\_score}, \texttt{evidence\_support\_score} và \texttt{context\_quality\_score}. Nếu judge trả chunk id không thuộc action row, id đó bị drop và ghi vào metadata. MiMo key dùng cùng cơ chế env-first như answer labeler để private Kaggle jobs không cần tạo \texttt{.secrets/.env} trong cloned repo. Missing context, invalid JSON, empty completion hoặc judge error đều thành ambiguous label với score \texttt{null}, không thành 0.
 
 Script \texttt{scripts/summarize\_rlaif\_context\_labels.py} đọc \texttt{rlaif\_context\_labels.jsonl} và báo valid/invalid JSON, ambiguous labels, sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk-id count, context quality, evidence support và minimality statistics. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md}.
 
