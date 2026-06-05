@@ -16,7 +16,7 @@ The current result bottlenecks are still data and coverage, not algorithmic soph
 
 - full MiMo context labels exist for the first 192-action Phase 1D dataset, but they are still small and AI-generated;
 - logged query/action data is still small;
-- retriever diversity is low;
+- retriever-diverse retrieval-only action coverage now exists for a 50-query SciFact sample, but generation/judge labels do not yet exist for those retriever-diverse rows;
 - exact action signatures remain sparse.
 
 Future MiMo 2.5 runs should use standard `mimo-v2.5`, not `mimo-v2.5-pro`,
@@ -29,6 +29,11 @@ silently aggregated with future standard-v2.5 labels. Merged result tables are
 allowed when the drift is explicitly annotated.
 
 Therefore the next bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm. Do not add DPO, PPO, GRPO, runtime KV pruning, or a complex reward model in this phase. Current results should be framed as evidence that the infrastructure works, while learned selectors remain data-limited.
+
+The immediate next experiment is a small retriever-diverse generation/judge
+subset using standard `mimo-v2.5`, not a larger algorithmic selector. The
+retrieval-only coverage run has already verified that sampled queries can carry
+all three retrievers (`bm25`, `graph-bm25`, `hybrid-rrf`) and 45 action rows.
 
 Do not overclaim:
 
