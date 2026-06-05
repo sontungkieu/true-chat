@@ -33,6 +33,9 @@ class FakeService:
         self.seen_web_search_key = None
         self.seen_language = None
         self.seen_memory = None
+        self.seen_score_min = None
+        self.seen_score_max = None
+        self.seen_sort_by_score = None
 
     def answer(
         self,
@@ -49,6 +52,9 @@ class FakeService:
         web_search_key=None,
         language=None,
         memory=None,
+        score_min=None,
+        score_max=None,
+        sort_by_score=None,
     ):
         self.seen_messages = messages
         self.seen_model = request_model
@@ -62,6 +68,9 @@ class FakeService:
         self.seen_web_search_key = web_search_key
         self.seen_language = language
         self.seen_memory = memory
+        self.seen_score_min = score_min
+        self.seen_score_max = score_max
+        self.seen_sort_by_score = sort_by_score
         response = {
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -109,12 +118,19 @@ class FakeService:
     def available_retriever_ids(self) -> tuple[str, ...]:
         return ("bm25", "tfidf")
 
-    def lookup_dictionary(self, term, *, top_k=None):
+    def lookup_dictionary(self, term, *, top_k=None, score_min=None, score_max=None, sort_by_score=None):
         return {
             "object": "dictionary.lookup",
             "query": term,
             "retriever": "dictionary-graph",
             "top_k": top_k or 1,
+            "retrieval_metadata": {
+                "score_filter": {
+                    "min_score": score_min,
+                    "max_score": score_max,
+                    "sort_by_score": bool(sort_by_score),
+                }
+            },
             "retrieved": [
                 {
                     "doc_id": "base:D-0001",
@@ -148,6 +164,21 @@ def test_health_and_models() -> None:
     assert health["available_generation_models"] == ["llama-3.1-8b-instant", "qwen/qwen3-32b"]
     assert health["available_retrievers"] == ["bm25", "tfidf"]
     assert health["web_search"] == {"enabled": True, "top_k": 5, "privilege_key_configured": False}
+    assert health["version"]["commit_matches_expected"] is None
+
+
+def test_health_reports_runtime_commit_match(monkeypatch) -> None:
+    monkeypatch.setenv("TRUE_CHAT_EXPECTED_COMMIT", "abc123")
+    monkeypatch.setenv("TRUE_CHAT_ACTUAL_COMMIT", "abc123")
+    client = TestClient(create_app(FakeService()))
+
+    health = client.get("/health").json()
+
+    assert health["version"] == {
+        "expected_commit": "abc123",
+        "actual_commit": "abc123",
+        "commit_matches_expected": True,
+    }
 
 
 def test_chat_page() -> None:
@@ -188,6 +219,16 @@ def test_chat_page() -> None:
     assert "Graph BM25" in response.text
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
+    assert 'const DEFAULT_CHAT_MODEL = "qwen/qwen3-32b"' in response.text
+    assert 'const DEFAULT_LANGUAGE = "vi"' in response.text
+    assert 'const DEFAULT_RESPONSE_MODE = "dictionary"' in response.text
+    assert "const DEFAULT_MEMORY_ENABLED = false" in response.text
+    assert "const DEFAULT_DICTIONARY_CROSS_REF = true" in response.text
+    assert "const DEFAULT_MAX_TOKENS = 4096" in response.text
+    assert "SETTINGS_SCHEMA_VERSION = 2" in response.text
+    assert "runtimeVersion" in response.text
+    assert "const APP_VERSION = \"\"" in response.text
+    assert "__APP_VERSION_JSON__" not in response.text
     assert "MiMo V2.5 Pro" in response.text
     assert "modelSelector" not in response.text
     assert "activeTitle" not in response.text
@@ -221,10 +262,25 @@ def test_chat_page() -> None:
     assert "openDictionaryCrossReference" in response.text
     assert "clickedDictionaryTerm" in response.text
     assert "xref-term" in response.text
+    assert "docTrail" in response.text
+    assert "renderDocumentTrail" in response.text
+    assert "openDocumentFromTrail" in response.text
+    assert "if (options.fromCrossRef) {" in response.text
+    assert "options.fromCrossRef && selectedSource && !sameDocumentSource" not in response.text
+    assert "referenceTrail" in response.text
+    assert "backToPreviousEntry" in response.text
     assert "dictionaryCrossRefHint" in response.text
     assert "query-highlight" in response.text
     assert "sourceHighlightTerms" in response.text
+    assert "dictionaryMatchMode" in response.text
+    assert "strictHighlights" in response.text
+    assert "strictForMatchWithMap" in response.text
+    assert "dictionaryGraphPath" in response.text
+    assert "renderDictionaryGraphPath" in response.text
+    assert "dictionaryRelationLabel" in response.text
+    assert "dictionary-graph-path" in response.text
     assert "isHighlightBoundary" in response.text
+    assert '? "dd"' in response.text
     assert "dictionarySourceLabel" in response.text
     assert "Từ điển PB 2021" in response.text
     assert "Bổ sung 2021" in response.text
@@ -311,6 +367,33 @@ def test_chat_page() -> None:
     assert 'buffer.split("\\\\n\\\\n")' not in response.text
     assert "parseSseEvent" in response.text
     assert "localStorage" in response.text
+    assert 'id="sourceTopK"' in response.text
+    assert "score_min: requestOptions.score_min" in response.text
+    assert "sort_by_score: requestOptions.sort_by_score" in response.text
+    assert "function showDebugSourceMetadata()" in response.text
+    assert 'id="dictionaryXrefPopover"' in response.text
+    assert "renderDictionaryCrossReferencePopup" in response.text
+    assert "body: JSON.stringify({ term, top_k: topK })" in response.text
+    assert "keyboard-open" in response.text
+    assert "--keyboard-inset" in response.text
+    assert "updateComposerReservedHeight" in response.text
+    assert ".settings[open] .settings-body" in response.text
+    assert "--doc-panel-width" in response.text
+    assert 'id="docResizeHandle"' in response.text
+    assert "startDocumentPanelResize" in response.text
+    assert "resizeDocumentPanelWithKeyboard" in response.text
+    assert "ragChatDocPanelWidth.v1" in response.text
+
+
+def test_chat_page_includes_runtime_commit(monkeypatch) -> None:
+    monkeypatch.setenv("TRUE_CHAT_ACTUAL_COMMIT", "abc123def456")
+    client = TestClient(create_app(FakeService()))
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "runtimeVersionValue" in response.text
+    assert 'const APP_VERSION = "abc123def456"' in response.text
 
 
 def test_chat_completion_non_stream() -> None:
@@ -332,6 +415,9 @@ def test_chat_completion_non_stream() -> None:
             "web_search_key": "search-secret",
             "language": "vi",
             "memory": False,
+            "score_min": 0.25,
+            "score_max": 2.5,
+            "sort_by_score": True,
         },
     )
 
@@ -352,6 +438,9 @@ def test_chat_completion_non_stream() -> None:
     assert service.seen_web_search_key == "search-secret"
     assert service.seen_language == "vi"
     assert service.seen_memory is False
+    assert service.seen_score_min == 0.25
+    assert service.seen_score_max == 2.5
+    assert service.seen_sort_by_score is True
 
 
 def test_chat_completion_accepts_qwen_model_choice() -> None:

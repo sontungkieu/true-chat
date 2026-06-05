@@ -24,6 +24,144 @@ uv sync --frozen --extra vector --extra ragas --group dev
 
 Direct runtime, optional, and test dependencies are pinned exactly in `pyproject.toml`, with `numpy` and `scikit-learn` pinned by Python-version markers to preserve Python 3.10 compatibility. `uv.lock` pins the full transitive environment; use `--frozen` for reproducible installs and runs.
 
+## vLLM Model Benchmark
+
+Detailed operator guide and one-place per-model command list: [`MODEL_BENCH.md`](MODEL_BENCH.md).
+
+Vast AI RTX 5060 Ti 16GB quick paths:
+
+```bash
+git clone <repo-url> true-chat
+cd true-chat
+git checkout internship
+```
+
+Use the CUDA 13.0 profile first when the Vast host driver is `>= 580.65.06`:
+
+```bash
+scripts/setup_vast_5060ti_cuda130.sh
+scripts/bench_vast_5060ti_cuda130.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Fallback to CUDA 12.9 when the driver is `>= 575.57.08` but not CUDA 13-ready:
+
+```bash
+scripts/setup_vast_5060ti_cuda129.sh
+scripts/bench_vast_5060ti_cuda129.sh Qwen/Qwen2.5-7B-Instruct-AWQ standard
+```
+
+Run the main 5060 Ti model suite for Qwen3.5 9B 4-bit, Qwen2.5 14B AWQ, and Llama-3 16B:
+
+```bash
+scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+```
+
+The suite defaults to `cyankiwi/Qwen3.5-9B-AWQ-4bit`, `Qwen/Qwen2.5-14B-Instruct-AWQ`, and `solidrust/Llama-3-16B-Instruct-v0.1-AWQ`. Suite runs use vLLM as the inference engine and 16GB long-prompt defaults: `BENCH_MAX_MODEL_LEN=4096`, `BENCH_MAX_NUM_SEQS=1`, `BENCH_MAX_NUM_BATCHED_TOKENS=4096`, and `BENCH_ENFORCE_EAGER=1`, with preset `standard` so synthetic long is included. Speculative decoding is off by default, attention backend is vLLM auto-selection, and quantization is read from the AWQ model config unless `BENCH_VLLM_QUANTIZATION` is set. Use `BENCH_VLLM_ATTENTION_BACKEND` or `BENCH_VLLM_SPECULATIVE_CONFIG` for explicit A/B runs; `manifest.json` and `summary.md` record the engine, vLLM version, quantization, KV-cache dtype, attention backend, speculative method, and execution limits for each run. Qwen3.5 9B 8-bit is opt-in with `BENCH_INCLUDE_QWEN35_8BIT=1`; it uses `BENCH_QWEN35_8BIT_KV_CACHE_DTYPE=turboquant_4bit_nc`, `BENCH_QWEN35_8BIT_GPU_MEMORY_UTILIZATION=0.94`, and `BENCH_QWEN35_8BIT_CPU_OFFLOAD_GB=2` by default to fit long context on 16GB, so it can be much slower because it measures CPU/PCIe offload rather than clean GPU throughput. Before each model, Vast wrappers kill stale vLLM GPU processes and wait for GPU memory to drop under `BENCH_GPU_READY_MAX_USED_MB=512`. Single-model and suite scripts also check Hugging Face cache free space before model download; when `BENCH_MODEL_CACHE_CLEANUP=auto` sees less than `BENCH_MIN_CACHE_FREE_GB=35` available, single-model scripts delete other model caches while keeping the target model cache, and suite scripts delete the previous model cache. They prefetch the target Hugging Face model before starting vLLM so long downloads do not hide inside the vLLM health wait. Use `BENCH_MODEL_CACHE_CLEANUP=always` on small disks and `BENCH_PREFETCH_MODEL=0` only when debugging vLLM startup itself. Llama 4 Scout 17B is optional because it is a large gated MoE model and is not 16GB-safe by default:
+
+```bash
+BENCH_INCLUDE_LLAMA4=1 scripts/bench_vast_5060ti_model_suite_cuda130.sh standard
+```
+
+Run a no-draft speculative decoding sweep for one model. It starts a local vLLM server per case and compares baseline no-SD with n-gram SD using 2 and 4 speculative tokens by default:
+
+```bash
+env BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_sd_sweep_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
+```
+
+If a baseline run already exists, skip the duplicate baseline:
+
+```bash
+env BENCH_SD_INCLUDE_BASELINE=0 BENCH_MAX_MODEL_LEN=4096 BENCH_MAX_NUM_SEQS=1 BENCH_MAX_NUM_BATCHED_TOKENS=4096 BENCH_ENFORCE_EAGER=1 \
+  scripts/bench_vast_5060ti_sd_sweep_cuda130.sh solidrust/Llama-3-16B-Instruct-v0.1-AWQ standard
+```
+
+Both profiles use `/workspace` caches when available, force `UV_PROJECT_ENVIRONMENT=$PWD/.venv` so an active `(main)` environment cannot capture installs, install vLLM with the selected CUDA backend so its resolver picks the matching PyTorch build once, pin vLLM `0.22.0` by default, verify the selected `torch.version.cuda`, and use 16GB-safe defaults for the benchmark runner. Prefer CUDA 13.0 on hosts with driver `>= 580.65.06`; keep CUDA 12.9 as the fallback when Vast does not expose a CUDA 13-ready host.
+
+Use the internship branch when comparing one model across multiple manually prepared machines:
+
+```bash
+git clone <repo-url> true-chat
+cd true-chat
+git checkout internship
+scripts/setup_vllm_bench_cuda130.sh
+```
+
+Use `scripts/setup_vllm_bench_cuda130.sh` for machines that should run the CUDA 13.0 vLLM/PyTorch stack. Use `scripts/setup_vllm_bench_cuda129.sh` only when the machine/driver is not prepared for the CUDA 13.0 backend. The generic `scripts/setup_vllm_bench.sh` keeps `uv` backend auto-selection.
+
+The setup scripts only prepare the Python environment and install vLLM into `.venv`. They do not install or change NVIDIA drivers, CUDA, or system packages. The CUDA-specific wrappers remove the existing vLLM/PyTorch CUDA stack inside `.venv` before reinstalling so a CUDA 13 wheel is not mixed with a CUDA 12.9 torch build. Set `VLLM_VERSION=...` when a machine needs a specific vLLM build:
+
+```bash
+VLLM_VERSION=0.22.0 scripts/setup_vllm_bench_cuda130.sh
+```
+
+The CUDA-specific setup wrappers fail fast when the installed NVIDIA driver is too old for the selected backend: CUDA 12.9 requires Linux driver `>= 575.57.08`, and CUDA 13.0 requires Linux driver `>= 580.65.06`. This prevents later model-load failures such as `cudaErrorUnsupportedPtxVersion`.
+
+After setup, verify the runtime packages, not just the `CUDA Version` printed by `nvidia-smi`:
+
+```bash
+.venv/bin/python - <<'PY'
+import torch, vllm
+print("torch", torch.__version__)
+print("torch cuda", torch.version.cuda)
+print("vllm", vllm.__version__)
+print("cuda available", torch.cuda.is_available())
+PY
+```
+
+Run a quick local smoke benchmark. The command starts `vllm serve`, waits for `/health`, runs warmup plus benchmark prompts, samples hardware with `nvidia-smi`, writes artifacts, and stops the server:
+
+```bash
+uv run --frozen --no-sync rag-bench model-bench \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --preset smoke \
+  --tensor-parallel-size auto
+```
+
+While a model benchmark is running, progress lines show setup, cache cleanup, vLLM health, warmup, each scenario/concurrency pair, hardware sampling, artifact writing, and server shutdown. Core benchmark progress is prefixed with `[model-bench HH:MM:SS]`; Vast wrapper/setup progress uses `[vast-bench HH:MM:SS]`, `[vast-setup HH:MM:SS]`, and `[vllm-setup HH:MM:SS]`.
+
+Use the full synthetic plus chat suite when the model fits and the machine is stable:
+
+```bash
+uv run --frozen --no-sync rag-bench model-bench \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --preset all \
+  --tensor-parallel-size auto \
+  --max-model-len 8192
+```
+
+If a vLLM/OpenAI-compatible server is already running, benchmark it without starting a new process:
+
+```bash
+uv run --frozen --no-sync rag-bench model-bench \
+  --endpoint http://127.0.0.1:8000/v1 \
+  --served-model-name my-model \
+  --preset standard
+```
+
+Preset behavior:
+
+- `smoke`: one short synthetic scenario at concurrency `1`.
+- `standard`: short, medium, and long synthetic scenarios at concurrency `1,2,4,8`.
+- `all`: `standard` plus an 8k-ish long-context synthetic case and chat-style prompts, including Vietnamese and multi-turn prompts.
+
+Useful overrides:
+
+- `--concurrency 1,4,16`: replace preset concurrency values.
+- `--requests-per-scenario 12`: replace preset request count per scenario/concurrency.
+- `--warmup-requests 2`: run unrecorded warmup calls before each scenario.
+- `--max-output-tokens 256`: use one completion cap for every scenario.
+- `--vllm-arg=--dtype --vllm-arg auto`: pass raw extra arguments through to `vllm serve`.
+
+Results are written under ignored `runs/model_bench/<timestamp>_<hostname>_<model>/`:
+
+- `manifest.json`: command config, git branch/commit/dirty flag, endpoint, vLLM command, hardware snapshot, inference engine, vLLM version, quantization, KV-cache dtype, attention backend, speculative decoding config, eager/CUDA graph mode, batch/cache limits, GPU utilization, and CPU offload.
+- `requests.jsonl`: per-request latency, TTFT, usage tokens, output tok/s, generated size, and error.
+- `scenario_metrics.json` / `scenario_metrics.csv`: p50/p95/p99 latency, p50/p95 TTFT, tok/s, requests/s, completion tokens/s, error rate, and per-scenario hardware aggregates such as peak VRAM, peak/avg GPU utilization, peak/avg power, peak temperature, peak RAM, and CPU load.
+- `hardware_samples.csv`: raw sampled CPU/RAM and GPU utilization, memory, power, and temperature where `nvidia-smi` is available.
+- `server.log`: local vLLM process output, or a note that an existing endpoint was used.
+- `summary.md`: compact comparison table plus the inference engine/config fields needed to compare machines and decoding methods.
+
 ## Retrieval Strategies
 
 Search behavior is registered centrally as retrieval strategies. The active registry strategies are `bm25`, `tfidf`, `keyword-match`, `multi-query`, `graph-bm25`, `llm-query-rewrite`, `llm-multi-query`, `image-digits`, `dictionary-graph`, `vector`, `hybrid-rrf`, and `vector-rerank`. Aliases include `lexical -> bm25`, `find -> keyword-match`, `graph -> graph-bm25`, `graph-rag -> graph-bm25`, `img -> image-digits`, `dict -> dictionary-graph`, `dense -> vector`, `hybrid -> hybrid-rrf`, and `rerank -> vector-rerank`. The benchmark CLI, chat proxy, and built-in UI all use the same registry for local retrieval strategies so new local search behavior can be added without wiring it separately through each surface. The internship branch also adds chat-only web search mode, exposed as `web` / `/web` / `/search`, which performs live DuckDuckGo HTML search and feeds title/snippet/URL results into the same RAG answer path.
@@ -38,7 +176,7 @@ Strategy notes:
 - `llm-query-rewrite`: one Groq call rewrites the query, then BM25 retrieves original plus rewritten query.
 - `llm-multi-query`: one Groq call generates multiple search queries, then BM25 retrieves and merges them with reciprocal-rank fusion.
 - `image-digits`: local text-to-image demo over the bundled scikit-learn handwritten digits sample dataset; `/img` requests do not need a Groq generation call.
-- `dictionary-graph`: local dictionary lookup over `plain_text` with lexical plus graph-style expansion, while preserving DOCX rich blocks for UI rendering.
+- `dictionary-graph`: local dictionary lookup over `plain_text` with strict Vietnamese headword/alias matching, typed `nodes.jsonl`/`edges.jsonl` relation expansion, lexical fallback, and preserved DOCX rich blocks for UI rendering.
 - `web` response mode: live web search over DuckDuckGo HTML results; titles, snippets, and URLs become `web-1`, `web-2`, ... RAG sources for the selected generation model.
 - `hybrid-rrf`: BM25 plus vector retrieval merged by reciprocal-rank fusion; requires `--extra vector`.
 - `vector-rerank`: vector candidates reranked by normalized BM25 lexical score; requires `--extra vector`.
@@ -64,6 +202,21 @@ uv run --frozen python scripts/build_dictionary_graph.py \
 
 The source DOCX files default to `data/semi_private/File Từ điển PB_2021/<letter>.docx`. The script reads `MIMO_API_KEY` and optional `MIMO_BASE_URL` from `.secrets/.env`; for Groq runs, use `--provider groq` and `.secrets/groq_key.env`. It keeps raw LLM batch outputs under `raw_batches/`, skips valid batches on resume, retries malformed JSON with a shorter repair prompt, micro-repairs missing entries one-by-one, and can insert explicit local fallback entries when the model still omits a source item. Production graph output is validated against `schemas/dictionary_ontology.json` and typed Pydantic models before becoming the main artifact. Each edge must carry `source_entry_id`, `evidence_text`, `confidence`, `extractor`, and `prompt_version`.
 
+Private source sets are blocked from cloud providers by default. Mark private inputs with a third `--source-set` field, or place them under a path component named `private`, `secret`, `classified`, `top-secret`, `top_secret`, `tuyet-mat`, or `tuyệt-mật`. Private graph extraction then requires a local OpenAI-compatible endpoint plus an explicit trusted model allowlist:
+
+```bash
+uv run --frozen python scripts/build_dictionary_graph.py \
+  --provider local \
+  --base-url http://127.0.0.1:8000/v1 \
+  --auth-header none \
+  --model qwen3-32b-local \
+  --trusted-model qwen3-32b-local \
+  --source-set "private=private/File Tuyet Mat|A,B|private" \
+  --run-name private_dictionary_local_graph
+```
+
+If a private source set is used with `--provider mimo` or `--provider groq`, or with a local model not listed through `--trusted-model`, the builder exits before provider calls. `--validate-only` and `--export-only` remain allowed for local artifact work because they do not send document text to a model.
+
 Useful production modes:
 
 ```bash
@@ -84,7 +237,7 @@ uv run --frozen python scripts/build_dictionary_graph.py \
   --run-name pb_dictionary_abcdf_prod_graph --force-reextract
 ```
 
-`--quality-pass weak` is the default. It sends weak non-deterministic edges to the selected provider for a critic pass when such edges exist; `--quality-pass all` audits all non-deterministic relation edges, and `--quality-pass none` disables the critic pass. Resume keys include source hashes, prompt version, model, batch size, and raw batch validity, so reruns reuse valid `raw_batches/` unless `--force-reextract` is set. Outputs are written under ignored `runs/`:
+`--quality-pass weak` is the default. It sends weak non-deterministic edges to the selected provider for a critic pass when such edges exist; private source sets therefore still require a trusted local model unless the pass is disabled or the run is `--export-only`/`--validate-only`. `--quality-pass all` audits all non-deterministic relation edges, and `--quality-pass none` disables the critic pass. Resume keys include source hashes, prompt version, model, batch size, and raw batch validity, so reruns reuse valid `raw_batches/` unless `--force-reextract` is set. Outputs are written under ignored `runs/`:
 
 To build a unified dictionary from the base files plus the 2021 supplement, use repeatable source sets. Source-set mode namespaces entry ids as `base:B-0001` and `supp2021:B-0001`, preventing collisions while preserving the original local id in source metadata:
 
@@ -613,7 +766,7 @@ The estimator uses `KV bytes = 2 * layers * num_key_value_heads * head_dim * seq
 Start the lightweight built-in RAG chat UI and OpenAI-compatible proxy:
 
 ```bash
-uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --bench scifact --retriever bm25 --top-k 3 --max-context-chars 2500 --max-completion-tokens 128 --key-tpm 6000 --key-rpm 30 --rate-limit-scope per-key
+uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --bench scifact --retriever bm25 --top-k 3 --model qwen/qwen3-32b --max-context-chars 2500 --max-completion-tokens 4096 --key-tpm 6000 --key-rpm 30 --rate-limit-scope per-key
 ```
 
 Web search mode is enabled by default on the internship branch, but it is restricted by a separate privilege key. Start the server with a key in the environment or CLI:
@@ -629,6 +782,8 @@ In the UI, paste the same value into `Local settings` -> `Web search key`, then 
 ```
 
 The proxy validates the pasted key before making any network request. If the key is missing, wrong, or not configured server-side, web search is rejected. After validation, the proxy fetches live DuckDuckGo HTML results using Python stdlib, converts each result into a RAG source (`web-1`, `web-2`, ...), and asks the selected generation model to answer with citations. Use `--disable-web-search` to turn this mode off, or tune the request with `--web-search-top-k`, `--web-search-timeout`, and `--web-search-privilege-key`.
+
+The built-in UI defaults to Qwen3 32B, Vietnamese output, Dictionary mode, memory off, dictionary cross-reference on, and a 4096-token completion cap. Existing browser settings are migrated once to these defaults by the settings schema version.
 
 Expose additional search strategies in the built-in UI:
 
@@ -647,6 +802,7 @@ PB dictionary mode is also disabled by default on the internship branch. Re-enab
 ```bash
 uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 \
   --enable-dictionary \
+  --model qwen/qwen3-32b \
   --retriever bm25 \
   --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph \
   --dictionary-artifact runs/pb_dictionary_abcd_mimo_graph \
@@ -655,7 +811,7 @@ uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 \
   --dictionary-top-k 5
 ```
 
-If `--dictionary-artifact` is missing or marked partial, the proxy warns in `/health` and falls back to parsing the selected DOCX letters from `--dictionary-source-dir`. Add `--dictionary-required` when startup should fail instead. `/dict AMONIT` and the `Dictionary` / `Từ điển` composer mode use `dictionary-graph`, show the original dictionary entry first, then ask the selected generation model for an explanation. Dictionary lookup adds accent-insensitive direct matching over headwords, graph aliases, graph concepts, inferred headword abbreviations, and entry text, so variants such as `hexogen`, `hêxôgen`, and `hê-xô-gen` can resolve to the same `HEXOGEN` entry while abbreviations such as `PB` can resolve to `PHÁO BINH`. Related entries that mention the term are still shown below the canonical match. The document side panel renders rich dictionary blocks from the artifact, preserving inline formatting such as bold, italic, subscript/superscript, color, and table row boundaries.
+If `--dictionary-artifact` is missing or marked partial, the proxy warns in `/health` and falls back to parsing the selected DOCX letters from `--dictionary-source-dir`. Add `--dictionary-required` when startup should fail instead. `/dict AMONIT` and the `Dictionary` / `Từ điển` composer mode use `dictionary-graph`, show the original dictionary entry first, then ask the selected generation model for an explanation. Text-only mode still uses the selected benchmark/text retriever first, but short term-like queries can add a dictionary fallback when the normal retriever has no positive evidence, so prompts such as `pháo binh` can use local dictionary context without switching the composer mode. Chat and dictionary lookup requests can optionally pass `top_k`, `score_min`, `score_max`, and `sort_by_score`; these controls are applied before prompt construction, so only sources inside the allowed score range are used by the model and returned in `rag.retrieved`. When text-mode dictionary fallback is active, it also honors the request `top_k` as the final source cap instead of the lower dictionary default. The prompt context budget is distributed across retrieved sources so later sources still reach the model instead of being dropped behind long earlier entries. The response metadata records the filter as `retrieval_metadata.score_filter`. Dictionary lookup first uses strict Vietnamese headword/alias keys that preserve tone marks, so terms such as `nhật` and `nhất` stay distinct. It then falls back to accent-insensitive matching over headwords, graph aliases, graph concepts, inferred headword abbreviations, and entry text when no strict canonical match exists, so variants such as `hexogen`, `hêxôgen`, and `hê-xô-gen` can resolve to the same `HEXOGEN` entry while abbreviations such as `PB` can resolve to `PHÁO BINH`. Exact headword/alias matches are scored above mere phrase mentions, preventing broad entries containing `pháo binh` from hiding the canonical `PHÁO BINH` entry. When a typed graph artifact is available, the retriever loads all relation edges from `nodes.jsonl` and `edges.jsonl`, expands trusted 1-hop and limited 2-hop candidates using relation confidence, and exposes the match reason as `dictionary_graph_path`, `dictionary_relation`, and `dictionary_evidence_text`. Related entries that mention or connect through the term are still shown below the canonical match. The document side panel renders rich dictionary blocks from the artifact, preserving inline formatting such as bold, italic, subscript/superscript, color, and table row boundaries.
 
 Expose MiMo chat models in the same OpenAI-compatible chat UI by putting `MIMO_API_KEY=...` in `.secrets/.env` and adding `--enable-mimo`:
 
@@ -696,16 +852,16 @@ Built-in UI behavior:
 - Model and search controls: `Model` selects a configured generation model from Groq or the optional MiMo provider, while `Search` selects a registry-backed local retriever for text mode. Default chat text search options are BM25, TF-IDF, keyword match, deterministic multi-query, and Graph BM25; heavier vector and LLM-query strategies can be enabled through backend config/CLI.
 - Response modes: the internship UI composer exposes `Text only` and `Web search` by default. `Web search` requires a pasted local `Web search key`, calls live DuckDuckGo search, turns results into cited `web-*` sources, and uses the selected generation model. Dictionary and image controls are hidden unless their backend modes are explicitly re-enabled for legacy demos.
 - Compact controls: non-interactive dataset labels and duplicate topbar model labels stay out of the composer/header. Menu-style chips use a divider plus down-caret, dropdowns align to their chip, and composer chips/citation pills/dictionary cards resize with the global UI font scale.
-- Local settings: includes an English/Vietnamese language selector, dev mode toggle, `Memory` toggle, and `Font size` slider from `100%` to `200%`. The backend forces generated text into the selected response language. When `Memory` is disabled, the backend builds the RAG prompt with `history_messages=0`.
+- Local settings: includes an English/Vietnamese language selector, dev mode toggle, `Memory` toggle, `Max sources`, score range controls, score sorting, active runtime commit id, and `Font size` slider from `100%` to `200%`. The settings body scrolls independently when it is taller than the sidebar. The backend forces generated text into the selected response language. When `Memory` is disabled, the backend builds the RAG prompt with `history_messages=0`.
 - Debug and recovery: dev mode shows request choices captured at send time, such as `Text only | TF-IDF | Qwen3 32B` or `Web search | Qwen3 32B`. The UI clamps local `Max tokens` to at least `16` and falls back to a non-stream request if a stream unexpectedly returns empty content.
 - Message rendering: assistant copy/retry/feedback controls sit in the footer beside throughput metadata, while user copy/edit controls sit below and outside the user text bubble. Feedback notes are stored on assistant messages and exported with history. Reasoning blocks wrapped in `<think>...</think>` render as a smaller, muted, collapsed disclosure by default.
-- Citations and documents: assistant explanations render a safe Markdown subset while keeping citations clickable. Citations such as `[4323425]` or `[web-1]` render as ordered inline references like `[1]` based on the `Citations and related documents` table. Clicking a citation or related-document row opens the document panel; on mobile this becomes a full-screen overlay.
+- Citations and documents: assistant explanations render a safe Markdown subset while keeping citations clickable. Citations such as `[4323425]` or `[web-1]` render as ordered inline references like `[1]` based on the `Citations and related documents` table. Clicking a citation or related-document row opens the document panel; on desktop the panel has a draggable resize handle, while on mobile it remains a full-screen overlay.
 - Metadata: when provider token usage is returned, the normal chat meta line shows completion throughput as `n tok/s`; dev mode adds key alias, rejected aliases, retry count, scheduler wait, and captured request choices. Retrieved sources with zero or negative relevance scores are hidden from related documents unless the answer cites them directly.
 - Backend boundary: all retrieval, provider routing, key scheduling, retries, and rate limiting stay inside this repo.
 
 Use optional local auth:
 
-When legacy dictionary mode is explicitly enabled, it also carries query highlight terms through retrieval metadata. Matching phrases such as `pháo đài Xuân Canh` are marked in yellow inside rich entry cards and the source panel, while generic one-word headword matches such as `PHÁO` no longer get partial headword boost for multi-word place names. Highlighting is accent-insensitive but token-boundary aware, so a short query such as `thạ` does not highlight the `THA` substring inside `THANG` or `tham gia`. Dictionary entry cards show the source location, for example `Từ điển PB 2021 · Bổ sung 2021 · P-0001`, instead of a generic `Open document` action label, and add a green `Khớp`/`Match` pill for direct highlighted matches or a yellow `Liên quan`/`Related` pill for broader related entries. The side document panel supports experimental lightweight cross references behind the local `Dictionary cross-reference` / `Ref chéo từ điển` toggle, which is off by default: when enabled, clicking a highlighted dictionary term, or selecting text and clicking it, calls `POST /v1/dictionary/lookup` and replaces the panel with the matching dictionary entry when one is found.
+When legacy dictionary mode is explicitly enabled, it also carries query highlight terms through retrieval metadata. Matching phrases such as `pháo đài Xuân Canh` are marked in yellow inside rich entry cards and the source panel, while generic one-word headword matches such as `PHÁO` no longer get partial headword boost for multi-word place names. Highlighting is accent-insensitive but token-boundary aware, so a short query such as `thạ` does not highlight the `THA` substring inside `THANG` or `tham gia`; stroked `đ` is also kept distinct from plain `d`, so `pháo đài` no longer direct-matches `pháo dài`. Dictionary entry cards show the source location, for example `Từ điển PB 2021 · Bổ sung 2021 · P-0001`, instead of a generic `Open document` action label, and add a green `Khớp`/`Match` pill for direct highlighted matches or a yellow `Liên quan`/`Related` pill for broader related entries. The side document panel supports experimental lightweight cross references behind the local `Dictionary cross-reference` / `Ref chéo từ điển` toggle, which is off by default: when enabled, clicking a highlighted dictionary term, or selecting text and clicking it, calls `POST /v1/dictionary/lookup` with `top_k=5` and shows a small result popover. The panel changes only after the user chooses one of those matches.
 
 Semantic corner cases are tracked in `semantic_corner_cases.md` with concrete examples and failure modes. Use that file as lightweight regression documentation and as raw material for future prompt/eval tuning.
 
@@ -749,21 +905,46 @@ CLOUDFLARE_TUNNEL_TOKEN='...' \
 
 The script also accepts `--cloudflare-token-file` or token values in `.secrets/.env` under `CLOUDFLARE_TUNNEL_TOKEN`, `CF_TUNNEL_TOKEN`, `CLOUDFLARED_TOKEN`, or `TUNNEL_TOKEN`. It writes a temporary `kaggle.json` from the selected `codemaivanngu` credential, pushes with `kaggle kernels push`, and removes local staging by default. The tunnel token is injected into the generated notebook but is never printed.
 
-The Kaggle notebook expects a Kaggle secret named `GROQ_KEY_ENV` containing `.secrets/groq_key.env` style `alias=value` lines, or a single `GROQ_API_KEY` secret. If the local working tree has tracked changes, the upload script fails by default so the expected commit really represents the code Kaggle will clone; commit and push first, or use `--allow-dirty` only for a deliberate mismatch test.
+The Kaggle notebook expects a Kaggle secret named `GROQ_KEY_ENV` containing `.secrets/groq_key.env` style `alias=value` lines, or a single `GROQ_API_KEY` secret. If the local working tree has tracked changes, the upload script fails by default so the expected commit really represents the code Kaggle will clone; commit and push first, or use `--allow-dirty` only for a deliberate mismatch test. The notebook forwards both expected and actual clone commits to the proxy, and `/health` reports whether they match.
 
 On Kaggle, the generated notebook now runs `uv sync --frozen --no-dev` before starting the proxy, then launches `rag-bench serve` with `uv run --frozen --no-sync`. It waits up to `900` seconds for `/health` by default, prints periodic health-check progress, and includes a tail of `/kaggle/working/rag-proxy.log` if the proxy exits or times out. Override the wait with `--proxy-startup-timeout-s` if Kaggle dependency sync or BEIR startup is slower. If the upstream BEIR SciFact zip host times out, `scifact` falls back to the Hugging Face `BeIR/scifact` parquet mirror plus `BeIR/scifact-qrels` TSV and caches those files under `RAG_BENCH_DATA_CACHE` or `~/.cache/true-chat-rag-bench`.
 
-For a private throwaway notebook, the script can embed local Groq keys directly into a generated cell instead of using Kaggle Secrets:
+For the full dictionary chat deployment, attach the dictionary runtime dataset and expose the dictionary retriever explicitly:
+
+```bash
+scripts/upload_kaggle_rag_proxy_notebook.py \
+  --account codemaivanngu \
+  --credentials /home/tung/all-kaggle.json \
+  --dictionary-dataset-source codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732 \
+  --dictionary-artifact runs/pb_dictionary_base_supp2021_prod_graph \
+  --dictionary-required \
+  --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits
+```
+
+`--dictionary-dataset-source` is written to Kaggle `dataset_sources`, then the notebook copies the attached artifact from `/kaggle/input` into the cloned repo before `rag-bench serve` starts. If `--available-retrievers` is omitted while a dictionary dataset is attached, the uploader defaults to the full local UI retriever set above. The generated notebook can also expose MiMo models through Kaggle Secrets named `MIMO_API_KEY` and optional `MIMO_BASE_URL`:
+
+```bash
+scripts/upload_kaggle_rag_proxy_notebook.py \
+  --account codemaivanngu \
+  --credentials /home/tung/all-kaggle.json \
+  --dictionary-dataset-source codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732 \
+  --dictionary-required \
+  --enable-mimo
+```
+
+For a private throwaway notebook, the script can embed local Groq keys and MiMo env directly into generated cells instead of using Kaggle Secrets:
 
 ```bash
 scripts/upload_kaggle_rag_proxy_notebook.py \
   --account codemaivanngu \
   --credentials .secrets/all-kaggle.json \
   --embed-groq-keys \
-  --groq-keys-file .secrets/groq_key.env
+  --groq-keys-file .secrets/groq_key.env \
+  --embed-mimo-env \
+  --mimo-env-file .secrets/.env
 ```
 
-This uploads the Groq key values inside the Kaggle notebook source, so use it only for notebooks you plan to delete. Every successful upload is recorded locally in `.secrets/kaggle_notebooks.jsonl` without secret values:
+This uploads the provider key values inside the Kaggle notebook source, so use it only for notebooks you plan to delete. Every successful upload is recorded locally in `.secrets/kaggle_notebooks.jsonl` without secret values:
 
 ```bash
 scripts/upload_kaggle_rag_proxy_notebook.py --list-uploads

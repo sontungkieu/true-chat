@@ -33,6 +33,9 @@
       --font-hero-fluid: 4vw;
       --font-hero-max: 38px;
       --app-height: 100vh;
+      --keyboard-inset: 0px;
+      --composer-reserved-height: 136px;
+      --doc-panel-width: 440px;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-right: env(safe-area-inset-right, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -400,6 +403,14 @@
     .settings {
       border-top: 1px solid var(--border);
       padding: 10px 2px 2px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .settings[open] {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      max-height: min(70vh, calc(var(--app-height) - 92px));
     }
 
     .settings summary {
@@ -439,7 +450,17 @@
     .settings-body {
       display: grid;
       gap: 8px;
+      min-height: 0;
+      padding-right: 4px;
       padding-top: 8px;
+    }
+
+    .settings[open] .settings-body {
+      max-height: min(540px, calc(var(--app-height) - 138px));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      -webkit-overflow-scrolling: touch;
     }
 
     .field {
@@ -480,6 +501,11 @@
       gap: 7px;
     }
 
+    .compact-toggle {
+      align-self: end;
+      min-height: 34px;
+    }
+
     .settings-actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -514,6 +540,26 @@
       color: var(--muted-strong);
       font-size: 11px;
       font-weight: 650;
+    }
+
+    .runtime-version {
+      display: grid;
+      gap: 5px;
+      padding: 2px 8px 0;
+    }
+
+    .runtime-version span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 620;
+    }
+
+    .runtime-version code {
+      color: var(--muted-strong);
+      font-size: 11px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      user-select: all;
     }
 
     .field input.range-input {
@@ -714,8 +760,18 @@
       transition: grid-template-columns 0.18s ease;
     }
 
+    .app.doc-resizing,
+    .app.doc-resizing * {
+      cursor: col-resize !important;
+      user-select: none;
+    }
+
+    .app.doc-resizing .workbench {
+      transition: none;
+    }
+
     .app.doc-open .workbench {
-      grid-template-columns: minmax(0, 1fr) minmax(360px, 440px);
+      grid-template-columns: minmax(0, 1fr) var(--doc-panel-width);
     }
 
     .chat-column {
@@ -726,6 +782,7 @@
     }
 
     .doc-panel {
+      position: relative;
       display: none;
       min-width: 0;
       min-height: 0;
@@ -736,7 +793,39 @@
 
     .app.doc-open .doc-panel {
       display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr);
+      grid-template-rows: auto auto auto minmax(0, 1fr);
+    }
+
+    .doc-resize-handle {
+      position: absolute;
+      inset: 0 auto 0 -6px;
+      z-index: 3;
+      width: 12px;
+      cursor: col-resize;
+      touch-action: none;
+    }
+
+    .doc-resize-handle::after {
+      content: "";
+      position: absolute;
+      top: 16px;
+      bottom: 16px;
+      left: 5px;
+      width: 2px;
+      border-radius: 999px;
+      background: transparent;
+      transition: background 0.13s ease, opacity 0.13s ease;
+    }
+
+    .doc-resize-handle:hover::after,
+    .doc-resize-handle:focus-visible::after,
+    .app.doc-resizing .doc-resize-handle::after {
+      background: var(--border-strong);
+    }
+
+    .doc-resize-handle:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
     }
 
     .doc-header {
@@ -807,6 +896,179 @@
       color: var(--muted-strong);
       padding: 0 9px;
       font-size: 12px;
+    }
+
+    .dictionary-graph-path {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+
+    .doc-meta .dictionary-graph-path {
+      flex-basis: 100%;
+    }
+
+    .dictionary-graph-node,
+    .dictionary-graph-relation {
+      display: inline-flex;
+      align-items: center;
+      min-height: 21px;
+      max-width: min(220px, 100%);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted-strong);
+      padding: 0 7px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    button.dictionary-graph-node:hover {
+      border-color: var(--text);
+      color: var(--text);
+    }
+
+    .dictionary-graph-relation {
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+      padding-inline: 1px;
+    }
+
+    .dictionary-xref-popover {
+      position: fixed;
+      z-index: 90;
+      width: min(360px, calc(100vw - 24px));
+      max-height: min(430px, calc(100vh - 24px));
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      padding: 8px;
+    }
+
+    .dictionary-xref-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      padding: 7px 8px 9px;
+    }
+
+    .dictionary-xref-title {
+      min-width: 0;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 720;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dictionary-xref-list {
+      display: grid;
+      gap: 5px;
+      padding-top: 7px;
+    }
+
+    .dictionary-xref-item {
+      display: grid;
+      gap: 3px;
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--text);
+      padding: 8px;
+      text-align: left;
+    }
+
+    .dictionary-xref-item:hover,
+    .dictionary-xref-item:focus-visible {
+      border-color: var(--border-strong);
+      background: var(--surface-soft);
+      outline: none;
+    }
+
+    .dictionary-xref-item-title {
+      overflow: hidden;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 690;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dictionary-xref-item-meta,
+    .dictionary-xref-empty {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .dictionary-xref-empty {
+      padding: 10px 8px 8px;
+    }
+
+    .doc-trail {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 8px 16px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .doc-trail[hidden] {
+      display: none;
+    }
+
+    .doc-trail::-webkit-scrollbar {
+      display: none;
+    }
+
+    .doc-trail-label,
+    .doc-trail-separator,
+    .doc-trail-current {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .doc-trail-link {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 auto;
+      min-height: 24px;
+      max-width: 180px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--text);
+      padding: 0 9px;
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+
+    .doc-trail-link:hover {
+      border-color: var(--border-strong);
+      background: var(--surface-strong);
     }
 
     .doc-content {
@@ -1786,7 +2048,7 @@
       }
 
       .app.doc-open .workbench {
-        grid-template-columns: minmax(0, 1fr) minmax(320px, 38vw);
+        grid-template-columns: minmax(0, 1fr) var(--doc-panel-width);
       }
     }
 
@@ -1804,9 +2066,19 @@
         inset: 0 auto 0 0;
         z-index: 30;
         width: min(304px, 88vw);
+        height: var(--app-height);
+        max-height: var(--app-height);
         padding: calc(9px + var(--safe-top)) max(9px, var(--safe-right)) calc(9px + var(--safe-bottom)) max(9px, var(--safe-left));
         transform: translateX(-105%);
         transition: transform 0.18s ease;
+      }
+
+      .settings[open] {
+        max-height: max(260px, calc(var(--app-height) - 120px - var(--safe-top) - var(--safe-bottom)));
+      }
+
+      .settings[open] .settings-body {
+        max-height: max(210px, calc(var(--app-height) - 166px - var(--safe-top) - var(--safe-bottom)));
       }
 
       .app.sidebar-open .sidebar {
@@ -1896,6 +2168,19 @@
         padding: 8px max(10px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(10px, var(--safe-left));
       }
 
+      .app.keyboard-open .chat {
+        padding-bottom: var(--composer-reserved-height);
+        scroll-padding-bottom: var(--composer-reserved-height);
+      }
+
+      .app.keyboard-open .composer-wrap {
+        position: fixed;
+        right: 0;
+        bottom: var(--keyboard-inset);
+        left: 0;
+        z-index: 18;
+      }
+
       .composer-tools {
         max-width: calc(100vw - 92px);
         overflow-x: auto;
@@ -1919,12 +2204,21 @@
         border-top: 0;
       }
 
+      .doc-resize-handle {
+        display: none;
+      }
+
       .app.doc-open .doc-header {
         min-height: calc(56px + var(--safe-top));
         padding: calc(10px + var(--safe-top)) max(12px, var(--safe-right)) 10px max(16px, var(--safe-left));
       }
 
       .app.doc-open .doc-meta {
+        padding-right: max(16px, var(--safe-right));
+        padding-left: max(16px, var(--safe-left));
+      }
+
+      .app.doc-open .doc-trail {
         padding-right: max(16px, var(--safe-right));
         padding-left: max(16px, var(--safe-left));
       }
@@ -1961,6 +2255,10 @@
     .brand-title span,
     .status-pill,
     .doc-heading span,
+    .doc-trail-label,
+    .doc-trail-separator,
+    .doc-trail-current,
+    .doc-trail-link,
     .doc-pill,
     .role,
     .mini-action,
@@ -2118,6 +2416,27 @@
             <label for="imageTopK" data-i18n="imageTopK">Images</label>
             <input id="imageTopK" type="number" min="1" max="20" step="1" value="5">
           </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="sourceTopK" data-i18n="sourceTopK">Max sources</label>
+              <input id="sourceTopK" type="number" min="1" max="50" step="1" placeholder="Default">
+            </div>
+            <div class="field">
+              <label for="scoreMin" data-i18n="scoreMin">Min score</label>
+              <input id="scoreMin" type="number" step="0.01" placeholder="Any">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="scoreMax" data-i18n="scoreMax">Max score</label>
+              <input id="scoreMax" type="number" step="0.01" placeholder="Any">
+            </div>
+            <label class="toggle-field compact-toggle" for="sortByScore">
+              <span data-i18n="sortByScore">Sort by score</span>
+              <input id="sortByScore" type="checkbox">
+              <span class="toggle-track" aria-hidden="true"></span>
+            </label>
+          </div>
           <div class="field">
             <label for="languageMode" data-i18n="language">Language</label>
             <select id="languageMode">
@@ -2168,6 +2487,10 @@
           <div class="settings-actions">
             <button class="settings-action" id="exportChats" type="button" data-i18n="exportChats">Export chats</button>
             <button class="settings-action" id="importChats" type="button" data-i18n="importChats">Import chats</button>
+          </div>
+          <div class="runtime-version" id="runtimeVersion" hidden>
+            <span data-i18n="version">Version</span>
+            <code id="runtimeVersionValue"></code>
           </div>
           <input id="importChatsFile" type="file" accept="application/json,.json" hidden>
         </div>
@@ -2233,6 +2556,7 @@
         </div>
 
         <aside class="doc-panel" id="docPanel" aria-label="Retrieved document">
+          <div class="doc-resize-handle" id="docResizeHandle" role="separator" aria-label="Resize document panel" aria-orientation="vertical" tabindex="0"></div>
           <div class="doc-header">
             <div class="doc-heading">
               <strong id="docTitle">Document</strong>
@@ -2243,6 +2567,7 @@
             </button>
           </div>
           <div class="doc-meta" id="docMeta"></div>
+          <div class="doc-trail" id="docTrail" hidden></div>
           <div class="doc-content">
             <div class="doc-image-wrap" id="docImageWrap"><img class="doc-image" id="docImage" alt=""></div>
             <div class="doc-text plain" id="docText"></div>
@@ -2258,20 +2583,34 @@
     </button>
     <img id="lightboxImage" alt="">
   </div>
+  <div class="dictionary-xref-popover" id="dictionaryXrefPopover" role="dialog" aria-live="polite" hidden></div>
 
   <script>
     const MODEL_ID = __MODEL_JSON__;
     const AVAILABLE_MODELS = __AVAILABLE_MODELS_JSON__;
     const DEFAULT_RETRIEVER = __DEFAULT_RETRIEVER_JSON__;
     const AVAILABLE_RETRIEVERS = __AVAILABLE_RETRIEVERS_JSON__;
+    const APP_VERSION = __APP_VERSION_JSON__;
     const STORAGE_KEY = "ragChatUiState.v1";
     const SETTINGS_KEY = "ragChatUiSettings.v1";
+    const DOC_PANEL_WIDTH_KEY = "ragChatDocPanelWidth.v1";
+    const SETTINGS_SCHEMA_VERSION = 2;
+    const DEFAULT_CHAT_MODEL = "qwen/qwen3-32b";
+    const DEFAULT_LANGUAGE = "vi";
+    const DEFAULT_RESPONSE_MODE = "dictionary";
+    const DEFAULT_MEMORY_ENABLED = false;
+    const DEFAULT_DICTIONARY_CROSS_REF = true;
+    const DEFAULT_MAX_TOKENS = 4096;
+    const DOC_PANEL_DEFAULT_WIDTH = 440;
+    const DOC_PANEL_MIN_WIDTH = 320;
+    const DOC_PANEL_MAX_WIDTH = 780;
     const MAX_INLINE_DICTIONARY_SOURCES = 3;
     const app = document.querySelector("[data-app='rag-chat']");
     const chat = document.getElementById("chat");
     const conversationList = document.getElementById("conversationList");
     const brandModel = document.getElementById("brandModel");
     const composer = document.getElementById("composer");
+    const composerWrap = document.querySelector(".composer-wrap");
     const promptInput = document.getElementById("prompt");
     const sendButton = document.getElementById("send");
     const notice = document.getElementById("notice");
@@ -2288,6 +2627,10 @@
     const modelChoiceInput = document.getElementById("modelChoice");
     const searchChoiceInput = document.getElementById("searchChoice");
     const imageTopKInput = document.getElementById("imageTopK");
+    const sourceTopKInput = document.getElementById("sourceTopK");
+    const scoreMinInput = document.getElementById("scoreMin");
+    const scoreMaxInput = document.getElementById("scoreMax");
+    const sortByScoreInput = document.getElementById("sortByScore");
     const languageModeInput = document.getElementById("languageMode");
     const devModeInput = document.getElementById("devMode");
     const memoryModeInput = document.getElementById("memoryMode");
@@ -2300,20 +2643,31 @@
     const exportChatsButton = document.getElementById("exportChats");
     const importChatsButton = document.getElementById("importChats");
     const importChatsFileInput = document.getElementById("importChatsFile");
+    const runtimeVersion = document.getElementById("runtimeVersion");
+    const runtimeVersionValue = document.getElementById("runtimeVersionValue");
     const docTitle = document.getElementById("docTitle");
+    const docPanel = document.getElementById("docPanel");
+    const docResizeHandle = document.getElementById("docResizeHandle");
     const docSubtitle = document.getElementById("docSubtitle");
     const docMeta = document.getElementById("docMeta");
+    const docTrail = document.getElementById("docTrail");
     const docImageWrap = document.getElementById("docImageWrap");
     const docImage = document.getElementById("docImage");
     const docText = document.getElementById("docText");
+    const dictionaryXrefPopover = document.getElementById("dictionaryXrefPopover");
     const imageLightbox = document.getElementById("imageLightbox");
     const lightboxImage = document.getElementById("lightboxImage");
     const closeLightboxButton = document.getElementById("closeLightbox");
     let activeController = null;
     let selectedSource = null;
+    let documentTrail = [];
     let editingUserIndex = null;
     let chatSwipeStart = null;
     let activeComposerMenu = null;
+    let dictionaryXrefRequestId = 0;
+    let stableViewportHeight = 0;
+    let keyboardWasOpen = false;
+    let docResizeState = null;
     const ragDetailsOpen = new Map();
     const ICONS = {
       copy: '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>',
@@ -2337,15 +2691,22 @@
         webSearchPrivilegeKey: "Web search key",
         webSearchKeyMissing: "Paste the web search key in Local settings before using Web search.",
         imageTopK: "Images",
+        sourceTopK: "Max sources",
+        scoreMin: "Min score",
+        scoreMax: "Max score",
+        sortByScore: "Sort by score",
         language: "Language",
         devMode: "Dev mode",
         memoryMode: "Memory",
         memoryOff: "No memory",
         dictionaryCrossRef: "Dictionary cross-reference",
+        referenceTrail: "Refs",
+        backToPreviousEntry: "Back to previous entry",
         theme: "Theme",
         fontSize: "Font size",
         maxTokens: "Max tokens",
         temperature: "Temp",
+        version: "Version",
         exportChats: "Export chats",
         importChats: "Import chats",
         importChatsDone: "Imported chat history.",
@@ -2383,6 +2744,8 @@
         document: "Document",
         noDocumentText: "No document text returned for this source.",
         dictionaryCrossRefHint: "Click a highlighted dictionary term, or select text and click it, to open that entry.",
+        dictionaryCrossRefResults: "Dictionary matches",
+        dictionaryCrossRefLoading: "Searching...",
         dictionaryLookupEmpty: "No dictionary entry found for: ",
         dictionaryLookupError: "Could not open dictionary entry: ",
         emptyAnswer: "Model returned an empty answer. Try increasing Max tokens.",
@@ -2408,15 +2771,22 @@
         webSearchPrivilegeKey: "Key tìm web",
         webSearchKeyMissing: "Hãy paste key tìm web trong Cài đặt local trước khi dùng Tìm web.",
         imageTopK: "Số ảnh",
+        sourceTopK: "Nguồn tối đa",
+        scoreMin: "Score tối thiểu",
+        scoreMax: "Score tối đa",
+        sortByScore: "Sort theo score",
         language: "Ngôn ngữ",
         devMode: "Chế độ dev",
         memoryMode: "Ghi nhớ hội thoại",
         memoryOff: "Không nhớ",
         dictionaryCrossRef: "Ref chéo từ điển",
+        referenceTrail: "Ref",
+        backToPreviousEntry: "Quay về mục trước",
         theme: "Giao diện",
         fontSize: "Cỡ chữ",
         maxTokens: "Token tối đa",
         temperature: "Nhiệt độ",
+        version: "Version",
         exportChats: "Xuất lịch sử",
         importChats: "Nhập lịch sử",
         importChatsDone: "Đã nhập lịch sử chat.",
@@ -2454,6 +2824,8 @@
         document: "Tài liệu",
         noDocumentText: "Nguồn này không có nội dung tài liệu.",
         dictionaryCrossRefHint: "Bấm một cụm từ điển được bôi vàng, hoặc bôi đen rồi bấm, để mở mục từ đó.",
+        dictionaryCrossRefResults: "Kết quả từ điển",
+        dictionaryCrossRefLoading: "Đang tìm...",
         dictionaryLookupEmpty: "Không tìm thấy mục từ cho: ",
         dictionaryLookupError: "Không mở được mục từ: ",
         emptyAnswer: "Model không trả về câu trả lời. Hãy thử tăng Max tokens.",
@@ -2473,6 +2845,7 @@
     const RETRIEVER_CHOICES = normalizedRetrieverChoices();
     const TEXT_RETRIEVER_CHOICES = normalizedTextRetrieverChoices();
     syncViewportHeight();
+    applyStoredDocumentPanelWidth();
     const state = loadState();
     const settings = loadSettings();
     applySettings();
@@ -2495,8 +2868,11 @@
     document.getElementById("closeSidebar").addEventListener("click", closeSidebar);
     document.getElementById("sidebarBackdrop").addEventListener("click", closeSidebar);
     document.getElementById("closeDoc").addEventListener("click", closeDocPanel);
+    docResizeHandle.addEventListener("pointerdown", startDocumentPanelResize);
+    docResizeHandle.addEventListener("keydown", resizeDocumentPanelWithKeyboard);
     docText.addEventListener("click", onDocumentTextClick);
     docText.addEventListener("keydown", onDocumentTextKeydown);
+    dictionaryXrefPopover.addEventListener("click", (event) => event.stopPropagation());
     closeLightboxButton.addEventListener("click", closeImageLightbox);
     imageLightbox.addEventListener("click", (event) => {
       if (event.target === imageLightbox) closeImageLightbox();
@@ -2510,13 +2886,20 @@
       if (!event.target.closest("#composerToolMenu") && !event.target.closest(".menu-chip")) {
         closeComposerToolMenu();
       }
+      if (!event.target.closest("#dictionaryXrefPopover") && !event.target.closest("[data-dictionary-xref]")) {
+        closeDictionaryCrossReferencePopup();
+      }
     });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeImageLightbox();
         closeComposerToolMenu();
+        closeDictionaryCrossReferencePopup();
       }
     });
+    document.addEventListener("pointermove", resizeDocumentPanel);
+    document.addEventListener("pointerup", stopDocumentPanelResize);
+    document.addEventListener("pointercancel", stopDocumentPanelResize);
 
     for (const input of [
       apiKeyInput,
@@ -2524,6 +2907,10 @@
       modelChoiceInput,
       searchChoiceInput,
       imageTopKInput,
+      sourceTopKInput,
+      scoreMinInput,
+      scoreMaxInput,
+      sortByScoreInput,
       languageModeInput,
       devModeInput,
       memoryModeInput,
@@ -2539,6 +2926,8 @@
     fontScaleInput.addEventListener("input", saveSettingsFromInputs);
 
     promptInput.addEventListener("input", resizePrompt);
+    promptInput.addEventListener("focus", () => setTimeout(syncViewportHeight, 50));
+    promptInput.addEventListener("blur", () => setTimeout(syncViewportHeight, 120));
     promptInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -2569,15 +2958,140 @@
     window.addEventListener("beforeunload", () => {
       if (activeController) activeController.abort();
     });
-    window.addEventListener("resize", syncViewportHeight);
-    window.addEventListener("orientationchange", () => setTimeout(syncViewportHeight, 250));
-    window.visualViewport?.addEventListener("resize", syncViewportHeight);
+    window.addEventListener("resize", syncLayout);
+    window.addEventListener("orientationchange", () => setTimeout(syncLayout, 250));
+    window.visualViewport?.addEventListener("resize", syncLayout);
     window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 
+    function syncLayout() {
+      syncViewportHeight();
+      syncDocumentPanelWidth();
+    }
+
     function syncViewportHeight() {
-      const height = window.visualViewport?.height || window.innerHeight || 0;
+      updateComposerReservedHeight();
+      const visualViewport = window.visualViewport;
+      const layoutHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+      const visualHeight = visualViewport?.height || layoutHeight || 0;
+      const viewportOffsetTop = visualViewport?.offsetTop || 0;
+      const mobileViewport = isMobileViewport();
+      const composerFocused = document.activeElement === promptInput || composer.contains(document.activeElement);
+      const baselineHeight = stableViewportHeight || Math.max(layoutHeight, visualHeight);
+      const keyboardInset = Math.max(
+        0,
+        layoutHeight - visualHeight - viewportOffsetTop,
+        baselineHeight - visualHeight - viewportOffsetTop
+      );
+      const keyboardOpen = mobileViewport && composerFocused && keyboardInset > 90;
+      if (!stableViewportHeight || (!composerFocused && layoutHeight > stableViewportHeight * 0.9)) {
+        stableViewportHeight = Math.max(layoutHeight, visualHeight, stableViewportHeight);
+      }
+      const appHeight = keyboardOpen ? Math.max(stableViewportHeight, layoutHeight, visualHeight) : visualHeight;
+      if (Number.isFinite(appHeight) && appHeight > 0) {
+        document.documentElement.style.setProperty("--app-height", Math.round(appHeight) + "px");
+      }
+      document.documentElement.style.setProperty("--keyboard-inset", Math.round(keyboardOpen ? keyboardInset : 0) + "px");
+      app.classList.toggle("keyboard-open", keyboardOpen);
+      if (keyboardOpen && !keyboardWasOpen) {
+        requestAnimationFrame(() => {
+          chat.scrollTop = chat.scrollHeight;
+        });
+      }
+      keyboardWasOpen = keyboardOpen;
+    }
+
+    function isMobileViewport() {
+      return Boolean(window.matchMedia?.("(max-width: 840px), (pointer: coarse)")?.matches) || (window.innerWidth || 0) <= 840;
+    }
+
+    function applyStoredDocumentPanelWidth() {
+      let width = DOC_PANEL_DEFAULT_WIDTH;
+      try {
+        const stored = Number(localStorage.getItem(DOC_PANEL_WIDTH_KEY));
+        if (Number.isFinite(stored) && stored > 0) width = stored;
+      } catch (_) {}
+      setDocumentPanelWidth(width);
+    }
+
+    function syncDocumentPanelWidth() {
+      if (isMobileViewport()) return;
+      setDocumentPanelWidth(currentDocumentPanelWidth());
+    }
+
+    function documentPanelWidthLimits() {
+      const workbench = document.querySelector(".workbench");
+      const available = workbench?.getBoundingClientRect?.().width || window.innerWidth || DOC_PANEL_DEFAULT_WIDTH;
+      const min = Math.min(DOC_PANEL_MIN_WIDTH, Math.max(260, Math.floor(available - 280)));
+      const max = Math.max(min, Math.min(DOC_PANEL_MAX_WIDTH, Math.floor(available * 0.72)));
+      return { min, max };
+    }
+
+    function currentDocumentPanelWidth() {
+      const current = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--doc-panel-width"));
+      if (Number.isFinite(current) && current > 0) return current;
+      return DOC_PANEL_DEFAULT_WIDTH;
+    }
+
+    function setDocumentPanelWidth(width, options = {}) {
+      const { min, max } = documentPanelWidthLimits();
+      const clamped = Math.min(max, Math.max(min, Math.round(Number(width) || DOC_PANEL_DEFAULT_WIDTH)));
+      document.documentElement.style.setProperty("--doc-panel-width", clamped + "px");
+      docResizeHandle.setAttribute("aria-valuemin", String(min));
+      docResizeHandle.setAttribute("aria-valuemax", String(max));
+      docResizeHandle.setAttribute("aria-valuenow", String(clamped));
+      if (options.persist) {
+        try {
+          localStorage.setItem(DOC_PANEL_WIDTH_KEY, String(clamped));
+        } catch (_) {}
+      }
+      return clamped;
+    }
+
+    function startDocumentPanelResize(event) {
+      if (isMobileViewport() || !app.classList.contains("doc-open")) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      const rect = docPanel.getBoundingClientRect();
+      docResizeState = { pointerId: event.pointerId, right: rect.right };
+      docResizeHandle.setPointerCapture?.(event.pointerId);
+      app.classList.add("doc-resizing");
+      event.preventDefault();
+    }
+
+    function resizeDocumentPanel(event) {
+      if (!docResizeState || event.pointerId !== docResizeState.pointerId) return;
+      setDocumentPanelWidth(docResizeState.right - event.clientX);
+      event.preventDefault();
+    }
+
+    function stopDocumentPanelResize(event) {
+      if (!docResizeState || event.pointerId !== docResizeState.pointerId) return;
+      setDocumentPanelWidth(currentDocumentPanelWidth(), { persist: true });
+      try {
+        docResizeHandle.releasePointerCapture?.(event.pointerId);
+      } catch (_) {}
+      docResizeState = null;
+      app.classList.remove("doc-resizing");
+      event.preventDefault();
+    }
+
+    function resizeDocumentPanelWithKeyboard(event) {
+      if (isMobileViewport() || !app.classList.contains("doc-open")) return;
+      const { min, max } = documentPanelWidthLimits();
+      const step = event.shiftKey ? 80 : 32;
+      let next = currentDocumentPanelWidth();
+      if (event.key === "ArrowLeft") next += step;
+      else if (event.key === "ArrowRight") next -= step;
+      else if (event.key === "Home") next = min;
+      else if (event.key === "End") next = max;
+      else return;
+      setDocumentPanelWidth(next, { persist: true });
+      event.preventDefault();
+    }
+
+    function updateComposerReservedHeight() {
+      const height = composerWrap?.getBoundingClientRect?.().height || 0;
       if (Number.isFinite(height) && height > 0) {
-        document.documentElement.style.setProperty("--app-height", Math.round(height) + "px");
+        document.documentElement.style.setProperty("--composer-reserved-height", Math.ceil(height + 16) + "px");
       }
     }
 
@@ -2597,39 +3111,50 @@
     function loadSettings() {
       try {
         const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+        const migrateDefaults = Number(parsed.settingsVersion || 0) < SETTINGS_SCHEMA_VERSION;
         return {
+          settingsVersion: SETTINGS_SCHEMA_VERSION,
           apiKey: String(parsed.apiKey || ""),
           webSearchKey: String(parsed.webSearchKey || ""),
-          model: String(parsed.model || defaultModelChoice()),
+          model: migrateDefaults ? defaultModelChoice() : String(parsed.model || defaultModelChoice()),
           search: String(parsed.search || parsed.retriever || DEFAULT_RETRIEVER),
           imageTopK: Number(parsed.imageTopK || 5),
-          language: ["en", "vi"].includes(parsed.language) ? parsed.language : "en",
-          devMode: Boolean(parsed.devMode),
-          memory: parsed.memory === undefined ? true : Boolean(parsed.memory),
-          dictionaryCrossRef: Boolean(parsed.dictionaryCrossRef),
-          responseMode: normalizeResponseMode(parsed.responseMode || (parsed.imageMode ? "image" : "text")),
+          sourceTopK: parsed.sourceTopK === undefined ? null : parsed.sourceTopK,
+          scoreMin: parsed.scoreMin === undefined ? null : parsed.scoreMin,
+          scoreMax: parsed.scoreMax === undefined ? null : parsed.scoreMax,
+          sortByScore: Boolean(parsed.sortByScore),
+          language: migrateDefaults ? DEFAULT_LANGUAGE : ["en", "vi"].includes(parsed.language) ? parsed.language : DEFAULT_LANGUAGE,
+          devMode: migrateDefaults ? false : Boolean(parsed.devMode),
+          memory: migrateDefaults ? DEFAULT_MEMORY_ENABLED : parsed.memory === undefined ? DEFAULT_MEMORY_ENABLED : Boolean(parsed.memory),
+          dictionaryCrossRef: migrateDefaults ? DEFAULT_DICTIONARY_CROSS_REF : parsed.dictionaryCrossRef === undefined ? DEFAULT_DICTIONARY_CROSS_REF : Boolean(parsed.dictionaryCrossRef),
+          responseMode: migrateDefaults ? DEFAULT_RESPONSE_MODE : normalizeResponseMode(parsed.responseMode || (parsed.imageMode ? "image" : DEFAULT_RESPONSE_MODE)),
           imageRewrite: Boolean(parsed.imageRewrite),
           theme: ["light", "colorful", "system"].includes(parsed.theme) ? parsed.theme : "light",
           fontScale: Number(parsed.fontScale || 100),
-          maxTokens: Number(parsed.maxTokens || 128),
+          maxTokens: migrateDefaults ? DEFAULT_MAX_TOKENS : Number(parsed.maxTokens || DEFAULT_MAX_TOKENS),
           temperature: Number(parsed.temperature || 0)
         };
       } catch (_) {
         return {
+          settingsVersion: SETTINGS_SCHEMA_VERSION,
           apiKey: "",
           webSearchKey: "",
           model: defaultModelChoice(),
           search: DEFAULT_RETRIEVER,
           imageTopK: 5,
-          language: "en",
+          sourceTopK: null,
+          scoreMin: null,
+          scoreMax: null,
+          sortByScore: false,
+          language: DEFAULT_LANGUAGE,
           devMode: false,
-          memory: true,
-          dictionaryCrossRef: false,
-          responseMode: "text",
+          memory: DEFAULT_MEMORY_ENABLED,
+          dictionaryCrossRef: DEFAULT_DICTIONARY_CROSS_REF,
+          responseMode: DEFAULT_RESPONSE_MODE,
           imageRewrite: false,
           theme: "light",
           fontScale: 100,
-          maxTokens: 128,
+          maxTokens: DEFAULT_MAX_TOKENS,
           temperature: 0
         };
       }
@@ -2643,9 +3168,9 @@
       document.documentElement.lang = settings.language;
       settings.devMode = Boolean(settings.devMode);
       devModeInput.checked = settings.devMode;
-      settings.memory = settings.memory === undefined ? true : Boolean(settings.memory);
+      settings.memory = settings.memory === undefined ? DEFAULT_MEMORY_ENABLED : Boolean(settings.memory);
       memoryModeInput.checked = settings.memory;
-      settings.dictionaryCrossRef = Boolean(settings.dictionaryCrossRef);
+      settings.dictionaryCrossRef = settings.dictionaryCrossRef === undefined ? DEFAULT_DICTIONARY_CROSS_REF : Boolean(settings.dictionaryCrossRef);
       dictionaryCrossRefInput.checked = settings.dictionaryCrossRef;
       settings.responseMode = normalizeResponseMode(settings.responseMode);
       settings.imageRewrite = Boolean(settings.imageRewrite);
@@ -2655,13 +3180,21 @@
       searchChoiceInput.value = settings.search;
       settings.imageTopK = clampNumber(settings.imageTopK, 1, 20, 5);
       imageTopKInput.value = settings.imageTopK;
+      settings.sourceTopK = optionalClampedNumber(settings.sourceTopK, 1, 50);
+      sourceTopKInput.value = settings.sourceTopK ?? "";
+      settings.scoreMin = optionalFiniteNumber(settings.scoreMin);
+      settings.scoreMax = optionalFiniteNumber(settings.scoreMax);
+      scoreMinInput.value = settings.scoreMin ?? "";
+      scoreMaxInput.value = settings.scoreMax ?? "";
+      settings.sortByScore = Boolean(settings.sortByScore);
+      sortByScoreInput.checked = settings.sortByScore;
       settings.theme = ["light", "colorful", "system"].includes(settings.theme) ? settings.theme : "light";
       themeModeInput.value = settings.theme;
       applyTheme(settings.theme);
       settings.fontScale = clampNumber(settings.fontScale, 100, 200, 100);
       fontScaleInput.value = settings.fontScale;
       applyFontScale(settings.fontScale);
-      settings.maxTokens = clampNumber(settings.maxTokens, 16, 4096, 128);
+      settings.maxTokens = clampNumber(settings.maxTokens, 16, 4096, DEFAULT_MAX_TOKENS);
       maxTokensInput.value = settings.maxTokens;
       temperatureInput.value = Number.isFinite(settings.temperature) ? settings.temperature : 0;
       applyLocalization();
@@ -2678,6 +3211,7 @@
       settings.webSearchKey = webSearchKeyInput.value.trim();
       settings.language = normalizeLanguage(languageModeInput.value);
       document.documentElement.lang = settings.language;
+      settings.settingsVersion = SETTINGS_SCHEMA_VERSION;
       settings.devMode = Boolean(devModeInput.checked);
       settings.memory = Boolean(memoryModeInput.checked);
       settings.dictionaryCrossRef = Boolean(dictionaryCrossRefInput.checked);
@@ -2689,6 +3223,13 @@
       searchChoiceInput.value = settings.search;
       settings.imageTopK = clampNumber(imageTopKInput.value, 1, 20, 5);
       imageTopKInput.value = settings.imageTopK;
+      settings.sourceTopK = optionalClampedNumber(sourceTopKInput.value, 1, 50);
+      sourceTopKInput.value = settings.sourceTopK ?? "";
+      settings.scoreMin = optionalFiniteNumber(scoreMinInput.value);
+      settings.scoreMax = optionalFiniteNumber(scoreMaxInput.value);
+      scoreMinInput.value = settings.scoreMin ?? "";
+      scoreMaxInput.value = settings.scoreMax ?? "";
+      settings.sortByScore = Boolean(sortByScoreInput.checked);
       settings.theme = ["light", "colorful", "system"].includes(themeModeInput.value) ? themeModeInput.value : "light";
       applyTheme(settings.theme);
       settings.fontScale = clampNumber(fontScaleInput.value, 100, 200, 100);
@@ -2843,6 +3384,7 @@
     }
 
     function defaultModelChoice() {
+      if (MODEL_CHOICES.includes(DEFAULT_CHAT_MODEL)) return DEFAULT_CHAT_MODEL;
       return MODEL_CHOICES[0] || "llama-3.1-8b-instant";
     }
 
@@ -2950,6 +3492,10 @@
         model: selectedModel(),
         image_rewrite: false,
         image_top_k: usesImageResults ? clampNumber(settings.imageTopK, 1, 20, 5) : undefined,
+        top_k: settings.sourceTopK || undefined,
+        score_min: settings.scoreMin ?? undefined,
+        score_max: settings.scoreMax ?? undefined,
+        sort_by_score: settings.sortByScore ? true : undefined,
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
         language: currentLanguage(),
@@ -3011,6 +3557,7 @@
       promptInput.placeholder = t("sendMessage");
       const statusLabel = document.querySelector(".status-pill span:last-child");
       if (statusLabel) statusLabel.textContent = t("proxyReady");
+      updateRuntimeVersion();
       populateModelChoices();
       populateSearchChoices();
       modelChoiceInput.value = selectedModel();
@@ -3042,10 +3589,31 @@
       fontScaleValue.textContent = safePercent + "%";
     }
 
+    function updateRuntimeVersion() {
+      if (!runtimeVersion || !runtimeVersionValue) return;
+      const version = String(APP_VERSION || "").trim();
+      runtimeVersion.hidden = !version;
+      runtimeVersionValue.textContent = version;
+      runtimeVersionValue.title = version;
+    }
+
     function clampNumber(value, min, max, fallback) {
       const number = Number(value);
       if (!Number.isFinite(number)) return fallback;
       return Math.min(max, Math.max(min, number));
+    }
+
+    function optionalClampedNumber(value, min, max) {
+      if (value === null || value === undefined || String(value).trim() === "") return null;
+      const number = Number(value);
+      if (!Number.isFinite(number)) return null;
+      return Math.min(max, Math.max(min, Math.round(number)));
+    }
+
+    function optionalFiniteNumber(value) {
+      if (value === null || value === undefined || String(value).trim() === "") return null;
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
     }
 
     function saveState() {
@@ -3563,6 +4131,14 @@
       parts.push(shortModelLabel(normalizeModelChoice(request.model || selectedModel())));
       if (request.language) parts.push(languageLabel(request.language));
       if (request.memory === false) parts.push(t("memoryOff"));
+      if (request.top_k) parts.push("top-k " + request.top_k);
+      if (request.score_min !== undefined || request.score_max !== undefined) {
+        const min = request.score_min === undefined ? "-inf" : request.score_min;
+        const max = request.score_max === undefined ? "+inf" : request.score_max;
+        parts.push("score " + min + ".." + max);
+      }
+      if (request.sort_by_score) parts.push(t("sortByScore"));
+      if ((mode === "image" || mode === "text_image") && request.image_rewrite) parts.push(t("rewrite"));
       return parts.filter(Boolean).join(" | ");
     }
 
@@ -3834,11 +4410,14 @@
       strong.textContent = source.title || source.doc_id || t("dictionary");
       const meta = document.createElement("div");
       meta.className = "dictionary-inline-meta";
-      const metaText = document.createElement("span");
-      metaText.className = "dictionary-inline-meta-text";
-      const score = typeof source.score === "number" ? " · score " + source.score.toFixed(3) : "";
-      metaText.textContent = (source.doc_id || t("source")) + score;
-      meta.append(metaText, renderDictionaryRelevance(source));
+      if (showDebugSourceMetadata()) {
+        const metaText = document.createElement("span");
+        metaText.className = "dictionary-inline-meta-text";
+        const score = typeof source.score === "number" ? " · score " + source.score.toFixed(3) : "";
+        metaText.textContent = (source.doc_id || t("source")) + score;
+        meta.appendChild(metaText);
+      }
+      meta.appendChild(renderDictionaryRelevance(source));
       title.append(strong, meta);
       const open = document.createElement("button");
       open.type = "button";
@@ -3847,15 +4426,22 @@
       open.title = `${t("openDocument")}: ${dictionarySourceLabel(source)}`;
       open.addEventListener("click", () => openDocument(source));
       head.append(title, open);
+      const graphPath = renderDictionaryGraphPath(source);
       const body = document.createElement("div");
       body.className = "dictionary-inline-body";
       const blocks = richBlocks(source);
+      const highlightOptions = { strictHighlights: dictionaryMatchMode(source) === "strict" };
       if (blocks.length) {
-        renderRichBlocks(body, blocks, sourceHighlightTerms(source));
+        renderRichBlocks(body, blocks, sourceHighlightTerms(source), highlightOptions);
       } else {
-        appendHighlightedText(body, dictionaryDisplayText(source) || t("noDocumentText"), sourceHighlightTerms(source));
+        appendHighlightedText(body, dictionaryDisplayText(source) || t("noDocumentText"), sourceHighlightTerms(source), highlightOptions);
       }
-      card.append(head, body);
+      if (graphPath) {
+        graphPath.style.padding = "0 14px";
+      }
+      card.append(head);
+      if (graphPath) card.appendChild(graphPath);
+      card.appendChild(body);
       return card;
     }
 
@@ -3870,6 +4456,73 @@
     function dictionaryRelevance(source) {
       const directScore = Number(source?.dictionary_direct_score || source?.metadata?.dictionary_direct_score || 0);
       return sourceHighlightTerms(source).length || directScore > 0 ? "match" : "related";
+    }
+
+    function dictionaryMatchMode(source) {
+      return String(source?.dictionary_match_mode || source?.metadata?.dictionary_match_mode || "");
+    }
+
+    function dictionaryGraphPath(source) {
+      const path = source?.dictionary_graph_path || source?.metadata?.dictionary_graph_path || [];
+      return Array.isArray(path) ? path : [];
+    }
+
+    function renderDictionaryGraphPath(source) {
+      const path = dictionaryGraphPath(source);
+      if (!path.length) return null;
+      const wrap = document.createElement("div");
+      wrap.className = "dictionary-graph-path";
+      path.forEach((item, index) => {
+        const normalized = normalizeDictionaryGraphPathItem(item);
+        if (!normalized.label) return;
+        if (index > 0) {
+          const arrow = document.createElement("span");
+          arrow.className = "dictionary-graph-relation";
+          arrow.textContent = ">";
+          wrap.appendChild(arrow);
+        }
+        if (normalized.type === "relation") {
+          const relation = document.createElement("span");
+          relation.className = "dictionary-graph-relation";
+          relation.textContent = dictionaryRelationLabel(normalized.label);
+          wrap.appendChild(relation);
+          return;
+        }
+        if (normalized.type === "entry") {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "dictionary-graph-node";
+          button.textContent = normalized.label;
+          button.title = `${t("openDocument")}: ${normalized.label}`;
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            openDictionaryCrossReference(normalized.label, event.currentTarget);
+          });
+          wrap.appendChild(button);
+          return;
+        }
+        const node = document.createElement("span");
+        node.className = "dictionary-graph-node";
+        node.textContent = normalized.label;
+        wrap.appendChild(node);
+      });
+      return wrap.childElementCount ? wrap : null;
+    }
+
+    function normalizeDictionaryGraphPathItem(item) {
+      if (item && typeof item === "object") {
+        return {
+          type: String(item.type || "node"),
+          id: String(item.id || ""),
+          label: String(item.label || item.id || "").trim()
+        };
+      }
+      return { type: "node", id: "", label: String(item || "").trim() };
+    }
+
+    function dictionaryRelationLabel(label) {
+      return String(label || "").replace(/_/g, " ");
     }
 
     function dictionaryInlineSources(answer, sources) {
@@ -4048,7 +4701,7 @@
         }
         const title = document.createElement("div");
         title.className = "rag-title";
-        const score = typeof source.score === "number" ? " | score " + source.score.toFixed(3) : "";
+        const score = showDebugSourceMetadata() && typeof source.score === "number" ? " | score " + source.score.toFixed(3) : "";
         title.textContent = (source.title || source.doc_id || t("source")) + score;
         row.appendChild(title);
         table.appendChild(row);
@@ -4057,7 +4710,15 @@
       return details;
     }
 
-    function openDocument(source) {
+    function openDocument(source, options = {}) {
+      closeDictionaryCrossReferencePopup();
+      if (options.fromCrossRef) {
+        if (selectedSource && !sameDocumentSource(selectedSource, source)) {
+          pushDocumentTrail(selectedSource);
+        }
+      } else if (!options.preserveTrail) {
+        documentTrail = [];
+      }
       selectedSource = source;
       renderDocumentPanel(source);
       app.classList.add("doc-open");
@@ -4065,11 +4726,14 @@
     }
 
     function closeDocPanel() {
+      closeDictionaryCrossReferencePopup();
       selectedSource = null;
+      documentTrail = [];
       app.classList.remove("doc-open");
       docTitle.textContent = t("document");
       docSubtitle.textContent = t("retrievedContext");
       docMeta.textContent = "";
+      renderDocumentTrail(null);
       docText.textContent = "";
       docText.classList.add("plain");
       docText.classList.remove("xref-ready");
@@ -4086,17 +4750,22 @@
       docTitle.textContent = source.title || docId;
       docSubtitle.textContent = dictionarySource ? dictionarySourceLabel(source) : docId;
       docMeta.textContent = "";
-      const metaItems = [
-        dictionarySource ? docId : null,
-        source.rank ? "rank #" + source.rank : null,
-        typeof source.score === "number" ? "score " + source.score.toFixed(3) : null
-      ].filter(Boolean);
+      const metaItems = showDebugSourceMetadata()
+        ? [
+            dictionarySource ? docId : null,
+            source.rank ? "rank #" + source.rank : null,
+            typeof source.score === "number" ? "score " + source.score.toFixed(3) : null
+          ].filter(Boolean)
+        : [];
       for (const item of metaItems) {
         const pill = document.createElement("span");
         pill.className = "doc-pill";
         pill.textContent = item;
         docMeta.appendChild(pill);
       }
+      const graphPath = dictionarySource ? renderDictionaryGraphPath(source) : null;
+      if (graphPath) docMeta.appendChild(graphPath);
+      renderDocumentTrail(source);
       const image = imageSource(source);
       if (image) {
         docImage.src = image;
@@ -4117,13 +4786,21 @@
       renderDocumentText(source);
     }
 
+    function showDebugSourceMetadata() {
+      return Boolean(settings.devMode);
+    }
+
     function renderDocumentText(source) {
       docText.textContent = "";
       const blocks = richBlocks(source);
       const crossRefsEnabled = isDictionarySource(source) && Boolean(settings.dictionaryCrossRef);
+      const highlightOptions = {
+        crossRefs: crossRefsEnabled,
+        strictHighlights: dictionaryMatchMode(source) === "strict"
+      };
       if (blocks.length) {
         docText.classList.remove("plain");
-        renderRichBlocks(docText, blocks, sourceHighlightTerms(source), { crossRefs: crossRefsEnabled });
+        renderRichBlocks(docText, blocks, sourceHighlightTerms(source), highlightOptions);
         return;
       }
       docText.classList.add("plain");
@@ -4131,7 +4808,7 @@
         docText,
         source.text || source.raw_docx_text || source.metadata?.raw_docx_text || t("noDocumentText"),
         sourceHighlightTerms(source),
-        { crossRefs: crossRefsEnabled }
+        highlightOptions
       );
     }
 
@@ -4142,7 +4819,8 @@
       const term = explicit?.dataset.dictionaryXref || clickedDictionaryTerm(event);
       if (!term) return;
       event.preventDefault();
-      await openDictionaryCrossReference(term);
+      event.stopPropagation();
+      await openDictionaryCrossReference(term, explicit || event);
     }
 
     async function onDocumentTextKeydown(event) {
@@ -4152,36 +4830,220 @@
       const explicit = event.target.closest("[data-dictionary-xref]");
       if (!explicit?.dataset.dictionaryXref) return;
       event.preventDefault();
-      await openDictionaryCrossReference(explicit.dataset.dictionaryXref);
+      event.stopPropagation();
+      await openDictionaryCrossReference(explicit.dataset.dictionaryXref, explicit);
     }
 
-    async function openDictionaryCrossReference(term) {
+    async function openDictionaryCrossReference(term, anchor) {
       const query = String(term || "").trim();
       if (!query) return;
+      const requestId = ++dictionaryXrefRequestId;
+      renderDictionaryCrossReferencePopup(query, [], { loading: true });
+      placeDictionaryCrossReferencePopup(anchor);
       try {
-        const source = await fetchDictionaryLookup(query);
-        if (!source) {
+        const sources = await fetchDictionaryLookup(query, 5);
+        if (requestId !== dictionaryXrefRequestId) return;
+        if (!sources.length) {
+          renderDictionaryCrossReferencePopup(query, [], { empty: true });
+          placeDictionaryCrossReferencePopup(anchor);
           showNotice(t("dictionaryLookupEmpty") + query);
           return;
         }
-        openDocument(source);
+        renderDictionaryCrossReferencePopup(query, sources);
+        placeDictionaryCrossReferencePopup(anchor);
       } catch (error) {
+        if (requestId !== dictionaryXrefRequestId) return;
+        closeDictionaryCrossReferencePopup();
         showNotice(t("dictionaryLookupError") + error.message);
       }
     }
 
-    async function fetchDictionaryLookup(term) {
+    function renderDictionaryCrossReferencePopup(term, sources, options = {}) {
+      dictionaryXrefPopover.textContent = "";
+      const head = document.createElement("div");
+      head.className = "dictionary-xref-head";
+      const title = document.createElement("div");
+      title.className = "dictionary-xref-title";
+      title.textContent = `${t("dictionaryCrossRefResults")}: ${term}`;
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "icon-btn";
+      close.title = "Close";
+      close.setAttribute("aria-label", "Close");
+      close.innerHTML = '<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>';
+      close.addEventListener("click", closeDictionaryCrossReferencePopup);
+      head.append(title, close);
+      dictionaryXrefPopover.appendChild(head);
+
+      const list = document.createElement("div");
+      list.className = "dictionary-xref-list";
+      if (options.loading || options.empty || !sources.length) {
+        const empty = document.createElement("div");
+        empty.className = "dictionary-xref-empty";
+        empty.textContent = options.loading ? t("dictionaryCrossRefLoading") : t("dictionaryLookupEmpty") + term;
+        list.appendChild(empty);
+      } else {
+        sources.slice(0, 5).forEach((source) => {
+          list.appendChild(renderDictionaryCrossReferenceItem(source));
+        });
+      }
+      dictionaryXrefPopover.appendChild(list);
+      dictionaryXrefPopover.hidden = false;
+      const first = dictionaryXrefPopover.querySelector(".dictionary-xref-item");
+      if (first) first.focus({ preventScroll: true });
+    }
+
+    function renderDictionaryCrossReferenceItem(source) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "dictionary-xref-item";
+      const title = document.createElement("div");
+      title.className = "dictionary-xref-item-title";
+      title.textContent = source.title || source.doc_id || t("dictionary");
+      const meta = document.createElement("div");
+      meta.className = "dictionary-xref-item-meta";
+      const parts = [dictionarySourceLabel(source)];
+      if (showDebugSourceMetadata() && typeof source.score === "number") {
+        parts.push("score " + source.score.toFixed(3));
+      }
+      meta.textContent = parts.filter(Boolean).join(" · ");
+      item.append(title, meta);
+      item.addEventListener("click", () => openDocument(source, { fromCrossRef: true }));
+      return item;
+    }
+
+    function placeDictionaryCrossReferencePopup(anchor) {
+      const rect = dictionaryCrossReferenceAnchorRect(anchor);
+      const margin = 12;
+      const width = Math.min(360, Math.max(240, window.innerWidth - margin * 2));
+      dictionaryXrefPopover.style.width = width + "px";
+      dictionaryXrefPopover.style.left = "0px";
+      dictionaryXrefPopover.style.top = "0px";
+      dictionaryXrefPopover.hidden = false;
+      const popoverRect = dictionaryXrefPopover.getBoundingClientRect();
+      let left = rect.left;
+      let top = rect.bottom + 8;
+      if (left + width > window.innerWidth - margin) left = window.innerWidth - width - margin;
+      if (left < margin) left = margin;
+      if (top + popoverRect.height > window.innerHeight - margin) {
+        top = rect.top - popoverRect.height - 8;
+      }
+      if (top < margin) top = margin;
+      dictionaryXrefPopover.style.left = Math.round(left) + "px";
+      dictionaryXrefPopover.style.top = Math.round(top) + "px";
+    }
+
+    function dictionaryCrossReferenceAnchorRect(anchor) {
+      if (anchor?.getBoundingClientRect) return anchor.getBoundingClientRect();
+      if (anchor && Number.isFinite(anchor.clientX) && Number.isFinite(anchor.clientY)) {
+        return {
+          left: anchor.clientX,
+          right: anchor.clientX,
+          top: anchor.clientY,
+          bottom: anchor.clientY,
+          width: 0,
+          height: 0
+        };
+      }
+      const fallback = docText.getBoundingClientRect();
+      return {
+        left: fallback.left + 24,
+        right: fallback.left + 24,
+        top: fallback.top + 24,
+        bottom: fallback.top + 24,
+        width: 0,
+        height: 0
+      };
+    }
+
+    function closeDictionaryCrossReferencePopup() {
+      dictionaryXrefRequestId += 1;
+      dictionaryXrefPopover.hidden = true;
+      dictionaryXrefPopover.textContent = "";
+    }
+
+    function pushDocumentTrail(source) {
+      if (!source) return;
+      if (documentTrail.length && sameDocumentSource(documentTrail[documentTrail.length - 1], source)) return;
+      documentTrail = [...documentTrail, source].slice(-8);
+    }
+
+    function openDocumentFromTrail(index) {
+      const source = documentTrail[index];
+      if (!source) return;
+      documentTrail = documentTrail.slice(0, index);
+      selectedSource = source;
+      renderDocumentPanel(source);
+      app.classList.add("doc-open");
+      renderChat();
+    }
+
+    function renderDocumentTrail(source) {
+      docTrail.textContent = "";
+      if (!source || !documentTrail.length) {
+        docTrail.hidden = true;
+        return;
+      }
+      docTrail.hidden = false;
+      const label = document.createElement("span");
+      label.className = "doc-trail-label";
+      label.textContent = t("referenceTrail");
+      docTrail.appendChild(label);
+      documentTrail.forEach((item, index) => {
+        const separator = document.createElement("span");
+        separator.className = "doc-trail-separator";
+        separator.textContent = "/";
+        docTrail.appendChild(separator);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "doc-trail-link";
+        button.textContent = dictionaryTrailLabel(item);
+        button.title = t("backToPreviousEntry") + ": " + dictionaryTrailLabel(item);
+        button.addEventListener("click", () => openDocumentFromTrail(index));
+        docTrail.appendChild(button);
+      });
+      const separator = document.createElement("span");
+      separator.className = "doc-trail-separator";
+      separator.textContent = "/";
+      const current = document.createElement("span");
+      current.className = "doc-trail-current";
+      current.textContent = dictionaryTrailLabel(source);
+      docTrail.append(separator, current);
+    }
+
+    function dictionaryTrailLabel(source) {
+      return String(source?.title || source?.doc_id || t("dictionary")).trim();
+    }
+
+    function sameDocumentSource(left, right) {
+      const leftId = documentSourceIdentity(left);
+      const rightId = documentSourceIdentity(right);
+      return Boolean(leftId && rightId && leftId === rightId);
+    }
+
+    function documentSourceIdentity(source) {
+      const sourceInfo = dictionarySourceInfo(source);
+      return String(
+        source?.doc_id ||
+        source?.source_entry_id ||
+        source?.metadata?.source_entry_id ||
+        sourceInfo.source_entry_id ||
+        sourceKey(source)
+      ).trim();
+    }
+
+    async function fetchDictionaryLookup(term, topK = 5) {
       const response = await fetch("/v1/dictionary/lookup", {
         method: "POST",
         headers: apiHeaders(),
-        body: JSON.stringify({ term, top_k: 1 })
+        body: JSON.stringify({ term, top_k: topK })
       });
       if (!response.ok) {
         throw new Error(await responseError(response));
       }
       const data = await response.json();
       const sources = Array.isArray(data.retrieved) ? data.retrieved : [];
-      return sources[0] || null;
+      return sources;
     }
 
     function clickedDictionaryTerm(event) {
@@ -4304,7 +5166,7 @@
 
     function appendHighlightedText(container, text, highlights = [], options = {}) {
       const value = String(text || "");
-      const ranges = highlightRanges(value, highlights);
+      const ranges = highlightRanges(value, highlights, options);
       if (!ranges.length) {
         container.appendChild(document.createTextNode(value));
         return;
@@ -4328,11 +5190,11 @@
       if (cursor < value.length) container.appendChild(document.createTextNode(value.slice(cursor)));
     }
 
-    function highlightRanges(text, highlights = []) {
-      const foldedText = foldForMatchWithMap(text);
+    function highlightRanges(text, highlights = [], options = {}) {
+      const foldedText = options.strictHighlights ? strictForMatchWithMap(text) : foldForMatchWithMap(text);
       if (!foldedText.folded) return [];
       const terms = highlights
-        .map((term) => foldForMatchWithMap(term).folded)
+        .map((term) => (options.strictHighlights ? strictForMatchWithMap(term) : foldForMatchWithMap(term)).folded)
         .filter(Boolean)
         .sort((a, b) => b.length - a.length);
       const ranges = [];
@@ -4357,6 +5219,32 @@
       return index < 0 || index >= folded.length || folded[index] === " ";
     }
 
+    function strictForMatchWithMap(value) {
+      const text = String(value || "");
+      let folded = "";
+      const map = [];
+      let pendingSpace = false;
+      let pendingSpaceIndex = 0;
+      for (let index = 0; index < text.length; index += 1) {
+        const char = text[index].toLowerCase();
+        if (!/[\p{L}\p{M}\p{N}]/u.test(char)) {
+          if (folded) {
+            pendingSpace = true;
+            pendingSpaceIndex = index;
+          }
+          continue;
+        }
+        if (pendingSpace && folded && !folded.endsWith(" ")) {
+          folded += " ";
+          map.push(pendingSpaceIndex);
+        }
+        pendingSpace = false;
+        folded += char;
+        map.push(index);
+      }
+      return { folded: folded.trim(), map };
+    }
+
     function foldForMatchWithMap(value) {
       const text = String(value || "");
       let folded = "";
@@ -4365,7 +5253,7 @@
       let pendingSpaceIndex = 0;
       for (let index = 0; index < text.length; index += 1) {
         const raw = text[index] === "đ" || text[index] === "Đ"
-          ? "d"
+          ? "dd"
           : text[index].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const chars = raw.replace(/[^a-z0-9]+/g, " ");
         for (const char of chars) {
@@ -4588,6 +5476,10 @@
           messages: apiMessages,
           temperature: requestOptions.temperature,
           max_tokens: requestOptions.max_tokens,
+          top_k: requestOptions.top_k,
+          score_min: requestOptions.score_min,
+          score_max: requestOptions.score_max,
+          sort_by_score: requestOptions.sort_by_score,
           image_top_k: requestOptions.image_top_k,
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
@@ -4620,6 +5512,10 @@
           messages: apiMessages,
           temperature: requestOptions.temperature,
           max_tokens: requestOptions.max_tokens,
+          top_k: requestOptions.top_k,
+          score_min: requestOptions.score_min,
+          score_max: requestOptions.score_max,
+          sort_by_score: requestOptions.sort_by_score,
           image_top_k: requestOptions.image_top_k,
           response_mode: requestOptions.response_mode,
           image_rewrite: requestOptions.image_rewrite,
@@ -4762,6 +5658,7 @@
     function resizePrompt() {
       promptInput.style.height = "auto";
       promptInput.style.height = Math.min(promptInput.scrollHeight, 190) + "px";
+      updateComposerReservedHeight();
     }
 
     function titleFrom(text) {

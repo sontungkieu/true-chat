@@ -6,6 +6,7 @@ from rag_bench.chat_service import (
     ChatProxyConfig,
     ModelRoutedChatClient,
     RagChatService,
+    _format_context,
     last_user_text,
     parse_chat_command,
 )
@@ -281,8 +282,8 @@ def test_rag_chat_service_answers_with_retrieved_context_and_history() -> None:
     assert result.response["rag"]["key_alias"] == "alias-a"
     assert result.response["rag"]["rejected_aliases"] == []
     assert result.response["rag"]["output_tokens_per_s"] == 166.7
-    assert result.response["rag"]["generation_model"] == "llama-3.1-8b-instant"
-    assert llm.model == "llama-3.1-8b-instant"
+    assert result.response["rag"]["generation_model"] == "qwen/qwen3-32b"
+    assert llm.model == "qwen/qwen3-32b"
     assert llm.temperature == 0.2
     assert llm.max_completion_tokens == 64
     assert "Required response language: English" in llm.messages[0]["content"]
@@ -764,6 +765,152 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     assert lookup["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
 
 
+def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
+    class WeakTextRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert query.text == "pháo binh"
+            return RetrievalResult(
+                query=query,
+                hits=[RetrievalHit(doc_id="bench-noise", score=0.0, rank=1, title="Noise", text="No useful context.")],
+                latency_s=0.02,
+            )
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert query.text == "pháo binh"
+            assert top_k == 2
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="base:P-0023",
+                        score=2.0,
+                        rank=1,
+                        title="PHÁO BINH",
+                        text="PHÁO BINH, lực lượng tác chiến.",
+                        metadata={
+                            "kind": "dictionary",
+                            "headword": "PHÁO BINH",
+                            "dictionary_direct_score": 1.2,
+                            "dictionary_match_mode": "strict",
+                        },
+                    )
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    text_retriever = WeakTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=llm,
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "pháo binh"}], response_mode="text")
+
+    assert result.response["rag"]["retriever"] == "bm25"
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieved"][0]["doc_id"] == "base:P-0023"
+    assert "PHÁO BINH, lực lượng tác chiến." in llm.messages[1]["content"]
+
+
+def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:
+    class BenchmarkRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert top_k == 6
+            hits = [
+                RetrievalHit(doc_id=f"bench-good-{index}", score=0.25, rank=index, title=f"Good {index}", text=f"Useful benchmark {index}.")
+                for index in range(1, 4)
+            ]
+            hits.extend(
+                RetrievalHit(doc_id=f"bench-tiny-{index}", score=0.0001, rank=rank, title=f"Tiny {index}", text=f"Tiny benchmark {index}.")
+                for rank, index in enumerate(range(1, 4), start=4)
+            )
+            return RetrievalResult(query=query, hits=hits, latency_s=0.02)
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert top_k == 6
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id=f"dict-{index}",
+                        score=2.0 - index * 0.01,
+                        rank=index,
+                        title=f"Dictionary {index}",
+                        text=f"Dictionary entry {index}.",
+                        metadata={
+                            "kind": "dictionary",
+                            "dictionary_direct_score": 1.0,
+                            "dictionary_match_mode": "strict",
+                        },
+                    )
+                    for index in range(1, 9)
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    text_retriever = BenchmarkRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=6, dictionary_top_k=5, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=llm,
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 5},
+    )
+
+    result = service.answer([{"role": "user", "content": "pháo đài"}], response_mode="text", top_k=6)
+    doc_ids = [source["doc_id"] for source in result.response["rag"]["retrieved"]]
+
+    assert len(doc_ids) == 6
+    assert doc_ids == ["dict-1", "dict-2", "dict-3", "dict-4", "dict-5", "dict-6"]
+    assert "Tiny benchmark" not in llm.messages[1]["content"]
+
+
+def test_format_context_distributes_budget_across_all_hits() -> None:
+    hits = [
+        RetrievalHit(
+            doc_id=f"doc-{index}",
+            score=1.0,
+            rank=index,
+            title=f"Title {index}",
+            text=f"Important context {index}. " + ("x" * 700),
+        )
+        for index in range(1, 7)
+    ]
+
+    context = _format_context(hits, max_context_chars=900)
+
+    for index in range(1, 7):
+        assert f"[doc-{index}]" in context
+        assert f"Title {index}" in context
+    assert len(context) <= 900
+    assert not context.endswith("[")
+
+
 def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_remain() -> None:
     class LowScoreRetriever(FakeRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:
@@ -799,6 +946,65 @@ def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_rema
     result = service.answer([{"role": "user", "content": "What do cats do?"}])
 
     assert [source["doc_id"] for source in result.response["rag"]["retrieved"]] == ["cited-low"]
+
+
+def test_score_controls_filter_sort_prompt_and_display_sources() -> None:
+    class MixedScoreRetriever(FakeRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert top_k == 4
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(doc_id="low", score=0.2, rank=1, title="Low", text="Low confidence."),
+                    RetrievalHit(doc_id="high", score=2.0, rank=2, title="High", text="High confidence."),
+                    RetrievalHit(doc_id="mid", score=1.0, rank=3, title="Mid", text="Mid confidence."),
+                    RetrievalHit(doc_id="too-high", score=9.0, rank=4, title="Too high", text="Outlier."),
+                ],
+                latency_s=0.01,
+            )
+
+    class CitingFilteredLLM(FakeLLM):
+        def generate(self, *args, **kwargs) -> GenerationResult:
+            result = super().generate(*args, **kwargs)
+            result.answer = "Filtered answer [high]."
+            return result
+
+    retriever = MixedScoreRetriever()
+    llm = CitingFilteredLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=4, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=retriever,
+        llm=llm,
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "What do cats do?"}],
+        top_k=4,
+        score_min=0.5,
+        score_max=2.5,
+        sort_by_score=True,
+    )
+
+    prompt = llm.messages[1]["content"]
+    assert prompt.index("[high]") < prompt.index("[mid]")
+    assert "[low]" not in prompt
+    assert "[too-high]" not in prompt
+    assert [source["doc_id"] for source in result.response["rag"]["retrieved"]] == ["high", "mid"]
+    assert [source["rank"] for source in result.response["rag"]["retrieved"]] == [1, 2]
+    assert result.response["rag"]["retrieval_metadata"]["score_filter"] == {
+        "min_score": 0.5,
+        "max_score": 2.5,
+        "sort_by_score": True,
+        "input_count": 4,
+        "output_count": 2,
+    }
 
 
 def test_last_user_text_supports_openai_text_parts() -> None:

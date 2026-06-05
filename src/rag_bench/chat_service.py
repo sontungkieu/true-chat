@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
 import uuid
 import hmac
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -27,7 +28,8 @@ from rag_bench.web_search import DuckDuckGoLiteSearchClient, WebSearchClient, We
 
 
 DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
-DEFAULT_CHAT_MODELS = ("llama-3.1-8b-instant", "qwen/qwen3-32b")
+DEFAULT_CHAT_MODEL = "qwen/qwen3-32b"
+DEFAULT_CHAT_MODELS = (DEFAULT_CHAT_MODEL, "llama-3.1-8b-instant")
 DEFAULT_MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
 DEFAULT_MIMO_MODELS = ("mimo-v2.5-pro", "mimo-v2.5")
 DEFAULT_CHAT_RETRIEVERS = (
@@ -38,6 +40,8 @@ DEFAULT_CHAT_RETRIEVERS = (
     "graph-bm25",
 )
 WEB_SEARCH_RETRIEVER_NAME = "web-search"
+MIN_RETRIEVAL_DISPLAY_SCORE = 5e-4
+CONTEXT_SEPARATOR = "\n\n---\n\n"
 
 
 class ChatGenerationClient(Protocol):
@@ -61,7 +65,7 @@ class ChatProxyConfig:
     retriever: str = "bm25"
     top_k: int = 3
     groq_keys_path: Path = Path(".secrets/groq_key.env")
-    model: str = "llama-3.1-8b-instant"
+    model: str = DEFAULT_CHAT_MODEL
     model_id: str = DEFAULT_PROXY_MODEL_ID
     available_models: tuple[str, ...] = DEFAULT_CHAT_MODELS
     mimo_enabled: bool = False
@@ -74,7 +78,7 @@ class ChatProxyConfig:
     available_retrievers: tuple[str, ...] = DEFAULT_CHAT_RETRIEVERS
     vector_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     max_retries: int = 2
-    max_completion_tokens: int = 128
+    max_completion_tokens: int = 4096
     temperature: float = 0.0
     max_context_chars: int = 2500
     allow_large_bench: bool = False
@@ -94,6 +98,21 @@ class ChatProxyConfig:
     dictionary_letters: tuple[str, ...] = DEFAULT_DICTIONARY_LETTERS
     dictionary_top_k: int = 5
     dictionary_required: bool = False
+
+
+@dataclass(frozen=True)
+class RetrievalScoreControls:
+    min_score: float | None = None
+    max_score: float | None = None
+    sort_by_score: bool = False
+
+    @property
+    def active(self) -> bool:
+        return self.min_score is not None or self.max_score is not None or self.sort_by_score
+
+    @property
+    def has_score_range(self) -> bool:
+        return self.min_score is not None or self.max_score is not None
 
 
 @dataclass
@@ -165,10 +184,14 @@ class RagChatService:
         web_search_key: str | None = None,
         language: str | None = None,
         memory: bool | None = None,
+        score_min: float | None = None,
+        score_max: float | None = None,
+        sort_by_score: bool | None = None,
     ) -> ChatServiceResult:
         response_model, generation_model = self.resolve_request_model(request_model)
         question = last_user_text(messages)
         response_language = _normalize_response_language(language)
+        score_controls = _normalize_retrieval_score_controls(score_min, score_max, sort_by_score)
         use_memory = True if memory is None else bool(memory)
         history_messages = self.config.history_messages if use_memory else 0
         command = parse_chat_command(question)
@@ -245,6 +268,11 @@ class RagChatService:
             retriever = self.resolve_request_retriever("image-digits")
             request_image_top_k = _clamp_top_k(image_top_k if image_top_k is not None else top_k, fallback=self.config.image_top_k)
             retrieval = retriever.search(Query(query_id="chat-img", text=image_query), request_image_top_k)
+            retrieval, score_filter_metadata = _apply_retrieval_score_controls(
+                retrieval,
+                score_controls,
+                max_hits=request_image_top_k,
+            )
             generation = GenerationResult(
                 answer=_format_image_answer(image_query, retrieval.hits, language=response_language),
                 key_alias=None,
@@ -265,6 +293,7 @@ class RagChatService:
                 "image_top_k": request_image_top_k,
                 "language": response_language,
                 "memory": use_memory,
+                **score_filter_metadata,
                 **rewrite_metadata,
             }
             response = self._build_response(
@@ -277,6 +306,7 @@ class RagChatService:
                 top_k=request_image_top_k,
                 response_model=response_model,
                 generation_model=generation_model,
+                score_controls=score_controls,
             )
             return ChatServiceResult(
                 response=response,
@@ -292,6 +322,11 @@ class RagChatService:
             retriever = self.resolve_request_retriever("dictionary-graph")
             request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
             retrieval = retriever.search(Query(query_id="chat-dict", text=question), request_top_k)
+            retrieval, score_filter_metadata = _apply_retrieval_score_controls(
+                retrieval,
+                score_controls,
+                max_hits=request_top_k,
+            )
             retrieval_metadata = {
                 **retrieval.metadata,
                 "command": "/dict" if command and command[0] == "dict" else None,
@@ -300,6 +335,7 @@ class RagChatService:
                 "dictionary_status": self.dictionary_status,
                 "language": response_language,
                 "memory": use_memory,
+                **score_filter_metadata,
             }
             if retrieval.hits:
                 prompt_messages = build_dictionary_rag_messages(
@@ -342,6 +378,7 @@ class RagChatService:
                 top_k=request_top_k,
                 response_model=response_model,
                 generation_model=generation_model,
+                score_controls=score_controls,
             )
             return ChatServiceResult(
                 response=response,
@@ -362,9 +399,34 @@ class RagChatService:
             )
         else:
             retrieval = retriever.search(Query(query_id="chat", text=question), request_top_k)
+        retrieval, score_filter_metadata = _apply_retrieval_score_controls(
+            retrieval,
+            score_controls,
+            max_hits=request_top_k,
+        )
+        dictionary_fallback = self._text_dictionary_fallback(
+            question,
+            top_k=request_top_k,
+            primary_retriever=retriever,
+            primary_retrieval=retrieval,
+        )
+        dictionary_score_filter_metadata: dict[str, Any] = {}
+        if dictionary_fallback is not None:
+            dictionary_fallback, dictionary_score_filter_metadata = _apply_retrieval_score_controls(
+                dictionary_fallback,
+                score_controls,
+                max_hits=request_top_k,
+            )
+            if not dictionary_fallback.hits:
+                dictionary_fallback = None
+        prompt_hits = _merge_text_and_dictionary_hits(
+            retrieval.hits,
+            dictionary_fallback.hits if dictionary_fallback else [],
+            max_hits=request_top_k,
+        )
         prompt_messages = build_chat_rag_messages(
             messages,
-            retrieval.hits,
+            prompt_hits,
             max_context_chars=self.config.max_context_chars,
             history_messages=history_messages,
             language=response_language,
@@ -378,8 +440,19 @@ class RagChatService:
         if generation.error:
             raise RuntimeError(generation.error)
 
-        combined_hits = list(retrieval.hits)
-        retrieval_metadata = dict(retrieval.metadata)
+        combined_hits = list(prompt_hits)
+        retrieval_metadata = {**retrieval.metadata, **score_filter_metadata}
+        if dictionary_fallback is not None:
+            retrieval_metadata.update(
+                {
+                    "dictionary_fallback": True,
+                    "dictionary_fallback_latency_s": dictionary_fallback.latency_s,
+                    "dictionary_fallback_count": len(dictionary_fallback.hits),
+                    "dictionary_fallback_metadata": dictionary_fallback.metadata,
+                }
+            )
+            if dictionary_score_filter_metadata:
+                retrieval_metadata["dictionary_fallback_score_filter"] = dictionary_score_filter_metadata["score_filter"]
         if mode == "text_image":
             image_query, image_query_metadata = self._image_query(
                 f"Question: {question}\nAnswer: {generation.answer}",
@@ -389,6 +462,11 @@ class RagChatService:
             image_retriever = self.resolve_request_retriever("image-digits")
             request_image_top_k = _clamp_top_k(image_top_k, fallback=self.config.image_top_k)
             image_retrieval = image_retriever.search(Query(query_id="chat-img", text=image_query), request_image_top_k)
+            image_retrieval, image_score_filter_metadata = _apply_retrieval_score_controls(
+                image_retrieval,
+                score_controls,
+                max_hits=request_image_top_k,
+            )
             combined_hits.extend(image_retrieval.hits)
             retrieval_metadata.update(
                 {
@@ -403,6 +481,8 @@ class RagChatService:
                     **image_query_metadata,
                 }
             )
+            if image_score_filter_metadata:
+                retrieval_metadata["image_score_filter"] = image_score_filter_metadata["score_filter"]
         else:
             retrieval_metadata.setdefault("response_mode", "text")
         retrieval_metadata.setdefault("language", response_language)
@@ -418,6 +498,7 @@ class RagChatService:
             top_k=request_top_k,
             response_model=response_model,
             generation_model=generation_model,
+            score_controls=score_controls,
         )
         return ChatServiceResult(
             response=response,
@@ -439,6 +520,7 @@ class RagChatService:
         top_k: int | None = None,
         response_model: str | None = None,
         generation_model: str | None = None,
+        score_controls: RetrievalScoreControls | None = None,
     ) -> dict[str, Any]:
         created = int(time.time())
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -473,7 +555,11 @@ class RagChatService:
                 "retrieval_metadata": retrieval_metadata or {},
                 "retrieved": [
                     _hit_source_payload(hit)
-                    for hit in _filter_retrieved_for_display(hits, answer)
+                    for hit in _filter_retrieved_for_display(
+                        hits,
+                        answer,
+                        include_score_filtered=bool(score_controls and score_controls.has_score_range),
+                    )
                 ],
                 "key_alias": generation.key_alias,
                 "attempted_aliases": generation.attempted_aliases,
@@ -486,23 +572,63 @@ class RagChatService:
             },
         }
 
-    def lookup_dictionary(self, term: str, *, top_k: int | None = None) -> dict[str, Any]:
+    def _text_dictionary_fallback(
+        self,
+        question: str,
+        *,
+        top_k: int,
+        primary_retriever: Retriever,
+        primary_retrieval: RetrievalResult,
+    ) -> RetrievalResult | None:
+        if primary_retriever.name == "dictionary-graph":
+            return None
+        dictionary_retriever = self.retrievers.get("dictionary-graph")
+        if dictionary_retriever is None:
+            return None
+        if not _looks_like_dictionary_text_query(question):
+            return None
+        request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
+        retrieval = dictionary_retriever.search(Query(query_id="chat-dict-fallback", text=question), request_top_k)
+        hits = [hit for hit in retrieval.hits if _strong_dictionary_text_fallback_hit(hit)]
+        if not hits:
+            return None
+        primary_top_score = max((hit.score for hit in primary_retrieval.hits), default=0.0)
+        has_direct_dictionary_hit = any(float(hit.metadata.get("dictionary_direct_score") or 0.0) > 0 for hit in hits)
+        if primary_top_score > 0 and not has_direct_dictionary_hit:
+            return None
+        return RetrievalResult(query=retrieval.query, hits=hits, latency_s=retrieval.latency_s, metadata=retrieval.metadata)
+
+    def lookup_dictionary(
+        self,
+        term: str,
+        *,
+        top_k: int | None = None,
+        score_min: float | None = None,
+        score_max: float | None = None,
+        sort_by_score: bool | None = None,
+    ) -> dict[str, Any]:
         if not self.config.dictionary_enabled:
             raise ValueError("Dictionary lookup is disabled.")
         query = str(term or "").strip()
         if not query:
             raise ValueError("term must not be empty")
         retriever = self.resolve_request_retriever("dictionary-graph")
+        score_controls = _normalize_retrieval_score_controls(score_min, score_max, sort_by_score)
         request_top_k = _clamp_top_k(top_k, fallback=1)
         retrieval = retriever.search(Query(query_id="dictionary-lookup", text=query), request_top_k)
-        hits = [hit for hit in retrieval.hits if hit.score > 0]
+        retrieval, score_filter_metadata = _apply_retrieval_score_controls(
+            retrieval,
+            score_controls,
+            max_hits=request_top_k,
+        )
+        hits = [hit for hit in retrieval.hits if hit.score > 0 or score_controls.has_score_range]
         return {
             "object": "dictionary.lookup",
             "query": query,
             "retriever": retriever.name,
             "top_k": request_top_k,
             "retrieval_latency_s": retrieval.latency_s,
-            "retrieval_metadata": retrieval.metadata,
+            "retrieval_metadata": {**retrieval.metadata, **score_filter_metadata},
             "dictionary": self.dictionary_status,
             "retrieved": [_hit_source_payload(hit) for hit in hits],
         }
@@ -733,12 +859,143 @@ def _merge_positive_keyword_hits(results: list[RetrievalResult], *, top_k: int) 
     ]
 
 
-def _filter_retrieved_for_display(hits: list[RetrievalHit], answer: str) -> list[RetrievalHit]:
+def _merge_text_and_dictionary_hits(
+    primary_hits: list[RetrievalHit],
+    dictionary_hits: list[RetrievalHit],
+    *,
+    max_hits: int | None = None,
+) -> list[RetrievalHit]:
+    if not dictionary_hits:
+        hits = list(primary_hits)
+        if max_hits is not None:
+            hits = hits[: _clamp_top_k(max_hits, fallback=max_hits)]
+        return [
+            replace(hit, rank=rank)
+            for rank, hit in enumerate(hits, 1)
+        ]
+    primary_candidates = [hit for hit in primary_hits if hit.score > MIN_RETRIEVAL_DISPLAY_SCORE]
+    merged: list[RetrievalHit] = []
+    seen: set[str] = set()
+    for hit in (*dictionary_hits, *primary_candidates):
+        if hit.doc_id in seen:
+            continue
+        seen.add(hit.doc_id)
+        merged.append(hit)
+        if max_hits is not None and len(merged) >= _clamp_top_k(max_hits, fallback=max_hits):
+            break
+    return [
+        RetrievalHit(
+            doc_id=hit.doc_id,
+            score=hit.score,
+            rank=rank,
+            title=hit.title,
+            text=hit.text,
+            metadata=hit.metadata,
+        )
+        for rank, hit in enumerate(merged, 1)
+    ]
+
+
+def _looks_like_dictionary_text_query(text: str) -> bool:
+    query = _strip_command_prefix(text)
+    if not query or len(query) > 96:
+        return False
+    tokens = re.findall(r"[\wĐđ]+", query, flags=re.UNICODE)
+    if not (1 <= len(tokens) <= 8):
+        return False
+    if "?" in query and len(tokens) > 5:
+        return False
+    return True
+
+
+def _strong_dictionary_text_fallback_hit(hit: RetrievalHit) -> bool:
+    if hit.score <= 0:
+        return False
+    metadata = hit.metadata or {}
+    mode = str(metadata.get("dictionary_match_mode") or "")
+    direct_score = float(metadata.get("dictionary_direct_score") or 0.0)
+    graph_score = float(metadata.get("dictionary_graph_score") or 0.0)
+    return mode in {"strict", "folded"} or direct_score > 0 or (mode == "graph" and graph_score >= 0.35)
+
+
+def _normalize_retrieval_score_controls(
+    min_score: float | None,
+    max_score: float | None,
+    sort_by_score: bool | None,
+) -> RetrievalScoreControls:
+    normalized_min = _normalize_optional_score(min_score, "score_min")
+    normalized_max = _normalize_optional_score(max_score, "score_max")
+    if normalized_min is not None and normalized_max is not None and normalized_min > normalized_max:
+        raise ValueError("score_min must be less than or equal to score_max")
+    return RetrievalScoreControls(
+        min_score=normalized_min,
+        max_score=normalized_max,
+        sort_by_score=bool(sort_by_score),
+    )
+
+
+def _normalize_optional_score(value: float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    score = float(value)
+    if not math.isfinite(score):
+        raise ValueError(f"{name} must be a finite number")
+    return score
+
+
+def _apply_retrieval_score_controls(
+    retrieval: RetrievalResult,
+    controls: RetrievalScoreControls,
+    *,
+    max_hits: int | None = None,
+) -> tuple[RetrievalResult, dict[str, Any]]:
+    if not controls.active:
+        return retrieval, {}
+    filtered = [
+        hit
+        for hit in retrieval.hits
+        if (controls.min_score is None or hit.score >= controls.min_score)
+        and (controls.max_score is None or hit.score <= controls.max_score)
+    ]
+    if controls.sort_by_score:
+        filtered = sorted(filtered, key=lambda hit: (-hit.score, hit.rank, hit.doc_id))
+    if max_hits is not None:
+        filtered = filtered[: _clamp_top_k(max_hits, fallback=max_hits)]
+    reranked = [
+        replace(hit, rank=index)
+        for index, hit in enumerate(filtered, start=1)
+    ]
+    metadata = {
+        "score_filter": {
+            "min_score": controls.min_score,
+            "max_score": controls.max_score,
+            "sort_by_score": controls.sort_by_score,
+            "input_count": len(retrieval.hits),
+            "output_count": len(reranked),
+        }
+    }
+    return (
+        RetrievalResult(
+            query=retrieval.query,
+            hits=reranked,
+            latency_s=retrieval.latency_s,
+            metadata=retrieval.metadata,
+        ),
+        metadata,
+    )
+
+
+def _filter_retrieved_for_display(
+    hits: list[RetrievalHit],
+    answer: str,
+    *,
+    include_score_filtered: bool = False,
+) -> list[RetrievalHit]:
     cited_doc_ids = _cited_doc_ids(answer)
     return [
         hit
         for hit in hits
-        if hit.score > 0 or hit.doc_id in cited_doc_ids or _hit_is_image(hit)
+        if include_score_filtered or hit.score > MIN_RETRIEVAL_DISPLAY_SCORE or hit.doc_id in cited_doc_ids or _hit_is_image(hit)
     ]
 
 
@@ -1130,21 +1387,40 @@ def _clean_image_query(text: str) -> str:
 
 
 def _format_context(hits: list[RetrievalHit], *, max_context_chars: int) -> str:
-    context_blocks: list[str] = []
-    used_chars = 0
+    raw_blocks: list[str] = []
     for hit in hits:
         title = f"{hit.title}\n" if hit.title else ""
         block = f"[{hit.doc_id}]\n{title}{hit.text}".strip()
-        if not block:
-            continue
-        remaining = max_context_chars - used_chars
-        if remaining <= 0:
-            break
-        if len(block) > remaining:
-            block = block[:remaining].rstrip()
-        context_blocks.append(block)
-        used_chars += len(block)
-    return "\n\n---\n\n".join(context_blocks) if context_blocks else "No retrieved context."
+        if block:
+            raw_blocks.append(block)
+    if not raw_blocks:
+        return "No retrieved context."
+    if max_context_chars <= 0:
+        return CONTEXT_SEPARATOR.join(block.splitlines()[0] for block in raw_blocks)
+    separator_budget = len(CONTEXT_SEPARATOR) * max(0, len(raw_blocks) - 1)
+    text_budget = max(1, max_context_chars - separator_budget)
+    base_budget = max(1, text_budget // len(raw_blocks))
+    extra_budget = text_budget % len(raw_blocks)
+    carried_budget = 0
+    context_blocks: list[str] = []
+    for index, block in enumerate(raw_blocks):
+        block_budget = base_budget + (1 if index < extra_budget else 0) + carried_budget
+        formatted = _truncate_context_block(block, max_chars=block_budget)
+        context_blocks.append(formatted)
+        carried_budget = max(0, block_budget - len(formatted))
+    return CONTEXT_SEPARATOR.join(context_blocks)
+
+
+def _truncate_context_block(block: str, *, max_chars: int) -> str:
+    if len(block) <= max_chars:
+        return block
+    lines = block.splitlines()
+    header = "\n".join(lines[:2]).strip() if len(lines) >= 2 else lines[0].strip()
+    if max_chars <= len(header):
+        return lines[0].strip() if lines else block[:max_chars].rstrip()
+    text_budget = max_chars - len(header) - 1
+    body = "\n".join(lines[2:] if len(lines) >= 2 else lines[1:]).strip()
+    return f"{header}\n{body[:text_budget].rstrip()}".strip()
 
 
 def _format_image_answer(query: str, hits: list[RetrievalHit], *, language: str | None = None) -> str:

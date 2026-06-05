@@ -324,6 +324,7 @@ Context label schema:
    - Current full-context result: all 192 MiMo context labels have been merged and ablated; penalty `0.25` is the conservative non-default context reward candidate, while `1.00` remains diagnostic.
    - Current audit result: the first targeted multi-judge audit is complete on 60 high-impact rows, with MiMo/DeepSeek/Groq labels, 51 consensus-insufficient rows, 6 MiMo-harsh/high-disagreement rows, and no invalid JSON or judge errors in the secondary judge outputs.
    - Current HotpotQA result: the Kaggle-first sampled evaluation path has been merged, including cached BM25 retrieval, MiMo/Groq generation support, policy sharding, retry tooling for failed Groq rows, and a curated report in `docs/reports/phase1c3_hotpotqa_kaggle_eval.md`. The report treats clean MiMo sampled shards as usable HotpotQA evidence and keeps quota-contaminated Groq rows separate.
+   - Current model-bench result: the vLLM benchmark workflow has been merged as an operator/profiling workflow. It adds `rag-bench model-bench`, `MODEL_BENCH.md`, Vast AI RTX 5060 Ti setup/run scripts, vLLM serving metadata, speculative-decoding sweep scripts, and hardware aggregate summaries. These artifacts support local deployment planning; they are not part of the RLAIF selector benchmark claim.
    - Current reporting result: `feature/rlaif-retrieval-context-v0` has been merged into `internship`, and the internship report is now an English modular LaTeX report. `pdf/main.tex` is a short driver, `pdf/sections/en/` contains section files plus expanded appendices, and `pdf/main.pdf` covers Phase 1A through Phase 1D with added experimental setup, qualitative error analysis, threats to validity, planned HotpotQA/retriever-diversity evaluations, and an implementation map. The internal English/Vietnamese translation trace is no longer included in the submission PDF.
    - Next evaluator change: inspect the 6 MiMo-harsh rows and 51 consensus-insufficient rows as calibration examples, then expand logged query groups and retriever diversity before reassessing whether a pairwise ranker is justified.
    - Retrieval-strategy selection claims require broader logged actions with multiple retrievers such as `bm25`, `graph-bm25`, and `hybrid-rrf`. Current evidence mostly supports context-budget/action selection, not robust retrieval-strategy allocation. Web-search actions remain live stress tests only and must not be mixed with reproducible BEIR benchmark claims.
@@ -349,6 +350,10 @@ Context label schema:
    - `docs/reports/phase1c3_multi_model_generation.md`: curated Phase 1C.3 multi-model generation report.
    - `docs/reports/phase1c3_mimo_long_context.md`: curated MiMo long-context report.
    - `docs/reports/phase1c3_hotpotqa_kaggle_eval.md`: curated sampled HotpotQA Kaggle report.
+   - `MODEL_BENCH.md`: operator guide for vLLM/Vast AI model benchmark runs.
+   - `rag-bench model-bench`: CLI path for benchmarking a local or existing OpenAI-compatible vLLM endpoint.
+   - `scripts/setup_vllm_bench*.sh`, `scripts/bench_vast_5060ti*.sh`, and `scripts/vast_bench_lib.sh`: setup and run helpers for Vast AI RTX 5060 Ti CUDA 12.9/13.0 model benchmarking.
+   - `runs/model_bench/`: ignored raw output root for model-bench artifacts.
    - `rlaif_reward_summary.md` with `--context-labels`: non-default context reward candidate summary with clean/fallback context-label merge counts.
    - `reward_delta_summary.md`: reward-delta distribution comparing answer-only and context-label candidates.
    - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.

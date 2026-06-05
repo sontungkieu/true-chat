@@ -170,6 +170,149 @@ def test_dictionary_graph_retriever_preserves_dictionary_metadata() -> None:
     assert result.metadata["kind"] == "dictionary"
 
 
+def test_dictionary_graph_retriever_expands_typed_graph_paths() -> None:
+    docs = [
+        Document(
+            doc_id="base:A-0002",
+            title="AMONIT",
+            text="AMONIT, hỗn hợp của amoni nitrat.",
+            metadata={
+                "kind": "dictionary",
+                "headword": "AMONIT",
+                "dictionary_graph_edges": [
+                    {
+                        "source": "base:A-0002",
+                        "target": "concept:thuoc no",
+                        "type": "has_concept",
+                        "source_entry_id": "base:A-0002",
+                        "target_label": "thuốc nổ",
+                        "target_type": "concept",
+                        "evidence_text": "AMONIT là thuốc nổ phá",
+                        "confidence": 0.9,
+                    }
+                ],
+            },
+        ),
+        Document(
+            doc_id="base:N-0001",
+            title="NỔ",
+            text="NỔ, biến đổi rất nhanh sinh công.",
+            metadata={
+                "kind": "dictionary",
+                "headword": "NỔ",
+                "concepts": ["thuốc nổ"],
+                "dictionary_graph_edges": [
+                    {
+                        "source": "base:N-0001",
+                        "target": "concept:thuoc no",
+                        "type": "has_concept",
+                        "source_entry_id": "base:N-0001",
+                        "target_label": "thuốc nổ",
+                        "target_type": "concept",
+                        "evidence_text": "quá trình nổ của thuốc nổ",
+                        "confidence": 0.9,
+                    }
+                ],
+            },
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "AMONIT"), top_k=2)
+
+    assert result.hits[0].doc_id == "base:A-0002"
+    graph_hit = next(hit for hit in result.hits if hit.doc_id == "base:N-0001")
+    assert graph_hit.metadata["dictionary_match_mode"] == "graph"
+    assert graph_hit.metadata["dictionary_relation"] == "has_concept"
+    assert graph_hit.metadata["dictionary_evidence_text"] == "AMONIT là thuốc nổ phá"
+    assert [item["label"] for item in graph_hit.metadata["dictionary_graph_path"]] == [
+        "AMONIT",
+        "has_concept",
+        "thuốc nổ",
+        "NỔ",
+    ]
+    assert result.metadata["typed_graph_candidate_count"] >= 1
+
+
+def test_dictionary_graph_retriever_uses_typed_relation_for_concept_query() -> None:
+    docs = [
+        Document(
+            doc_id="graph-hit",
+            title="NỔ",
+            text="NỔ, biến đổi rất nhanh sinh công.",
+            metadata={
+                "kind": "dictionary",
+                "headword": "NỔ",
+                "concepts": ["thuốc nổ"],
+                "dictionary_graph_edges": [
+                    {
+                        "source": "graph-hit",
+                        "target": "concept:thuoc no",
+                        "type": "has_concept",
+                        "source_entry_id": "graph-hit",
+                        "target_label": "thuốc nổ",
+                        "target_type": "concept",
+                        "confidence": 0.95,
+                    }
+                ],
+            },
+        ),
+        Document(
+            doc_id="text-only",
+            title="MỤC YẾU",
+            text="MỤC YẾU, chỉ nhắc thuốc nổ như một ví dụ phụ.",
+            metadata={"kind": "dictionary", "headword": "MỤC YẾU"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "thuốc nổ"), top_k=2)
+
+    assert result.hits[0].doc_id == "graph-hit"
+    assert result.hits[0].metadata["dictionary_relation"] == "has_concept"
+    assert result.hits[0].metadata["dictionary_graph_path_text"].startswith("thuốc nổ")
+
+
+def test_dictionary_graph_retriever_keeps_related_to_below_exact_match() -> None:
+    docs = [
+        Document(
+            doc_id="alpha",
+            title="ALPHA",
+            text="ALPHA, mục liên quan đến beta.",
+            metadata={
+                "kind": "dictionary",
+                "headword": "ALPHA",
+                "dictionary_graph_edges": [
+                    {
+                        "source": "alpha",
+                        "target": "beta",
+                        "type": "related_to",
+                        "source_entry_id": "alpha",
+                        "target_label": "BETA",
+                        "target_type": "entry",
+                        "confidence": 1.0,
+                    }
+                ],
+            },
+        ),
+        Document(
+            doc_id="beta",
+            title="BETA",
+            text="BETA, mục chính xác.",
+            metadata={"kind": "dictionary", "headword": "BETA"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "BETA"), top_k=2)
+
+    assert result.hits[0].doc_id == "beta"
+    assert result.hits[0].metadata["dictionary_match_mode"] == "strict"
+
+
 def test_dictionary_graph_retriever_matches_accent_folded_headword() -> None:
     docs = [
         Document(
@@ -274,6 +417,97 @@ def test_dictionary_graph_retriever_prefers_exact_phrase_mentions_over_generic_h
     assert two_places.hits[0].doc_id == "base:L-0001"
     assert "PHÁO" not in [hit.title for hit in xuan_canh.hits[:1]]
     assert two_places.hits[0].metadata["query_highlights"] == ["pháo đài Láng", "pháo đài Xuân Tảo"]
+
+
+def test_dictionary_graph_retriever_keeps_stroked_d_distinct_from_plain_d() -> None:
+    docs = [
+        Document(
+            doc_id="fort",
+            title="PHÁO ĐÀI",
+            text="PHÁO ĐÀI, công sự kiên cố dùng trong phòng thủ.",
+            metadata={"kind": "dictionary", "headword": "PHÁO ĐÀI"},
+        ),
+        Document(
+            doc_id="long-cannon",
+            title="PHÁO DÀI",
+            text="PHÁO DÀI, cách nói về nòng pháo dài.",
+            metadata={"kind": "dictionary", "headword": "PHÁO DÀI"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    fort = retriever.search(Query("q1", "pháo đài"), top_k=2)
+    long_cannon = retriever.search(Query("q2", "pháo dài"), top_k=2)
+
+    assert fort.hits[0].doc_id == "fort"
+    assert fort.hits[0].metadata["query_highlights"] == ["pháo đài"]
+    assert fort.hits[1].doc_id != "long-cannon" or "dictionary_direct_score" not in fort.hits[1].metadata
+    assert long_cannon.hits[0].doc_id == "long-cannon"
+    assert long_cannon.hits[0].metadata["query_highlights"] == ["pháo dài"]
+    assert long_cannon.hits[1].doc_id != "fort" or "dictionary_direct_score" not in long_cannon.hits[1].metadata
+
+
+def test_dictionary_graph_retriever_keeps_tone_distinct_for_vietnamese_headwords() -> None:
+    docs = [
+        Document(
+            doc_id="japan",
+            title="NHẬT",
+            text="NHẬT, cách gọi tắt Nhật Bản trong một số ngữ cảnh.",
+            metadata={"kind": "dictionary", "headword": "NHẬT"},
+        ),
+        Document(
+            doc_id="first",
+            title="NHẤT",
+            text="NHẤT, thứ nhất hoặc mức cao nhất trong một thang phân loại.",
+            metadata={"kind": "dictionary", "headword": "NHẤT"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    japan = retriever.search(Query("q1", "nhật"), top_k=2)
+    first = retriever.search(Query("q2", "nhất"), top_k=2)
+
+    assert japan.hits[0].doc_id == "japan"
+    assert japan.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert japan.hits[0].metadata["query_highlights"] == ["nhật"]
+    assert japan.hits[1].doc_id != "first" or "dictionary_direct_score" not in japan.hits[1].metadata
+    assert first.hits[0].doc_id == "first"
+    assert first.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert first.hits[0].metadata["query_highlights"] == ["nhất"]
+    assert first.hits[1].doc_id != "japan" or "dictionary_direct_score" not in first.hits[1].metadata
+
+
+def test_dictionary_graph_retriever_uses_strict_tone_for_partial_vietnamese_headwords() -> None:
+    docs = [
+        Document(
+            doc_id="japan",
+            title="NHẬT BẢN",
+            text="NHẬT BẢN, quốc gia ở Đông Á.",
+            metadata={"kind": "dictionary", "headword": "NHẬT BẢN"},
+        ),
+        Document(
+            doc_id="first",
+            title="“BA NHẤT\"",
+            text="BA NHẤT, phong trào thi đua trong huấn luyện.",
+            metadata={"kind": "dictionary", "headword": "“BA NHẤT\""},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    first = retriever.search(Query("q1", "nhất"), top_k=2)
+    japan = retriever.search(Query("q2", "nhật"), top_k=2)
+
+    assert first.hits[0].doc_id == "first"
+    assert first.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert first.hits[0].metadata["query_highlights"] == ["nhất"]
+    assert first.hits[1].doc_id != "japan" or "dictionary_direct_score" not in first.hits[1].metadata
+    assert japan.hits[0].doc_id == "japan"
+    assert japan.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert japan.hits[0].metadata["query_highlights"] == ["nhật"]
+    assert japan.hits[1].doc_id != "first" or "dictionary_direct_score" not in japan.hits[1].metadata
 
 
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:

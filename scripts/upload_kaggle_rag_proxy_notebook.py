@@ -18,10 +18,14 @@ from typing import Any
 DEFAULT_ACCOUNT = "codemaivanngu"
 DEFAULT_CREDENTIALS_PATH = Path(".secrets/all-kaggle.json")
 DEFAULT_GROQ_KEYS_PATH = Path(".secrets/groq_key.env")
+DEFAULT_MIMO_ENV_PATH = Path(".secrets/.env")
 DEFAULT_UPLOAD_REGISTRY_PATH = Path(".secrets/kaggle_notebooks.jsonl")
 DEFAULT_REPO_URL = "https://github.com/sontungkieu/true-chat.git"
 DEFAULT_HOSTNAME = "https://chatpb.ccat.io.vn"
 DEFAULT_PROXY_STARTUP_TIMEOUT_S = 900
+DEFAULT_MIMO_MODELS = "mimo-v2.5-pro,mimo-v2.5"
+DEFAULT_DICTIONARY_ARTIFACT = Path("runs/pb_dictionary_base_supp2021_prod_graph")
+DEFAULT_AVAILABLE_RETRIEVERS = "bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits"
 TOKEN_ENV_NAMES = (
     "CLOUDFLARE_TUNNEL_TOKEN",
     "CF_TUNNEL_TOKEN",
@@ -75,9 +79,15 @@ def main(argv: list[str] | None = None) -> int:
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     slug = args.slug or slugify(f"true-chat-rag-proxy-{args.account}-{timestamp}")
-    title = args.title or f"True Chat RAG Proxy {args.account} {timestamp}"
+    title = args.title or (slug if args.slug else f"True Chat RAG Proxy {args.account} {timestamp}")
     kernel_id = f"{credential.username}/{slug}"
     groq_key_env_b64 = read_groq_key_env_b64(repo_root, args.groq_keys_file) if args.embed_groq_keys else None
+    mimo_env_b64 = read_mimo_env_b64(repo_root, args.mimo_env_file) if args.embed_mimo_env else None
+    enable_mimo = bool(args.enable_mimo or mimo_env_b64)
+    available_retrievers = args.available_retrievers
+    if available_retrievers is None and args.dictionary_dataset_source:
+        available_retrievers = DEFAULT_AVAILABLE_RETRIEVERS
+    dataset_sources = dedupe_nonempty([*args.dataset_source, args.dictionary_dataset_source])
 
     if args.keep_staging_dir:
         staging_dir = Path(args.keep_staging_dir).expanduser().resolve()
@@ -101,11 +111,19 @@ def main(argv: list[str] | None = None) -> int:
             hostname=args.hostname,
             proxy_startup_timeout_s=args.proxy_startup_timeout_s,
             groq_key_env_b64=groq_key_env_b64,
+            mimo_env_b64=mimo_env_b64,
+            dataset_sources=dataset_sources,
+            dictionary_dataset_source=args.dictionary_dataset_source,
+            dictionary_artifact=args.dictionary_artifact,
+            dictionary_required=args.dictionary_required,
+            available_retrievers=available_retrievers,
+            enable_mimo=enable_mimo,
+            mimo_models=args.mimo_models,
         )
         if args.no_push:
             print(f"Rendered Kaggle notebook staging at: {staging_dir}")
             print(f"Kernel id would be: {kernel_id}")
-            print("Cloudflare token was injected into the staged notebook but was not printed.")
+            print("Cloudflare token and embedded provider secrets were injected into the staged notebook but were not printed.")
             return 0
 
         with tempfile.TemporaryDirectory(prefix="kaggle-config-") as kaggle_config_dir:
@@ -125,6 +143,14 @@ def main(argv: list[str] | None = None) -> int:
                 "hostname": args.hostname,
                 "proxy_startup_timeout_s": args.proxy_startup_timeout_s,
                 "embedded_groq_keys": bool(groq_key_env_b64),
+                "embedded_mimo_env": bool(mimo_env_b64),
+                "dataset_sources": dataset_sources,
+                "dictionary_dataset_source": args.dictionary_dataset_source,
+                "dictionary_artifact": args.dictionary_artifact,
+                "dictionary_required": bool(args.dictionary_required),
+                "available_retrievers": available_retrievers,
+                "enable_mimo": enable_mimo,
+                "mimo_models": args.mimo_models if enable_mimo else "",
             },
         )
         print(f"Uploaded Kaggle notebook: {kernel_id}")
@@ -160,11 +186,45 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cloudflare-token", default=None, help="Cloudflare tunnel token. Prefer env/file to avoid shell history.")
     parser.add_argument("--cloudflare-token-file", default=None, help="File containing the Cloudflare tunnel token.")
     parser.add_argument(
+        "--dataset-source",
+        action="append",
+        default=[],
+        help="Kaggle dataset source slug to attach to the notebook metadata, e.g. owner/dataset.",
+    )
+    parser.add_argument(
+        "--dictionary-dataset-source",
+        default=None,
+        help="Kaggle dataset slug containing the dictionary runtime artifact. Also added to dataset_sources.",
+    )
+    parser.add_argument(
+        "--dictionary-artifact",
+        default=str(DEFAULT_DICTIONARY_ARTIFACT),
+        help="Repo-relative path where the notebook copies the dictionary artifact before serving.",
+    )
+    parser.add_argument(
+        "--dictionary-required",
+        action="store_true",
+        help="Pass --dictionary-required so Kaggle startup fails if the dictionary artifact is missing.",
+    )
+    parser.add_argument(
+        "--available-retrievers",
+        default=None,
+        help=f"Comma-separated retriever ids exposed by the UI. For full dictionary deploys use: {DEFAULT_AVAILABLE_RETRIEVERS}",
+    )
+    parser.add_argument(
         "--embed-groq-keys",
         action="store_true",
         help="Embed .secrets/groq_key.env into the generated private notebook instead of using Kaggle Secrets.",
     )
     parser.add_argument("--groq-keys-file", default=str(DEFAULT_GROQ_KEYS_PATH), help="Groq key env file embedded when --embed-groq-keys is used.")
+    parser.add_argument("--enable-mimo", action="store_true", help="Pass --enable-mimo to expose MiMo models in the Kaggle proxy.")
+    parser.add_argument("--mimo-models", default=DEFAULT_MIMO_MODELS, help="Comma-separated MiMo model ids passed to rag-bench serve.")
+    parser.add_argument(
+        "--embed-mimo-env",
+        action="store_true",
+        help="Embed MIMO_API_KEY and optional MIMO_BASE_URL from --mimo-env-file into the generated private notebook.",
+    )
+    parser.add_argument("--mimo-env-file", default=str(DEFAULT_MIMO_ENV_PATH), help="Env file read when --embed-mimo-env is used.")
     parser.add_argument(
         "--env-file",
         default=".secrets/.env",
@@ -269,7 +329,10 @@ def parse_env_file(path: Path) -> dict[str, str]:
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
         key, value = stripped.split("=", 1)
-        values[key.strip()] = value.strip().strip("\"'")
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export ") :].strip()
+        values[key] = value.strip().strip("\"'")
     return values
 
 
@@ -288,6 +351,35 @@ def read_groq_key_env_b64(repo_root: Path, value: str | Path) -> str:
     if not text:
         raise SystemExit(f"Groq key env file is empty: {path}")
     return base64.b64encode((text + "\n").encode("utf-8")).decode("ascii")
+
+
+def read_mimo_env_b64(repo_root: Path, value: str | Path) -> str:
+    path = resolve_repo_path(repo_root, value)
+    if not path.exists():
+        raise SystemExit(f"MiMo env file not found: {path}")
+    values = parse_env_file(path)
+    mimo_key = values.get("MIMO_API_KEY", "").strip()
+    if not mimo_key:
+        raise SystemExit(f"MIMO_API_KEY was not found in {path}")
+    lines = [f"MIMO_API_KEY={mimo_key}"]
+    mimo_base_url = values.get("MIMO_BASE_URL", "").strip()
+    if mimo_base_url:
+        lines.append(f"MIMO_BASE_URL={mimo_base_url}")
+    return base64.b64encode(("\n".join(lines) + "\n").encode("utf-8")).decode("ascii")
+
+
+def dedupe_nonempty(values: list[str | None]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def local_head_commit(repo_root: Path) -> str:
@@ -343,8 +435,12 @@ def list_upload_registry(path: Path) -> None:
         created = str(record.get("created_at", "-"))
         kernel_id = str(record.get("kernel_id", "-"))
         commit = str(record.get("expected_commit", "-"))[:12]
-        embedded = "embedded-keys" if record.get("embedded_groq_keys") else "kaggle-secrets"
-        print(f"{status:7} {created} {kernel_id} commit={commit} secrets={embedded}")
+        secret_modes = []
+        secret_modes.append("embedded-groq" if record.get("embedded_groq_keys") else "kaggle-groq")
+        if record.get("enable_mimo"):
+            secret_modes.append("embedded-mimo" if record.get("embedded_mimo_env") else "kaggle-mimo")
+        datasets = ",".join(str(item) for item in record.get("dataset_sources", []) if item) or "-"
+        print(f"{status:7} {created} {kernel_id} commit={commit} secrets={'+'.join(secret_modes)} datasets={datasets}")
 
 
 def active_registry_kernel_ids(path: Path) -> list[str]:
@@ -384,8 +480,17 @@ def write_staging_files(
     hostname: str,
     proxy_startup_timeout_s: int,
     groq_key_env_b64: str | None,
+    mimo_env_b64: str | None = None,
+    dataset_sources: list[str] | None = None,
+    dictionary_dataset_source: str | None = None,
+    dictionary_artifact: str | None = None,
+    dictionary_required: bool = False,
+    available_retrievers: str | None = None,
+    enable_mimo: bool = False,
+    mimo_models: str = DEFAULT_MIMO_MODELS,
 ) -> None:
     notebook_name = "true_chat_rag_proxy_kaggle.ipynb"
+    dataset_sources = dedupe_nonempty([*(dataset_sources or []), dictionary_dataset_source])
     (staging_dir / notebook_name).write_text(
         json.dumps(
             build_notebook(
@@ -396,6 +501,13 @@ def write_staging_files(
                 hostname=hostname,
                 proxy_startup_timeout_s=proxy_startup_timeout_s,
                 groq_key_env_b64=groq_key_env_b64,
+                mimo_env_b64=mimo_env_b64,
+                dictionary_dataset_source=dictionary_dataset_source,
+                dictionary_artifact=dictionary_artifact,
+                dictionary_required=dictionary_required,
+                available_retrievers=available_retrievers,
+                enable_mimo=enable_mimo,
+                mimo_models=mimo_models,
             ),
             ensure_ascii=False,
             indent=2,
@@ -413,7 +525,7 @@ def write_staging_files(
         "enable_gpu": False,
         "enable_tpu": False,
         "enable_internet": True,
-        "dataset_sources": [],
+        "dataset_sources": dataset_sources,
         "competition_sources": [],
         "kernel_sources": [],
     }
@@ -432,6 +544,13 @@ def build_notebook(
     hostname: str,
     proxy_startup_timeout_s: int = DEFAULT_PROXY_STARTUP_TIMEOUT_S,
     groq_key_env_b64: str | None = None,
+    mimo_env_b64: str | None = None,
+    dictionary_dataset_source: str | None = None,
+    dictionary_artifact: str | None = None,
+    dictionary_required: bool = False,
+    available_retrievers: str | None = None,
+    enable_mimo: bool = False,
+    mimo_models: str = DEFAULT_MIMO_MODELS,
 ) -> dict[str, Any]:
     cells = [
         markdown_cell(
@@ -474,6 +593,51 @@ def build_notebook(
             cell_id="sync-deps",
         ),
     ]
+    if dictionary_dataset_source and dictionary_artifact:
+        cells.append(
+            code_cell(
+                "import shutil\n"
+                f"DICTIONARY_DATASET_SOURCE = {dictionary_dataset_source!r}\n"
+                f"DICTIONARY_ARTIFACT_REL = {dictionary_artifact!r}\n"
+                "input_root = Path('/kaggle/input')\n"
+                "dataset_slug = DICTIONARY_DATASET_SOURCE.split('/')[-1]\n"
+                "target_artifact = REPO_DIR / DICTIONARY_ARTIFACT_REL\n"
+                "candidate_roots = []\n"
+                "preferred_root = input_root / dataset_slug\n"
+                "if preferred_root.exists():\n"
+                "    candidate_roots.append(preferred_root)\n"
+                "if input_root.exists():\n"
+                "    for root in sorted(input_root.iterdir()):\n"
+                "        if root.is_dir() and root not in candidate_roots:\n"
+                "            candidate_roots.append(root)\n"
+                "source_artifact = None\n"
+                "required_files = ('entries.jsonl', 'manifest.json')\n"
+                "for root in candidate_roots:\n"
+                "    exact = root / DICTIONARY_ARTIFACT_REL\n"
+                "    if exact.exists() and all((exact / name).exists() for name in required_files):\n"
+                "        source_artifact = exact\n"
+                "        break\n"
+                "    if all((root / name).exists() for name in required_files):\n"
+                "        source_artifact = root\n"
+                "        break\n"
+                "    for manifest_path in root.rglob('manifest.json'):\n"
+                "        parent = manifest_path.parent\n"
+                "        if all((parent / name).exists() for name in required_files):\n"
+                "            source_artifact = parent\n"
+                "            break\n"
+                "    if source_artifact:\n"
+                "        break\n"
+                "if source_artifact is None:\n"
+                "    available = [str(path) for path in candidate_roots]\n"
+                "    raise RuntimeError(f'Dictionary artifact not found in Kaggle inputs for {DICTIONARY_DATASET_SOURCE}; roots={available}')\n"
+                "if target_artifact.exists():\n"
+                "    shutil.rmtree(target_artifact)\n"
+                "target_artifact.parent.mkdir(parents=True, exist_ok=True)\n"
+                "shutil.copytree(source_artifact, target_artifact)\n"
+                "print('Copied dictionary artifact:', source_artifact, '->', target_artifact)\n",
+                cell_id="copy-dictionary-artifact",
+            )
+        )
     if groq_key_env_b64:
         cells.append(
             code_cell(
@@ -512,6 +676,41 @@ def build_notebook(
                 cell_id="write-kaggle-groq-keys",
             )
         )
+    if enable_mimo and mimo_env_b64:
+        cells.append(
+            code_cell(
+                "import base64\n"
+                "secrets_dir = REPO_DIR / '.secrets'\n"
+                "secrets_dir.mkdir(exist_ok=True)\n"
+                f"MIMO_ENV_B64 = {mimo_env_b64!r}\n"
+                "(secrets_dir / '.env').write_text(base64.b64decode(MIMO_ENV_B64).decode('utf-8'))\n"
+                "print('Wrote .secrets/.env for MiMo from embedded notebook payload')\n",
+                cell_id="write-embedded-mimo-env",
+            )
+        )
+    elif enable_mimo:
+        cells.append(
+            code_cell(
+                "secrets_dir = REPO_DIR / '.secrets'\n"
+                "secrets_dir.mkdir(exist_ok=True)\n"
+                "try:\n"
+                "    from kaggle_secrets import UserSecretsClient\n"
+                "    kaggle_secrets = UserSecretsClient()\n"
+                "    mimo_key = kaggle_secrets.get_secret('MIMO_API_KEY')\n"
+                "    lines = ['MIMO_API_KEY=' + mimo_key]\n"
+                "    try:\n"
+                "        mimo_base_url = kaggle_secrets.get_secret('MIMO_BASE_URL')\n"
+                "        if mimo_base_url:\n"
+                "            lines.append('MIMO_BASE_URL=' + mimo_base_url)\n"
+                "    except Exception:\n"
+                "        pass\n"
+                "    (secrets_dir / '.env').write_text('\\n'.join(lines) + '\\n')\n"
+                "    print('Wrote .secrets/.env for MiMo from Kaggle secrets')\n"
+                "except Exception as exc:\n"
+                "    raise RuntimeError('Add Kaggle secret MIMO_API_KEY, and optionally MIMO_BASE_URL, or use --embed-mimo-env for a private throwaway notebook.') from exc\n",
+                cell_id="write-kaggle-mimo-env",
+            )
+        )
     cells.extend(
         [
             code_cell(
@@ -540,10 +739,29 @@ def build_notebook(
                 "    'uv', 'run', '--frozen', '--no-sync', 'rag-bench', 'serve',\n"
                 "    '--host', '0.0.0.0', '--port', '8000',\n"
                 "    '--bench', 'scifact', '--retriever', 'bm25', '--top-k', '3', '--image-top-k', '5',\n"
-                "    '--max-context-chars', '2500', '--max-completion-tokens', '128',\n"
+                "    '--model', 'qwen/qwen3-32b', '--max-context-chars', '2500', '--max-completion-tokens', '4096',\n"
                 "    '--key-tpm', '6000', '--key-rpm', '30', '--rate-limit-scope', 'per-key',\n"
                 "]\n"
-                "proxy_env = {**os.environ, 'PYTHONUNBUFFERED': '1'}\n"
+                f"AVAILABLE_RETRIEVERS = {available_retrievers!r}\n"
+                f"DICTIONARY_ARTIFACT = {dictionary_artifact!r}\n"
+                f"DICTIONARY_REQUIRED = {dictionary_required!r}\n"
+                f"ENABLE_MIMO = {enable_mimo!r}\n"
+                f"MIMO_MODELS = {mimo_models!r}\n"
+                "if AVAILABLE_RETRIEVERS:\n"
+                "    proxy_cmd.extend(['--available-retrievers', AVAILABLE_RETRIEVERS])\n"
+                "if DICTIONARY_ARTIFACT:\n"
+                "    proxy_cmd.extend(['--dictionary-artifact', DICTIONARY_ARTIFACT])\n"
+                "if DICTIONARY_REQUIRED:\n"
+                "    proxy_cmd.append('--dictionary-required')\n"
+                "if ENABLE_MIMO:\n"
+                "    proxy_cmd.append('--enable-mimo')\n"
+                "    proxy_cmd.extend(['--mimo-models', MIMO_MODELS])\n"
+                "proxy_env = {\n"
+                "    **os.environ,\n"
+                "    'PYTHONUNBUFFERED': '1',\n"
+                "    'TRUE_CHAT_EXPECTED_COMMIT': EXPECTED_COMMIT,\n"
+                "    'TRUE_CHAT_ACTUAL_COMMIT': actual_commit,\n"
+                "}\n"
                 "proxy_log = open(proxy_log_path, 'w', buffering=1)\n"
                 "proxy = subprocess.Popen(proxy_cmd, cwd=REPO_DIR, env=proxy_env, stdout=proxy_log, stderr=subprocess.STDOUT, text=True)\n"
                 "deadline = time.time() + PROXY_STARTUP_TIMEOUT_S\n"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import uuid
@@ -34,11 +35,14 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                 active_service.available_generation_models(),
                 active_service.available_retriever_ids(),
                 active_service.retriever.name,
+                _runtime_commit(),
             )
         )
 
     @app.get("/health")
     def health() -> dict[str, Any]:
+        expected_commit = _expected_commit()
+        actual_commit = _actual_commit()
         return {
             "status": "ok",
             "model": service.config.model_id,
@@ -54,6 +58,15 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                 "privilege_key_configured": bool(service.config.web_search_privilege_key),
             },
             "dictionary": getattr(service, "dictionary_status", {}),
+            "version": {
+                "expected_commit": expected_commit,
+                "actual_commit": actual_commit,
+                "commit_matches_expected": (
+                    actual_commit == expected_commit
+                    if actual_commit is not None and expected_commit is not None
+                    else None
+                ),
+            },
         }
 
     @app.get("/v1/models", dependencies=[Depends(_require_bearer)])
@@ -104,6 +117,18 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                     payload.get("memory", payload.get("use_memory", payload.get("chat_memory"))),
                     "memory",
                 ),
+                score_min=_optional_float(
+                    payload.get("score_min", payload.get("min_score", payload.get("retrieval_min_score"))),
+                    "score_min",
+                ),
+                score_max=_optional_float(
+                    payload.get("score_max", payload.get("max_score", payload.get("retrieval_max_score"))),
+                    "score_max",
+                ),
+                sort_by_score=_optional_bool(
+                    payload.get("sort_by_score", payload.get("retrieval_sort_by_score")),
+                    "sort_by_score",
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -127,11 +152,35 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
             return active_service.lookup_dictionary(
                 term,
                 top_k=_optional_int(payload.get("top_k"), "top_k"),
+                score_min=_optional_float(
+                    payload.get("score_min", payload.get("min_score", payload.get("retrieval_min_score"))),
+                    "score_min",
+                ),
+                score_max=_optional_float(
+                    payload.get("score_max", payload.get("max_score", payload.get("retrieval_max_score"))),
+                    "score_max",
+                ),
+                sort_by_score=_optional_bool(
+                    payload.get("sort_by_score", payload.get("retrieval_sort_by_score")),
+                    "sort_by_score",
+                ),
             )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     return app
+
+
+def _expected_commit() -> str | None:
+    return os.getenv("TRUE_CHAT_EXPECTED_COMMIT") or None
+
+
+def _actual_commit() -> str | None:
+    return os.getenv("TRUE_CHAT_ACTUAL_COMMIT") or None
+
+
+def _runtime_commit() -> str | None:
+    return _actual_commit() or _expected_commit()
 
 
 def _validate_messages(value: Any) -> list[dict[str, Any]]:
@@ -166,9 +215,12 @@ def _optional_float(value: Any, name: str) -> float | None:
     if isinstance(value, bool):
         raise ValueError(f"{name} must be a number")
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be a number") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{name} must be a finite number")
+    return parsed
 
 
 def _optional_bool(value: Any, name: str) -> bool | None:

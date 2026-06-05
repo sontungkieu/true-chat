@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from zipfile import ZipFile
 
-from rag_bench.dictionary import load_dictionary_artifact, load_dictionary_entries
+from rag_bench.dictionary import load_dictionary_artifact, load_dictionary_documents, load_dictionary_entries
 
 
 def test_docx_dictionary_parser_preserves_run_formatting_and_casing(tmp_path: Path) -> None:
@@ -132,6 +132,106 @@ def test_dictionary_artifact_loader_attaches_graph_aliases_and_concepts(tmp_path
     assert entries[0].aliases == ["PB"]
     assert entries[0].concepts == ["lực lượng tác chiến"]
     assert entries[0].to_document().metadata["aliases"] == ["PB"]
+
+
+def test_dictionary_loader_keeps_typed_graph_edges(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "rich_entries.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": "base:A-0002",
+                        "letter": "A",
+                        "headword": "AMONIT",
+                        "plain_text": "AMONIT, thuốc nổ phá.",
+                        "rich_blocks": [{"type": "paragraph"}],
+                        "schema_version": 2,
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "id": "base:N-0001",
+                        "letter": "N",
+                        "headword": "NỔ",
+                        "plain_text": "NỔ, biến đổi nhanh sinh công.",
+                        "rich_blocks": [{"type": "paragraph"}],
+                        "schema_version": 2,
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (artifact / "nodes.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"id": "base:A-0002", "type": "entry", "label": "AMONIT"}, ensure_ascii=False),
+                json.dumps({"id": "base:N-0001", "type": "entry", "label": "NỔ"}, ensure_ascii=False),
+                json.dumps({"id": "concept:thuoc no", "type": "concept", "label": "thuốc nổ"}, ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (artifact / "edges.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "source": "base:A-0002",
+                        "target": "concept:thuoc no",
+                        "type": "used_for",
+                        "source_entry_id": "base:A-0002",
+                        "evidence_text": "thuốc nổ phá",
+                        "confidence": 0.8,
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "source": "base:N-0001",
+                        "target": "concept:thuoc no",
+                        "type": "has_concept",
+                        "source_entry_id": "base:N-0001",
+                        "evidence_text": "quá trình nổ",
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = load_dictionary_documents(artifact_dir=artifact, source_dir=None)
+
+    assert result.status["graph_node_count"] == 3
+    assert result.status["graph_edge_count"] == 2
+    assert result.graph_nodes_by_id["concept:thuoc no"]["label"] == "thuốc nổ"
+    assert result.out_edges_by_source["base:N-0001"][0]["confidence"] == 0.5
+    amonit = next(doc for doc in result.documents if doc.doc_id == "base:A-0002")
+    assert amonit.metadata["dictionary_graph_edges"][0]["type"] == "used_for"
+
+
+def test_dictionary_loader_tolerates_missing_graph_files(tmp_path: Path) -> None:
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    (artifact / "entries.jsonl").write_text(
+        json.dumps({"id": "A-0001", "letter": "A", "headword": "AMONIT", "text": "AMONIT, thuốc nổ."}, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = load_dictionary_documents(artifact_dir=artifact, source_dir=None)
+
+    assert result.documents[0].doc_id == "A-0001"
+    assert result.graph_edges == []
+    assert "dictionary_graph_edges" not in result.documents[0].metadata
 
 
 def test_dictionary_parser_can_namespace_supplement_source_ids(tmp_path: Path) -> None:

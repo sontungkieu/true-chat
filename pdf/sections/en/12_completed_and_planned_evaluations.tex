@@ -14,6 +14,12 @@ The clean MiMo sampled runs provide the usable HotpotQA evidence in this report:
 
 Exact match is 0.000 across the main sampled matrix, so token-F1 and judge metrics are the relevant answer-quality signals for this stage. The Groq Qwen3-32B HotpotQA run is kept as a diagnostic because provider rate limits caused 417/800 generation errors; it must not be mixed with the clean MiMo summary.
 
+\subsection{vLLM / Vast AI Model-Bench Workflow}
+
+The merged model-bench workflow is an operator/profiling path, not a selector-quality benchmark. It is included because deployment planning for BudgetRAG and future local Qwen experiments depends on knowing whether candidate models can be served reliably on rented GPUs. The workflow benchmarks local or existing OpenAI-compatible vLLM endpoints, records latency, time-to-first-token, tokens per second, hardware samples, and serving configuration fields such as quantization, KV-cache dtype, attention backend, speculative decoding settings, eager/CUDA-graph mode, batch limits, cache limits, and CPU offload.
+
+The current Vast AI scripts target RTX 5060 Ti 16GB hosts with CUDA 13.0 and CUDA 12.9 profiles. Their outputs are written under ignored \code{runs/model\_bench/} directories. These measurements should be used for deployment triage and cost planning; they are not mixed with the RLAIF selector, HotpotQA, or BEIR benchmark claims.
+
 \subsection{Retriever Diversity}
 
 Current evidence mostly supports context-budget/action selection. To claim retrieval-context allocation, logged actions must include multiple retrieval strategies:

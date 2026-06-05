@@ -17,9 +17,10 @@ Pairwise audit & Direct pairwise judge audit. & pairwise-label JSONL. \\
 Context ablation runner & Full postprocess pipeline for context labels. & validation, reward deltas, selector sweeps. \\
 Multi-judge aggregator & Aggregate MiMo/DeepSeek/Groq audit labels. & multi-judge report and summary JSON. \\
 KV estimator & Analytical Qwen KV-cache estimates. & KV estimate report. \\
+Model-bench workflow & Benchmark local or existing vLLM endpoints and record serving and hardware metadata. & model-bench manifests, metrics, and summaries. \\
 \bottomrule
 \end{longtable}
 
 The corresponding source files are under \code{src/rag\_bench/} for modules and \code{scripts/} for standalone analysis scripts.
 
-The code-level test suite covers schema validation, builders, reward/preference logic, labeler hardening, split behavior, selector policies, analysis scripts, and secret handling. Current verification for this report branch is 214 passing tests.
+The code-level test suite covers schema validation, builders, reward/preference logic, labeler hardening, split behavior, selector policies, analysis scripts, model-bench helpers, and secret handling. The merged internship branch currently verifies with 266 passing tests.

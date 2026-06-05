@@ -9,6 +9,7 @@ from pathlib import Path
 from rag_bench.benchmarks import BENCHMARKS
 from rag_bench.chat_service import (
     ChatProxyConfig,
+    DEFAULT_CHAT_MODEL,
     DEFAULT_CHAT_RETRIEVERS,
     DEFAULT_MIMO_BASE_URL,
     DEFAULT_MIMO_MODELS,
@@ -17,6 +18,7 @@ from rag_bench.chat_service import (
 from rag_bench.context_policies import CONTEXT_POLICY_NAMES
 from rag_bench.adaptive_budget import ADAPTIVE_PROFILES
 from rag_bench.kv_estimator import KV_MODEL_PROFILES
+from rag_bench.model_bench import DEFAULT_MODEL_BENCH_OUTPUT_DIR, MODEL_BENCH_PRESETS, ModelBenchConfig, run_model_benchmark
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.rlaif_build import RlaifBuildConfig, build_rlaif_dataset
 from rag_bench.rlaif_label_answers import (
@@ -52,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "serve":
         return _serve(args)
+    if args.command == "model-bench":
+        return _model_bench(args)
     if args.command == "rlaif-build":
         return _rlaif_build(args)
     if args.command == "rlaif-reward":
@@ -184,6 +188,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use per-key buckets or one shared bucket for org-level limits.",
     )
 
+    model_bench_parser = subparsers.add_parser("model-bench", help="Benchmark one model through a local or existing vLLM endpoint.")
+    model_bench_parser.add_argument("--model", default=None, help="Hugging Face model id or local model path for vLLM.")
+    model_bench_parser.add_argument("--endpoint", default=None, help="Existing OpenAI-compatible base URL, e.g. http://127.0.0.1:8000/v1.")
+    model_bench_parser.add_argument("--served-model-name", default=None, help="Model id sent to /chat/completions.")
+    model_bench_parser.add_argument("--preset", choices=MODEL_BENCH_PRESETS, default="standard")
+    model_bench_parser.add_argument("--concurrency", default=None, help="Comma-separated concurrency values, e.g. 1,4,16.")
+    model_bench_parser.add_argument("--requests-per-scenario", type=int, default=None)
+    model_bench_parser.add_argument("--warmup-requests", type=int, default=1)
+    model_bench_parser.add_argument("--output-dir", type=Path, default=DEFAULT_MODEL_BENCH_OUTPUT_DIR)
+    model_bench_parser.add_argument("--host", default="127.0.0.1", help="Host used when starting vLLM locally.")
+    model_bench_parser.add_argument("--port", type=int, default=8000, help="Port used when starting vLLM locally.")
+    model_bench_parser.add_argument(
+        "--tensor-parallel-size",
+        default="auto",
+        help="Tensor parallel size passed to vLLM, or 'auto' to use visible GPU count.",
+    )
+    model_bench_parser.add_argument("--max-model-len", type=int, default=None, help="Optional vLLM --max-model-len value.")
+    model_bench_parser.add_argument("--max-output-tokens", type=int, default=None, help="Override every scenario's max output tokens.")
+    model_bench_parser.add_argument("--temperature", type=float, default=0.0)
+    model_bench_parser.add_argument("--startup-timeout-s", type=int, default=900)
+    model_bench_parser.add_argument("--sample-interval-s", type=float, default=1.0)
+    model_bench_parser.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True)
+    model_bench_parser.add_argument(
+        "--vllm-arg",
+        action="append",
+        default=[],
+        help="Extra raw argument passed to vLLM. Repeat for multiple tokens, e.g. --vllm-arg --dtype --vllm-arg auto.",
+    )
+
     serve_parser = subparsers.add_parser("serve", help="Serve an OpenAI-compatible RAG chat proxy.")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8000)
@@ -197,7 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument("--top-k", type=int, default=3)
     serve_parser.add_argument("--groq-keys-path", type=Path, default=Path(".secrets/groq_key.env"))
-    serve_parser.add_argument("--model", default=DEFAULT_MODEL)
+    serve_parser.add_argument("--model", default=DEFAULT_CHAT_MODEL)
     serve_parser.add_argument("--model-id", default=DEFAULT_PROXY_MODEL_ID, help="Model id exposed to Open WebUI.")
     serve_parser.add_argument(
         "--available-models",
@@ -223,7 +256,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve_parser.add_argument("--vector-model", default=DEFAULT_VECTOR_MODEL)
     serve_parser.add_argument("--max-retries", type=int, default=2)
-    serve_parser.add_argument("--max-completion-tokens", type=int, default=128)
+    serve_parser.add_argument("--max-completion-tokens", type=int, default=4096)
     serve_parser.add_argument("--temperature", type=float, default=0.0)
     serve_parser.add_argument("--max-context-chars", type=int, default=2500)
     serve_parser.add_argument("--disable-web-search", action="store_true", help="Disable built-in web search mode.")
@@ -639,6 +672,41 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _model_bench(args: argparse.Namespace) -> int:
+    try:
+        concurrency = _parse_concurrency(args.concurrency)
+        config = ModelBenchConfig(
+            model=args.model,
+            endpoint=args.endpoint,
+            served_model_name=args.served_model_name,
+            preset=args.preset,
+            concurrency=concurrency,
+            requests_per_scenario=args.requests_per_scenario,
+            warmup_requests=args.warmup_requests,
+            output_dir=args.output_dir,
+            host=args.host,
+            port=args.port,
+            tensor_parallel_size=args.tensor_parallel_size,
+            max_model_len=args.max_model_len,
+            max_output_tokens=args.max_output_tokens,
+            temperature=args.temperature,
+            startup_timeout_s=args.startup_timeout_s,
+            sample_interval_s=args.sample_interval_s,
+            stream=args.stream,
+            vllm_args=tuple(args.vllm_arg or ()),
+        )
+        summary = run_model_benchmark(config)
+    except ValueError as exc:
+        print(f"rag-bench model-bench invalid arguments: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rag-bench model-bench failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
 def _serve(args: argparse.Namespace) -> int:
     if args.port <= 0:
         print("--port must be positive.", file=sys.stderr)
@@ -705,7 +773,7 @@ def _serve(args: argparse.Namespace) -> int:
     mimo_enabled = bool(args.enable_mimo or args.model in mimo_models)
     if available_models is None:
         available_models = _dedupe_preserve_order(
-            (DEFAULT_MODEL, "qwen/qwen3-32b", *(mimo_models if mimo_enabled else ()))
+            (args.model, DEFAULT_MODEL, DEFAULT_CHAT_MODEL, *(mimo_models if mimo_enabled else ()))
         )
 
     chat_config = ChatProxyConfig(
@@ -1242,3 +1310,14 @@ def _dedupe_preserve_order(values: tuple[str, ...]) -> tuple[str, ...]:
             seen.add(value)
             result.append(value)
     return tuple(result)
+
+
+def _parse_concurrency(value: str | None) -> tuple[int, ...] | None:
+    if value is None:
+        return None
+    items = tuple(int(item.strip()) for item in value.split(",") if item.strip())
+    if not items:
+        raise ValueError("--concurrency must include at least one value")
+    if any(item <= 0 for item in items):
+        raise ValueError("--concurrency values must be positive")
+    return items

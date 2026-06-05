@@ -11,11 +11,13 @@ def render_chat_page(
     available_models: tuple[str, ...] | None = None,
     available_retrievers: tuple[str, ...] | None = None,
     default_retriever: str = "bm25",
+    app_version: str | None = None,
 ) -> str:
     model_json = json.dumps(model_id)
     available_models_json = json.dumps(list(available_models or (model_id,)))
     available_retrievers_json = json.dumps(list(available_retrievers or (default_retriever,)))
     default_retriever_json = json.dumps(default_retriever)
+    app_version_json = json.dumps(app_version or "")
     model_label = _escape_html(model_id)
     return (
         _load_template()
@@ -23,6 +25,7 @@ def render_chat_page(
         .replace("__AVAILABLE_MODELS_JSON__", available_models_json)
         .replace("__AVAILABLE_RETRIEVERS_JSON__", available_retrievers_json)
         .replace("__DEFAULT_RETRIEVER_JSON__", default_retriever_json)
+        .replace("__APP_VERSION_JSON__", app_version_json)
         .replace("__MODEL_LABEL__", model_label)
     )
 
