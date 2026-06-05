@@ -18,6 +18,7 @@ class RlaifRewardConfig:
     feedback_path: Path
     output_dir: Path | None = None
     answer_labels_path: Path | None = None
+    context_labels_path: Path | None = None
     quality_weight: float = 0.75
     support_weight: float = 0.10
     token_weight: float = 0.05
@@ -40,11 +41,14 @@ def build_rlaif_rewards(config: RlaifRewardConfig) -> dict[str, Any]:
     actions = _read_jsonl(config.actions_path)
     feedback_rows = _read_jsonl(config.feedback_path)
     answer_label_rows = _read_jsonl(config.answer_labels_path) if config.answer_labels_path is not None else []
+    context_label_rows = _read_jsonl(config.context_labels_path) if config.context_labels_path is not None else []
     output_dir = config.output_dir or config.actions_path.parent
 
     feedback_by_action_id, duplicate_feedback_count = _index_feedback(feedback_rows)
     answer_label_by_action_id, duplicate_answer_label_count = _index_feedback(answer_label_rows)
+    context_label_by_action_id, duplicate_context_label_count = _index_feedback(context_label_rows)
     answer_label_stats: Counter[str] = Counter()
+    context_label_stats: Counter[str] = Counter()
     scales = _CostScales.from_actions(actions)
 
     reward_rows: list[dict[str, Any]] = []
@@ -53,10 +57,14 @@ def build_rlaif_rewards(config: RlaifRewardConfig) -> dict[str, Any]:
         try:
             reward = _reward_for_action(
                 action=action,
-                feedback=_feedback_with_answer_label(
-                    feedback=feedback_by_action_id.get(str(action.get("action_id"))),
-                    answer_label=answer_label_by_action_id.get(str(action.get("action_id"))),
-                    stats=answer_label_stats,
+                feedback=_feedback_with_context_label(
+                    feedback=_feedback_with_answer_label(
+                        feedback=feedback_by_action_id.get(str(action.get("action_id"))),
+                        answer_label=answer_label_by_action_id.get(str(action.get("action_id"))),
+                        stats=answer_label_stats,
+                    ),
+                    context_label=context_label_by_action_id.get(str(action.get("action_id"))),
+                    stats=context_label_stats,
                 ),
                 scales=scales,
                 weights=weights,
@@ -92,6 +100,9 @@ def build_rlaif_rewards(config: RlaifRewardConfig) -> dict[str, Any]:
         answer_label_count=len(answer_label_rows),
         duplicate_answer_label_count=duplicate_answer_label_count,
         answer_label_stats=answer_label_stats,
+        context_label_count=len(context_label_rows),
+        duplicate_context_label_count=duplicate_context_label_count,
+        context_label_stats=context_label_stats,
         reward_rows=reward_rows,
         preference_rows=preference_rows,
         preference_skips=preference_skips,
@@ -146,6 +157,9 @@ def _reward_for_action(
     for key in (
         "answer_label_merge",
         "answer_label_skip_reason",
+        "context_label_merge",
+        "context_label_skip_reason",
+        "context_label",
         "fallback_feedback",
     ):
         if key in feedback_metadata:
@@ -227,6 +241,76 @@ def _feedback_with_answer_label(
     return answer_label
 
 
+def _feedback_with_context_label(
+    *,
+    feedback: dict[str, Any] | None,
+    context_label: dict[str, Any] | None,
+    stats: Counter[str],
+) -> dict[str, Any] | None:
+    if context_label is None:
+        stats["missing_context_label"] += 1
+        return feedback
+    if not _is_usable_context_label(context_label):
+        stats["invalid_context_label"] += 1
+        if feedback is not None:
+            stats["fallback_to_feedback"] += 1
+            merged = dict(feedback)
+            merged_metadata = _dict_or_empty(merged.get("metadata")).copy()
+            merged_metadata["context_label_merge"] = "fallback_to_feedback"
+            merged_metadata["context_label_skip_reason"] = _context_label_skip_reason(context_label)
+            merged["metadata"] = merged_metadata
+            return merged
+        stats["used_invalid_context_label_without_feedback"] += 1
+        return context_label
+
+    stats["used_context_label"] += 1
+    feedback = dict(feedback or {})
+    feedback["action_id"] = context_label.get("action_id", feedback.get("action_id"))
+    feedback["query_id"] = context_label.get("query_id", feedback.get("query_id"))
+    feedback["provenance"] = _feedback_provenance(feedback.get("provenance"))
+    feedback["context_quality_score"] = _score_or_none(context_label.get("context_quality_score"))
+    feedback["context_evidence_support_score"] = _score_or_none(context_label.get("evidence_support_score"))
+    feedback["context_minimality_score"] = _score_or_none(context_label.get("minimality_score"))
+    feedback["context_sufficient"] = context_label.get("sufficient")
+    feedback["context_missing_evidence"] = context_label.get("missing_evidence")
+    feedback["selected_chunk_count"] = len(_list_or_empty(context_label.get("selected_chunk_ids")))
+    feedback["redundant_chunk_count"] = len(_list_or_empty(context_label.get("redundant_chunk_ids")))
+    feedback["irrelevant_chunk_count"] = len(_list_or_empty(context_label.get("irrelevant_chunk_ids")))
+
+    quality = _score_or_none(feedback.get("quality_score"))
+    context_quality = _score_or_none(context_label.get("context_quality_score"))
+    if quality is not None and context_quality is not None:
+        feedback["quality_score"] = mean([quality, context_quality])
+    elif quality is None and context_quality is not None:
+        feedback["quality_score"] = context_quality
+
+    faithfulness = _score_or_none(feedback.get("faithfulness"))
+    context_support = _score_or_none(context_label.get("evidence_support_score"))
+    if context_support is not None:
+        feedback["faithfulness"] = context_support if faithfulness is None else mean([faithfulness, context_support])
+
+    if context_label.get("sufficient") is False:
+        feedback["unsupported_claim_penalty"] = max(
+            _score_or_none(feedback.get("unsupported_claim_penalty")) or 0.0,
+            1.0 - (context_support or 0.0),
+        )
+
+    merged_metadata = _dict_or_empty(feedback.get("metadata")).copy()
+    merged_metadata["context_label_merge"] = "used"
+    merged_metadata["context_label"] = {
+        "sufficient": context_label.get("sufficient"),
+        "missing_evidence": context_label.get("missing_evidence"),
+        "context_quality_score": context_label.get("context_quality_score"),
+        "evidence_support_score": context_label.get("evidence_support_score"),
+        "minimality_score": context_label.get("minimality_score"),
+        "selected_chunk_count": feedback["selected_chunk_count"],
+        "redundant_chunk_count": feedback["redundant_chunk_count"],
+        "irrelevant_chunk_count": feedback["irrelevant_chunk_count"],
+    }
+    feedback["metadata"] = merged_metadata
+    return feedback
+
+
 def _is_usable_answer_label(answer_label: dict[str, Any]) -> bool:
     if answer_label.get("error"):
         return False
@@ -237,6 +321,18 @@ def _is_usable_answer_label(answer_label: dict[str, Any]) -> bool:
     if bool(answer_label.get("ambiguous", False)):
         return False
     return _score_or_none(answer_label.get("quality_score")) is not None
+
+
+def _is_usable_context_label(context_label: dict[str, Any]) -> bool:
+    if context_label.get("error"):
+        return False
+    if context_label.get("invalid_json"):
+        return False
+    if context_label.get("missing_reason"):
+        return False
+    if bool(context_label.get("ambiguous", False)):
+        return False
+    return _score_or_none(context_label.get("context_quality_score")) is not None
 
 
 def _answer_label_skip_reason(answer_label: dict[str, Any]) -> str:
@@ -250,6 +346,20 @@ def _answer_label_skip_reason(answer_label: dict[str, Any]) -> str:
         return "ambiguous"
     if _score_or_none(answer_label.get("quality_score")) is None:
         return "missing_quality"
+    return "unknown"
+
+
+def _context_label_skip_reason(context_label: dict[str, Any]) -> str:
+    if context_label.get("error"):
+        return "error"
+    if context_label.get("invalid_json"):
+        return "invalid_json"
+    if context_label.get("missing_reason"):
+        return str(context_label.get("missing_reason"))
+    if bool(context_label.get("ambiguous", False)):
+        return "ambiguous"
+    if _score_or_none(context_label.get("context_quality_score")) is None:
+        return "missing_context_quality"
     return "unknown"
 
 
@@ -541,6 +651,9 @@ def _build_summary(
     answer_label_count: int,
     duplicate_answer_label_count: int,
     answer_label_stats: Counter[str],
+    context_label_count: int,
+    duplicate_context_label_count: int,
+    context_label_stats: Counter[str],
     reward_rows: list[dict[str, Any]],
     preference_rows: list[dict[str, Any]],
     preference_skips: Counter[str],
@@ -558,6 +671,10 @@ def _build_summary(
         "answer_label_count": answer_label_count,
         "duplicate_answer_label_count": duplicate_answer_label_count,
         "answer_label_merge_counts": dict(answer_label_stats),
+        "context_labels_path": str(config.context_labels_path) if config.context_labels_path is not None else None,
+        "context_label_count": context_label_count,
+        "duplicate_context_label_count": duplicate_context_label_count,
+        "context_label_merge_counts": dict(context_label_stats),
         "reward_count": len(reward_rows),
         "scored_reward_count": scored_reward_count,
         "missing_quality_count": len(reward_rows) - scored_reward_count,
@@ -586,6 +703,7 @@ def _render_summary_markdown(summary: dict[str, Any]) -> str:
         f"- Actions: {summary['action_count']}",
         f"- Feedback rows: {summary['feedback_count']}",
         f"- Answer labels: {summary['answer_label_count']}",
+        f"- Context labels: {summary['context_label_count']}",
         f"- Rewards: {summary['reward_count']}",
         f"- Scored rewards: {summary['scored_reward_count']}",
         f"- Missing-quality rewards: {summary['missing_quality_count']}",
@@ -605,6 +723,12 @@ def _render_summary_markdown(summary: dict[str, Any]) -> str:
         for key, value in sorted(summary["answer_label_merge_counts"].items()):
             lines.append(f"| `{key}` | {value} |")
         if not summary["answer_label_merge_counts"]:
+            lines.append("| N/A | 0 |")
+    if summary["context_labels_path"] is not None:
+        lines.extend(["", "## Context Label Merge", "", f"- Context labels path: `{summary['context_labels_path']}`", "", "| Status | Count |", "| --- | ---: |"])
+        for key, value in sorted(summary["context_label_merge_counts"].items()):
+            lines.append(f"| `{key}` | {value} |")
+        if not summary["context_label_merge_counts"]:
             lines.append("| N/A | 0 |")
     lines.extend(["", "## Preference Types", "", "| Type | Count |", "| --- | ---: |"])
     for key, value in sorted(summary["preference_type_counts"].items()):
@@ -726,6 +850,8 @@ def _validate_config(config: RlaifRewardConfig) -> None:
         raise ValueError(f"Feedback path does not exist: {config.feedback_path}")
     if config.answer_labels_path is not None and not config.answer_labels_path.is_file():
         raise ValueError(f"Answer labels path does not exist: {config.answer_labels_path}")
+    if config.context_labels_path is not None and not config.context_labels_path.is_file():
+        raise ValueError(f"Context labels path does not exist: {config.context_labels_path}")
 
 
 def _index_feedback(feedback_rows: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], int]:
@@ -825,3 +951,7 @@ def _norm(value: float | None, max_value: float) -> float:
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []

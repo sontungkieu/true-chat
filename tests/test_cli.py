@@ -146,6 +146,8 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
             "reward_mode_counts": {"gold": 2, "missing_quality": 1},
             "answer_label_count": 1,
             "answer_label_merge_counts": {"used_answer_label": 1},
+            "context_label_count": 1,
+            "context_label_merge_counts": {"used_context_label": 1},
             "preference_type_counts": {"context_policy_preference": 1},
             "preference_reason_counts": {"pairwise_tie_v1_efficiency": 1},
             "preference_skip_reason_counts": {"missing_quality": 1},
@@ -167,6 +169,8 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
             str(tmp_path / "rlaif_feedback.jsonl"),
             "--answer-labels",
             str(tmp_path / "rlaif_answer_labels.jsonl"),
+            "--context-labels",
+            str(tmp_path / "rlaif_context_labels.jsonl"),
             "--output-dir",
             str(tmp_path / "out"),
             "--quality-weight",
@@ -188,6 +192,7 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
     assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
     assert seen["config"].feedback_path == tmp_path / "rlaif_feedback.jsonl"
     assert seen["config"].answer_labels_path == tmp_path / "rlaif_answer_labels.jsonl"
+    assert seen["config"].context_labels_path == tmp_path / "rlaif_context_labels.jsonl"
     assert seen["config"].output_dir == tmp_path / "out"
     assert seen["config"].quality_weight == 0.7
     assert seen["config"].min_reward_delta == 0.04
@@ -197,6 +202,7 @@ def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path,
     assert seen["config"].tie_break_by_efficiency is True
     assert '"reward_count": 3' in captured.out
     assert '"used_answer_label": 1' in captured.out
+    assert '"used_context_label": 1' in captured.out
     assert '"context_policy_preference": 1' in captured.out
     assert '"reward_calibration": "pairwise_tie_v1"' in captured.out
 

@@ -299,6 +299,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional rlaif_answer_labels.jsonl file. Valid AI-judge labels override feedback quality; invalid labels do not become zero.",
     )
     rlaif_reward_parser.add_argument(
+        "--context-labels",
+        type=Path,
+        default=None,
+        help="Optional rlaif_context_labels.jsonl file. Clean non-ambiguous context labels adjust reward diagnostics; invalid labels fall back cleanly.",
+    )
+    rlaif_reward_parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -776,6 +782,7 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
                 feedback_path=args.feedback,
                 output_dir=args.output_dir,
                 answer_labels_path=args.answer_labels,
+                context_labels_path=args.context_labels,
                 quality_weight=args.quality_weight,
                 support_weight=args.support_weight,
                 token_weight=args.token_weight,
@@ -805,6 +812,8 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
                 "reward_mode_counts": summary["reward_mode_counts"],
                 "answer_label_count": summary["answer_label_count"],
                 "answer_label_merge_counts": summary["answer_label_merge_counts"],
+                "context_label_count": summary["context_label_count"],
+                "context_label_merge_counts": summary["context_label_merge_counts"],
                 "preference_type_counts": summary["preference_type_counts"],
                 "preference_reason_counts": summary["preference_reason_counts"],
                 "preference_skip_reason_counts": summary["preference_skip_reason_counts"],

@@ -384,6 +384,19 @@ uv run rag-bench rlaif-reward \
 
 `rlaif-reward` writes `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md`. Missing or ambiguous feedback produces `reward=null` with `reward_mode=missing_quality` or `reward_mode=ambiguous_feedback`; it is not converted to score zero. When `--answer-labels` is provided, valid AI-judge labels override the original feedback for reward scoring. Invalid, ambiguous, errored, or missing answer labels fall back to the original feedback when available, and the merge reason is recorded in reward metadata and summary counts. Preferences are generated only within comparable query groups and are skipped when the higher-reward action violates the configured quality-regret guardrail.
 
+Optional context-label reward candidate:
+
+```bash
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>_context_candidate
+```
+
+`--context-labels` is non-default and offline-only. Clean non-ambiguous context labels blend context quality/evidence support into reward diagnostics and can penalize insufficient context; ambiguous, invalid, errored, or missing context labels fall back to answer-level feedback instead of becoming score zero. The merge status is recorded in reward metadata and summary counts. This candidate path is intended for analysis and selector experiments, not for replacing the runtime `adaptive-heuristic` policy.
+
 Optional pairwise tie-aware preference calibration:
 
 ```bash

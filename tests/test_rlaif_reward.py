@@ -150,6 +150,86 @@ def test_rlaif_reward_falls_back_when_answer_label_is_invalid(tmp_path: Path) ->
     assert reward["metadata"]["answer_label_skip_reason"] == "invalid_json"
 
 
+def test_rlaif_reward_merges_clean_context_labels_as_non_default_candidate(tmp_path: Path) -> None:
+    actions = [_action("a1"), _action("a2", context_policy="evidence-aware")]
+    feedback = [
+        _feedback("a1", quality=0.8, faithfulness=0.8, provenance="ai_judge"),
+        _feedback("a2", quality=0.8, faithfulness=0.8, provenance="ai_judge"),
+    ]
+    context_labels = [
+        _context_label(
+            "a1",
+            context_quality=0.2,
+            evidence_support=0.1,
+            sufficient=False,
+            selected=["c1"],
+            irrelevant=["c2", "c3"],
+        ),
+        _context_label(
+            "a2",
+            context_quality=1.0,
+            evidence_support=1.0,
+            sufficient=True,
+            selected=["c1", "c2"],
+            irrelevant=[],
+        ),
+    ]
+    _write_jsonl(tmp_path / "rlaif_actions.jsonl", actions)
+    _write_jsonl(tmp_path / "rlaif_feedback.jsonl", feedback)
+    _write_jsonl(tmp_path / "rlaif_context_labels.jsonl", context_labels)
+
+    summary = build_rlaif_rewards(
+        RlaifRewardConfig(
+            actions_path=tmp_path / "rlaif_actions.jsonl",
+            feedback_path=tmp_path / "rlaif_feedback.jsonl",
+            context_labels_path=tmp_path / "rlaif_context_labels.jsonl",
+            output_dir=tmp_path / "out",
+        )
+    )
+
+    rewards = {row["action_id"]: row for row in _read_jsonl(tmp_path / "out" / "rlaif_rewards.jsonl")}
+    assert summary["context_label_count"] == 2
+    assert summary["context_label_merge_counts"]["used_context_label"] == 2
+    assert rewards["a1"]["quality"] == 0.5
+    assert rewards["a1"]["evidence_support"] == 0.45
+    assert rewards["a1"]["unsupported_claim_penalty"] == 0.9
+    assert rewards["a1"]["metadata"]["context_label_merge"] == "used"
+    assert rewards["a1"]["metadata"]["context_label"]["irrelevant_chunk_count"] == 2
+    assert rewards["a2"]["reward"] > rewards["a1"]["reward"]
+
+
+def test_rlaif_reward_falls_back_when_context_label_is_ambiguous(tmp_path: Path) -> None:
+    actions = [_action("a1")]
+    feedback = [_feedback("a1", quality=0.55, faithfulness=0.5, provenance="ragas")]
+    context_labels = [
+        _context_label(
+            "a1",
+            context_quality=0.95,
+            evidence_support=0.95,
+            sufficient=True,
+            ambiguous=True,
+        )
+    ]
+    _write_jsonl(tmp_path / "rlaif_actions.jsonl", actions)
+    _write_jsonl(tmp_path / "rlaif_feedback.jsonl", feedback)
+    _write_jsonl(tmp_path / "rlaif_context_labels.jsonl", context_labels)
+
+    summary = build_rlaif_rewards(
+        RlaifRewardConfig(
+            actions_path=tmp_path / "rlaif_actions.jsonl",
+            feedback_path=tmp_path / "rlaif_feedback.jsonl",
+            context_labels_path=tmp_path / "rlaif_context_labels.jsonl",
+            output_dir=tmp_path / "out",
+        )
+    )
+
+    reward = _read_jsonl(tmp_path / "out" / "rlaif_rewards.jsonl")[0]
+    assert summary["context_label_merge_counts"]["invalid_context_label"] == 1
+    assert summary["context_label_merge_counts"]["fallback_to_feedback"] == 1
+    assert reward["quality"] == 0.55
+    assert reward["metadata"]["context_label_skip_reason"] == "ambiguous"
+
+
 def _action(
     action_id: str,
     *,
@@ -201,6 +281,37 @@ def _feedback(
         "quality_score": quality,
         "faithfulness": faithfulness,
         "ambiguous": ambiguous,
+    }
+
+
+def _context_label(
+    action_id: str,
+    *,
+    query_id: str = "q1",
+    context_quality: float,
+    evidence_support: float,
+    sufficient: bool,
+    ambiguous: bool = False,
+    selected: list[str] | None = None,
+    redundant: list[str] | None = None,
+    irrelevant: list[str] | None = None,
+) -> dict:
+    return {
+        "action_id": action_id,
+        "query_id": query_id,
+        "judge_provider": "mimo",
+        "judge_model": "mimo-v2.5-pro",
+        "context_quality_score": context_quality,
+        "evidence_support_score": evidence_support,
+        "minimality_score": 0.8,
+        "sufficient": sufficient,
+        "missing_evidence": False,
+        "selected_chunk_ids": selected or [],
+        "redundant_chunk_ids": redundant or [],
+        "irrelevant_chunk_ids": irrelevant or [],
+        "ambiguous": ambiguous,
+        "invalid_json": False,
+        "error": None,
     }
 
 

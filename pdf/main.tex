@@ -38,10 +38,10 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{family\_smoothed\_best\_average}, \texttt{shrinkage\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector}, multi-seed selector sweep, action coverage diagnostics, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, non-default \texttt{rlaif-reward --context-labels}, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{family\_smoothed\_best\_average}, \texttt{shrinkage\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector}, multi-seed selector sweep, action coverage diagnostics, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{205 passed} \\
+Trạng thái test gần nhất & \texttt{207 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -59,7 +59,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item Answer judge hiện tại: thêm \texttt{rlaif-label-answers} với resume, progress logging, JSON repair và guardrail không biến invalid/missing label thành score 0.
   \item Context judge hiện tại: thêm \texttt{rlaif-label-contexts} để label sufficient context, selected/redundant/irrelevant chunks, missing evidence và context quality với cùng cơ chế dry-run/resume/JSON repair; đã chạy MiMo subset 50 action rows và ghi report \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_mimo50.md}.
   \item Pairwise judge hiện tại: thêm \texttt{rlaif-label-pairs} để judge trực tiếp action A/B từ \texttt{rlaif\_preferences.jsonl}, nhưng không bắt buộc tin preference cũ; output có A/B/tie/ambiguous, quality/support/efficiency winner, quality regret, unsupported-claim risk và confidence.
-  \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ.
+  \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ và non-default \texttt{--context-labels} để thử context-supervision candidate.
   \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average, \texttt{family\_smoothed\_best\_average}, \texttt{shrinkage\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector} và oracle-logged baselines.
   \item Multi-seed selector hiện tại: thêm \texttt{scripts/run\_rlaif\_split\_sweep.py} để chạy nhiều split seed và báo mean/std cho selector metrics.
   \item Action coverage hiện tại: thêm \texttt{scripts/inspect\_rlaif\_action\_coverage.py} để phân tích exact signature sparsity và collapsed family coverage.
@@ -250,6 +250,7 @@ uv run rag-bench rlaif-reward \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
   --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
   --output-dir benchmark_results/rlaif/<run-name> \
   --quality-weight 0.75 \
   --support-weight 0.10 \
@@ -261,6 +262,8 @@ uv run rag-bench rlaif-reward \
 \end{verbatim}
 
 Khi có \texttt{--answer-labels}, reward builder dùng AI-judge labels hợp lệ làm feedback chính. Nếu label invalid, ambiguous, errored hoặc thiếu quality, builder fallback về feedback gốc như RAGAS khi có và ghi rõ merge reason trong metadata. Nếu cả hai nguồn đều thiếu quality hợp lệ, reward vẫn là \texttt{null}, không phải 0.
+
+Khi bật non-default \texttt{--context-labels}, builder chỉ dùng context labels sạch với \texttt{ambiguous=false}; context labels ambiguous, invalid, errored hoặc thiếu quality đều fallback về answer-level feedback. Context quality và evidence support được blend vào diagnostics/reward, còn \texttt{sufficient=false} có thể tăng unsupported-claim penalty. Merge reason được ghi trong metadata và summary; path này vẫn là offline candidate, không thay runtime policy.
 
 Builder ghi ba artifact:
 
@@ -329,6 +332,8 @@ Action coverage diagnostics cho thấy bottleneck chính là exact-signature spa
 
 Context-level RLAIF subset đầu tiên đã chạy trên 50 action rows bằng MiMo. Kết quả: 50 valid JSON labels, 0 invalid JSON, 0 errors, 4 ambiguous rows, 18 sufficient rows, 29 insufficient rows, mean context quality 0.478, mean evidence support 0.410 và trung bình 1.38 selected chunks/action. Trung bình irrelevant chunks là 5.90/action, cho thấy answer-level reward chưa đủ để học evidence mask/KV pruning; cần context-label merge path riêng và lọc \texttt{ambiguous=false} trước khi dùng làm clean supervision.
 
+Context-label reward candidate hiện đã chạy trên MiMo50 subset. Trong 50 context labels, 46 labels sạch được merge, 4 ambiguous rows fallback, và 142 action rows còn lại chưa có context label nên giữ answer-level feedback. So với answer-only reward set, preference count tăng từ 722 lên 822; quality-guardrail skips tăng từ 4 lên 12; 36 reward rows thay đổi, gồm 31 rows giảm và 5 rows tăng. Seed-42 sanity check cho thấy \texttt{shrinkage\_smoothed\_best\_average} đạt reward 0.745, quality 0.914 và oracle gap 0.002 trên eval nhỏ, nhưng đây chỉ là diagnostic vì context labels mới phủ 46/192 action rows.
+
 \section{Hai điểm đã harden trước reward/preference}
 
 Pasted review đã chỉ ra hai điểm yếu hợp lý cần sửa trước khi xây reward/preference builder. Hai điểm này đã được xử lý trong hardening hiện tại.
@@ -372,8 +377,8 @@ Report \texttt{docs/reports/local\_qwen\_kv\_estimates.md} hiện ghi bảng cho
 Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Context-label reward merge}: thêm non-default \texttt{rlaif-reward --context-labels} để đưa context sufficiency/evidence support vào reward diagnostics mà không dùng ambiguous rows như clean supervision.
-  \item \textbf{Full context-label run}: nếu MiMo50 subset ổn định, chạy tiếp 142 action rows còn lại.
+  \item \textbf{Full context-label run}: chạy tiếp 142 action rows còn lại để tránh candidate reward chỉ dựa trên subset 46 labels sạch.
+  \item \textbf{Context-label multi-seed eval}: sau khi có full context labels, rebuild reward và chạy lại selector sweep nhiều seed.
   \item \textbf{More logged query groups}: tăng số query/action groups và retriever diversity trước khi kết luận selector learned có generalization ổn định.
   \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
   \item \textbf{Simple ranking baseline}: sau khi có thêm data/context labels, cân nhắc pairwise ranker nhẹ từ preference rows.
