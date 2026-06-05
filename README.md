@@ -385,6 +385,8 @@ uv run python scripts/aggregate_rlaif_multijudge_audit.py \
 
 The multi-judge aggregation reports label counts, valid/ambiguous/invalid/error counts, sufficiency agreement, numeric score correlations, majority sufficiency votes, MiMo-harsh rows, consensus-insufficient rows, and high-disagreement rows. It does not blindly average judges or replace reward defaults; disagreement is a low-confidence audit signal.
 
+The first targeted multi-judge audit is documented in `docs/reports/phase1d_rlaif_multijudge_audit.md`. It covers 60 high-impact rows with MiMo, DeepSeek v4 Flash, and Groq Qwen3 32B labels. The main signal is `51/60` consensus-insufficient rows and `6/60` MiMo-harsh/high-disagreement rows; this supports using multi-judge labels as an audit/confidence layer, not a reward default.
+
 Label reward-derived action pairs with a direct pairwise AI judge:
 
 ```bash
