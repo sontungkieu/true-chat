@@ -1,0 +1,42 @@
+\section{Qualitative Error Analysis}
+
+The aggregate metrics are best interpreted together with individual cases. This section summarizes representative rows from the local experiment artifacts; raw JSONL outputs are not included in the report repository.
+
+\subsection{Correct Abstention but Insufficient Context}
+
+Several rows receive high answer-level quality because the model correctly refuses or abstains, while the context-level label still marks the retrieval context as insufficient. The two labels measure different objects: \emph{answer behavior} and \emph{retrieved evidence quality}.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{2.5cm} >{\raggedright\arraybackslash}p{4.6cm} >{\raggedright\arraybackslash}p{4.6cm} >{\raggedright\arraybackslash}p{2.2cm}}
+\toprule
+Query & Claim & Answer pattern & Context label \\
+\midrule
+75 & Active \emph{H. pylori} urease has a polymeric structure comprising UreA and UreB. & The answer says the provided contexts do not contain the urease-structure information. MiMo answer quality/support are 1.0. & Insufficient; no selected chunks; 9 irrelevant chunks; context quality 0.0. \\
+72 & Activator-inhibitor pairs are provided dorsally by Admpchordin. & The answer says the contexts do not mention Admpchordin or dorsal activator-inhibitor pairs. Answer quality/support are 1.0. & Insufficient; no selected chunks; 8 irrelevant chunks; context quality 0.0. \\
+\bottomrule
+\end{longtable}
+
+These examples motivate context-level RLAIF. Answer labels alone would treat the abstention as correct, but the retriever/context layer still failed to provide evidence.
+
+\subsection{Sufficient Context with Many Irrelevant Chunks}
+
+Other rows are sufficient because one chunk contains the needed evidence, even though most retrieved chunks are irrelevant. This pattern motivates evidence-aware context allocation and future KV evidence masks.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{2.2cm} >{\raggedright\arraybackslash}p{5.2cm} >{\raggedright\arraybackslash}p{4.8cm} >{\raggedright\arraybackslash}p{1.8cm}}
+\toprule
+Query & Claim & Useful evidence pattern & Irrelevant chunks \\
+\midrule
+49 & ADAR1 binds to Dicer to cleave pre-miRNA. & One selected chunk directly states that ADAR1 binds Dicer and promotes pre-miRNA cleavage. & 8 \\
+48 & A total of 1,000 people in the UK are asymptomatic carriers of vCJD infection. & One selected chunk provides prevalence data contradicting the 1,000 claim. & 7 \\
+42 & High microerythrocyte count raises vulnerability to severe anemia in homozygous alpha-thalassemia trait subjects. & One selected chunk shows the count is protective against severe malarial anemia, not harmful. & 7 \\
+\bottomrule
+\end{longtable}
+
+This pattern explains why the average selected chunk count is only 1.276 while the average irrelevant chunk count is 3.708. It also shows why context reduction can improve efficiency without necessarily removing evidence, provided that the policy can identify the useful chunk.
+
+\subsection{Pairwise Disagreement: Quality Tie, Efficiency Wins}
+
+The MiMo-50 pairwise audit found 7 disagreements between scalar reward-derived preferences and direct pairwise judge choices. They cluster in query 128. The scalar reward preferred a slightly higher quality/support action; the pairwise judge considered both answers acceptable, or both abstentions correct, and chose the cheaper action. This motivates \code{pairwise\_tie\_v1}: when quality/support differences fall within a small tie band, resource efficiency should carry more weight.
+
+\subsection{MiMo-Harsh / High-Disagreement Rows}
+
+The multi-judge audit identified 6 rows where MiMo marked context insufficient while at least one secondary judge marked it sufficient. These rows are calibration examples. They should be reviewed before increasing context penalties or treating MiMo context labels as clean evidence-mask supervision.

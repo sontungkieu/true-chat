@@ -1,0 +1,46 @@
+\section{Experimental Setup}
+
+The experiments are organized into retrieval-only, generation-feedback, and RLAIF-feedback stages. This separation keeps the evidence for each claim clear: the early phases validate benchmark plumbing and context budgeting, while the later phases evaluate answer and context quality.
+
+\subsection{Datasets and Logged Rows}
+
+The completed empirical results use SciFact-style BudgetRAG logs. Phase 1B and Phase 1C retrieval-only runs use BM25 on SciFact with generation skipped. Phase 1C.3 and Phase 1D use 192 joined action-query rows derived from BudgetRAG generation outputs and RAGAS post-hoc rows.
+
+\begin{center}
+\begin{tabular}{l r}
+\toprule
+Item & Count \\
+\midrule
+Phase 1D joined action-query rows & 192 \\
+RAGAS source action files & 64 \\
+Query groups in selector smoke & 55 \\
+Action signatures & 77 \\
+Full MiMo answer labels & 192 \\
+Full MiMo context labels & 192 \\
+Clean usable context labels & 177 \\
+Targeted multi-judge audit rows & 60 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The action log is not yet broad enough to support strong retrieval-strategy allocation claims. Most completed results use BM25. Planned retriever-diversity runs add BM25, graph-BM25, and hybrid-RRF as separate logged action families.
+
+\subsection{Models and Judges}
+
+The generation/action matrix includes MiMo, Llama 3.1 8B, and Qwen3 32B rows. RAGAS answer relevancy provides the initial proxy label. MiMo provides full answer-level and context-level labels. DeepSeek v4 Flash and Groq Qwen3 32B provide secondary labels in a targeted context audit.
+
+The judge prompts are constrained to logged question, answer, and context. They are not allowed to browse or use external knowledge. Invalid JSON, missing answers, missing context, and ambiguous judge outputs are recorded as ambiguous/null-score rows rather than converted into zero-quality labels.
+
+\subsection{Split Rule and Selector Evaluation}
+
+Selector evaluation uses deterministic held-out splits at query level:
+
+\[
+\text{split key} = \texttt{benchmark + query\_id}.
+\]
+
+This prevents action-row leakage: all actions for the same query remain in the same split. Preferences that cross train/eval boundaries are dropped and counted in the split manifest. Selector costs are logged/offline normalized costs; a deployable pre-generation selector would require estimated token/KV costs and predicted latency features.
+
+\subsection{Reward Weights}
+
+The main scalar reward uses quality weight 0.75, evidence-support weight 0.10, token weight 0.05, latency weight 0.05, and KV weight 0.05, with explicit penalties for unsupported claims and errors. Context-label reward is opt-in and non-default. The reported context penalty weights are 0.25, 0.50, and 1.00.

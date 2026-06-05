@@ -1,0 +1,21 @@
+\section{Threats to Validity}
+
+\subsection{AI-Judge Bias}
+
+MiMo, DeepSeek, Groq, and RAGAS are not human annotators. They may disagree on sufficiency, support, abstention quality, or unsupported-claim risk. The multi-judge audit reduces dependence on a single judge, but it does not replace human validation.
+
+\subsection{Logged-Candidate Bias}
+
+Offline selectors can only choose among actions that were logged. If the matrix lacks a useful retriever, budget, policy, or model, the selector cannot discover it. This is why retriever-diversity logging is more important than adding complex RL at the current stage.
+
+\subsection{Small Held-Out Splits}
+
+The split rule avoids query leakage, but the eval sets remain small. Seed 42 looked optimistic for some learned selectors; six-seed evaluation gave a more realistic view. Current selector conclusions should be interpreted as early diagnostic signals.
+
+\subsection{RAGAS vs MiMo Scale Mismatch}
+
+MiMo quality and RAGAS answer relevancy have correlation 0.277. Absolute reward values from RAGAS-only and MiMo-judge runs should not be compared as if they share the same scale. The useful comparison is the policy ordering and the direction of trade-offs.
+
+\subsection{Context Reward Calibration}
+
+Context labels materially change reward rows and preference counts. However, penalty 1.00 is too aggressive for a default. Penalty 0.25 is a conservative candidate, but the MiMo-harsh rows need qualitative review before context reward is treated as stable supervision.

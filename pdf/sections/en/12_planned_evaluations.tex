@@ -1,0 +1,31 @@
+\section{Planned Evaluations}
+
+\subsection{HotpotQA}
+
+HotpotQA should be included as planned evaluation, not as a completed result. It is valuable because multi-hop QA stresses evidence sufficiency more directly than simple claim verification. The current report does not include HotpotQA numbers because the local evaluation was not feasible at full scale and no curated Kaggle result has been finalized.
+
+The planned HotpotQA setup is:
+
+\begin{itemize}[leftmargin=*]
+  \item sampled evaluation, initially around 50 queries;
+  \item cached BM25 retrieval to avoid rebuilding the index per action;
+  \item MiMo-only generation for the first stable run;
+  \item gold-answer EM and token-F1 from the HotpotQA answer field;
+  \item RAGAS/MiMo post-hoc labels for answer relevance, faithfulness, correctness, and context sufficiency;
+  \item explicit report label: sampled evaluation, not full HotpotQA benchmark.
+\end{itemize}
+
+\subsection{Retriever Diversity}
+
+Current evidence mostly supports context-budget/action selection. To claim retrieval-context allocation, logged actions must include multiple retrieval strategies:
+
+\begin{itemize}[leftmargin=*]
+  \item BM25 baseline;
+  \item graph-BM25 / dictionary graph where applicable;
+  \item hybrid-RRF;
+  \item optional web-search as live stress test only, not mixed with reproducible BEIR claims.
+\end{itemize}
+
+\subsection{Larger Logged Query Groups}
+
+The action coverage diagnostics show exact-signature sparsity. More query groups and broader logged action families are needed before a learned selector can robustly beat strong smoothed baselines.

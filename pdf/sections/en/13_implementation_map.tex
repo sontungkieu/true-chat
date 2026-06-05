@@ -1,0 +1,25 @@
+\section{Implementation Map}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.2cm} >{\raggedright\arraybackslash}p{6.2cm} >{\raggedright\arraybackslash}p{4.2cm}}
+\toprule
+Component & Purpose & Main output \\
+\midrule
+CLI layer & Entry points for benchmark, BudgetRAG, and RLAIF commands. & User-facing commands. \\
+Action normalization & Normalize retrieval-context action dimensions. & Stable action signatures. \\
+RLAIF schemas & Schemas for actions, feedback, rewards, and preferences. & Validated JSONL records. \\
+Dataset builder & Convert BudgetRAG \code{query\_results.jsonl} into normalized datasets. & actions and feedback JSONL. \\
+Answer labeler & AI-judge answer labels with resume and JSON repair. & answer-label JSONL. \\
+Context labeler & AI-judge context sufficiency and chunk labels. & context-label JSONL. \\
+Reward builder & Build scalar rewards and preferences with guardrails. & rewards and preferences JSONL. \\
+Query splitter & Deterministic query-level split. & train/eval JSONL and manifest. \\
+Selector policies & Offline selector baselines. & policy artifact and eval summary. \\
+Pairwise audit & Direct pairwise judge audit. & pairwise-label JSONL. \\
+Context ablation runner & Full postprocess pipeline for context labels. & validation, reward deltas, selector sweeps. \\
+Multi-judge aggregator & Aggregate MiMo/DeepSeek/Groq audit labels. & multi-judge report and summary JSON. \\
+KV estimator & Analytical Qwen KV-cache estimates. & KV estimate report. \\
+\bottomrule
+\end{longtable}
+
+The corresponding source files are under \code{src/rag\_bench/} for modules and \code{scripts/} for standalone analysis scripts.
+
+The code-level test suite covers schema validation, builders, reward/preference logic, labeler hardening, split behavior, selector policies, analysis scripts, and secret handling. Current verification for this report branch is 214 passing tests.
