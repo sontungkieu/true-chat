@@ -99,6 +99,571 @@ def test_cli_run_rejects_invalid_adaptive_profile(capsys) -> None:
     assert "invalid choice" in captured.err
 
 
+def test_cli_rlaif_build_smoke_with_mocked_builder(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_build_rlaif_dataset(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "rlaif"),
+            "action_count": 2,
+            "feedback_count": 2,
+            "invalid_row_count": 0,
+            "feedback_provenance_counts": {"gold": 1, "missing": 1},
+            "missing_reason_counts": {"generation_skipped": 1},
+        }
+
+    monkeypatch.setattr(cli, "build_rlaif_dataset", fake_build_rlaif_dataset)
+
+    exit_code = cli.main(
+        [
+            "rlaif-build",
+            "--inputs",
+            str(tmp_path / "matrix"),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].inputs == (tmp_path / "matrix",)
+    assert seen["config"].output_dir == tmp_path / "out"
+    assert '"action_count": 2' in captured.out
+    assert '"gold": 1' in captured.out
+
+
+def test_cli_rlaif_reward_smoke_with_mocked_builder(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_build_rlaif_rewards(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "rlaif"),
+            "reward_count": 3,
+            "scored_reward_count": 2,
+            "preference_count": 1,
+            "reward_mode_counts": {"gold": 2, "missing_quality": 1},
+            "answer_label_count": 1,
+            "answer_label_merge_counts": {"used_answer_label": 1},
+            "context_label_count": 1,
+            "context_label_merge_counts": {"used_context_label": 1},
+            "context_quality_blend_weight": 0.4,
+            "context_support_blend_weight": 0.3,
+            "context_insufficient_penalty_weight": 0.25,
+            "preference_type_counts": {"context_policy_preference": 1},
+            "preference_reason_counts": {"pairwise_tie_v1_efficiency": 1},
+            "preference_skip_reason_counts": {"missing_quality": 1},
+            "reward_calibration": "pairwise_tie_v1",
+            "quality_tie_threshold": 0.1,
+            "support_tie_threshold": 0.2,
+            "tie_break_by_efficiency": True,
+            "invalid_row_count": 0,
+        }
+
+    monkeypatch.setattr(cli, "build_rlaif_rewards", fake_build_rlaif_rewards)
+
+    exit_code = cli.main(
+        [
+            "rlaif-reward",
+            "--actions",
+            str(tmp_path / "rlaif_actions.jsonl"),
+            "--feedback",
+            str(tmp_path / "rlaif_feedback.jsonl"),
+            "--answer-labels",
+            str(tmp_path / "rlaif_answer_labels.jsonl"),
+            "--context-labels",
+            str(tmp_path / "rlaif_context_labels.jsonl"),
+            "--context-quality-blend-weight",
+            "0.4",
+            "--context-support-blend-weight",
+            "0.3",
+            "--context-insufficient-penalty-weight",
+            "0.25",
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--quality-weight",
+            "0.7",
+            "--min-reward-delta",
+            "0.04",
+            "--reward-calibration",
+            "pairwise_tie_v1",
+            "--quality-tie-threshold",
+            "0.10",
+            "--support-tie-threshold",
+            "0.20",
+            "--tie-break-by-efficiency",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
+    assert seen["config"].feedback_path == tmp_path / "rlaif_feedback.jsonl"
+    assert seen["config"].answer_labels_path == tmp_path / "rlaif_answer_labels.jsonl"
+    assert seen["config"].context_labels_path == tmp_path / "rlaif_context_labels.jsonl"
+    assert seen["config"].context_quality_blend_weight == 0.4
+    assert seen["config"].context_support_blend_weight == 0.3
+    assert seen["config"].context_insufficient_penalty_weight == 0.25
+    assert seen["config"].output_dir == tmp_path / "out"
+    assert seen["config"].quality_weight == 0.7
+    assert seen["config"].min_reward_delta == 0.04
+    assert seen["config"].reward_calibration == "pairwise_tie_v1"
+    assert seen["config"].quality_tie_threshold == 0.10
+    assert seen["config"].support_tie_threshold == 0.20
+    assert seen["config"].tie_break_by_efficiency is True
+    assert '"reward_count": 3' in captured.out
+    assert '"used_answer_label": 1' in captured.out
+    assert '"used_context_label": 1' in captured.out
+    assert '"context_insufficient_penalty_weight": 0.25' in captured.out
+    assert '"context_policy_preference": 1' in captured.out
+    assert '"reward_calibration": "pairwise_tie_v1"' in captured.out
+
+
+def test_cli_rlaif_reward_rejects_negative_weight(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-reward",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--feedback",
+            "rlaif_feedback.jsonl",
+            "--quality-weight",
+            "-0.1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--quality-weight must be non-negative" in captured.err
+
+
+def test_cli_rlaif_reward_rejects_efficiency_tie_break_without_calibration(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-reward",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--feedback",
+            "rlaif_feedback.jsonl",
+            "--tie-break-by-efficiency",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--tie-break-by-efficiency requires --reward-calibration pairwise_tie_v1" in captured.err
+
+
+def test_cli_rlaif_split_smoke_with_mocked_splitter(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_split_rlaif_by_query(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "split"),
+            "seed": 42,
+            "train_ratio": 0.8,
+            "train_query_count": 8,
+            "eval_query_count": 2,
+            "train_reward_rows": 80,
+            "eval_reward_rows": 20,
+            "train_preferences": 30,
+            "eval_preferences": 5,
+            "dropped_cross_split_preferences": 4,
+            "dropped_missing_action_preferences": 1,
+        }
+
+    monkeypatch.setattr(cli, "split_rlaif_by_query", fake_split_rlaif_by_query)
+
+    exit_code = cli.main(
+        [
+            "rlaif-split",
+            "--rewards",
+            str(tmp_path / "rlaif_rewards.jsonl"),
+            "--preferences",
+            str(tmp_path / "rlaif_preferences.jsonl"),
+            "--output-dir",
+            str(tmp_path / "split"),
+            "--train-ratio",
+            "0.8",
+            "--seed",
+            "42",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
+    assert seen["config"].preferences_path == tmp_path / "rlaif_preferences.jsonl"
+    assert seen["config"].output_dir == tmp_path / "split"
+    assert seen["config"].train_ratio == 0.8
+    assert seen["config"].seed == 42
+    assert '"dropped_cross_split_preferences": 4' in captured.out
+
+
+def test_cli_rlaif_split_rejects_invalid_train_ratio(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-split",
+            "--rewards",
+            "rlaif_rewards.jsonl",
+            "--preferences",
+            "rlaif_preferences.jsonl",
+            "--output-dir",
+            "split",
+            "--train-ratio",
+            "1.0",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--train-ratio must be greater than 0 and less than 1" in captured.err
+
+
+def test_cli_rlaif_label_answers_smoke_with_mocked_labeler(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_label_rlaif_answers(config):
+        seen["config"] = config
+        return {
+            "output_path": str(tmp_path / "labels.jsonl"),
+            "action_count": 10,
+            "processed_count": 3,
+            "skipped_resume_count": 1,
+            "skipped_limit_count": 0,
+            "invalid_json_count": 0,
+            "missing_input_count": 0,
+            "error_count": 0,
+            "stopped_early": False,
+            "stop_reason": None,
+            "dry_run": True,
+            "judge_provider": "mimo",
+            "judge_model": "mimo-v2.5-pro",
+        }
+
+    monkeypatch.setattr(cli, "label_rlaif_answers", fake_label_rlaif_answers)
+
+    exit_code = cli.main(
+        [
+            "rlaif-label-answers",
+            "--actions",
+            str(tmp_path / "rlaif_actions.jsonl"),
+            "--output",
+            str(tmp_path / "labels.jsonl"),
+            "--judge-provider",
+            "mimo",
+            "--judge-model",
+            "mimo-v2.5-pro",
+            "--dry-run",
+            "--resume",
+            "--limit",
+            "3",
+            "--max-errors",
+            "2",
+            "--sleep-seconds",
+            "0.5",
+            "--json-retries",
+            "2",
+            "--max-context-chars",
+            "9000",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
+    assert seen["config"].output_path == tmp_path / "labels.jsonl"
+    assert seen["config"].dry_run is True
+    assert seen["config"].resume is True
+    assert seen["config"].limit == 3
+    assert seen["config"].max_errors == 2
+    assert seen["config"].sleep_seconds == 0.5
+    assert seen["config"].json_retries == 2
+    assert seen["config"].max_context_chars == 9000
+    assert '"processed_count": 3' in captured.out
+
+
+def test_cli_rlaif_label_answers_rejects_negative_limit(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-label-answers",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--output",
+            "labels.jsonl",
+            "--limit",
+            "-1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--limit must be non-negative" in captured.err
+
+
+def test_cli_rlaif_label_contexts_smoke_with_mocked_labeler(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_label_rlaif_contexts(config):
+        seen["config"] = config
+        return {
+            "output_path": str(tmp_path / "context_labels.jsonl"),
+            "action_count": 10,
+            "processed_count": 3,
+            "skipped_resume_count": 1,
+            "skipped_limit_count": 0,
+            "ambiguous_count": 2,
+            "invalid_json_count": 0,
+            "missing_input_count": 0,
+            "error_count": 0,
+            "stopped_early": False,
+            "stop_reason": None,
+            "dry_run": True,
+            "judge_provider": "mimo",
+            "judge_model": "mimo-v2.5-pro",
+        }
+
+    monkeypatch.setattr(cli, "label_rlaif_contexts", fake_label_rlaif_contexts)
+
+    exit_code = cli.main(
+        [
+            "rlaif-label-contexts",
+            "--actions",
+            str(tmp_path / "rlaif_actions.jsonl"),
+            "--output",
+            str(tmp_path / "context_labels.jsonl"),
+            "--judge-provider",
+            "mimo",
+            "--judge-model",
+            "mimo-v2.5-pro",
+            "--dry-run",
+            "--resume",
+            "--limit",
+            "3",
+            "--max-errors",
+            "2",
+            "--sleep-seconds",
+            "0.5",
+            "--json-retries",
+            "2",
+            "--max-context-chars",
+            "9000",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
+    assert seen["config"].output_path == tmp_path / "context_labels.jsonl"
+    assert seen["config"].dry_run is True
+    assert seen["config"].resume is True
+    assert seen["config"].limit == 3
+    assert seen["config"].max_errors == 2
+    assert seen["config"].sleep_seconds == 0.5
+    assert seen["config"].json_retries == 2
+    assert seen["config"].max_context_chars == 9000
+    assert '"ambiguous_count": 2' in captured.out
+
+
+def test_cli_rlaif_label_contexts_rejects_negative_limit(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-label-contexts",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--output",
+            "context_labels.jsonl",
+            "--limit",
+            "-1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--limit must be non-negative" in captured.err
+
+
+def test_cli_rlaif_label_pairs_smoke_with_mocked_labeler(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_label_rlaif_pairs(config):
+        seen["config"] = config
+        return {
+            "output_path": str(tmp_path / "pair_labels.jsonl"),
+            "action_count": 10,
+            "reward_count": 10,
+            "preference_count": 6,
+            "processed_count": 3,
+            "skipped_resume_count": 1,
+            "skipped_limit_count": 0,
+            "ambiguous_count": 2,
+            "tie_count": 1,
+            "invalid_json_count": 0,
+            "missing_input_count": 0,
+            "error_count": 0,
+            "stopped_early": False,
+            "stop_reason": None,
+            "dry_run": True,
+            "judge_provider": "mimo",
+            "judge_model": "mimo-v2.5-pro",
+        }
+
+    monkeypatch.setattr(cli, "label_rlaif_pairs", fake_label_rlaif_pairs)
+
+    exit_code = cli.main(
+        [
+            "rlaif-label-pairs",
+            "--actions",
+            str(tmp_path / "rlaif_actions.jsonl"),
+            "--rewards",
+            str(tmp_path / "rlaif_rewards.jsonl"),
+            "--preferences",
+            str(tmp_path / "rlaif_preferences.jsonl"),
+            "--output",
+            str(tmp_path / "pair_labels.jsonl"),
+            "--judge-provider",
+            "mimo",
+            "--judge-model",
+            "mimo-v2.5-pro",
+            "--dry-run",
+            "--resume",
+            "--limit",
+            "3",
+            "--max-errors",
+            "2",
+            "--sleep-seconds",
+            "0.5",
+            "--json-retries",
+            "2",
+            "--max-context-chars",
+            "9000",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].actions_path == tmp_path / "rlaif_actions.jsonl"
+    assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
+    assert seen["config"].preferences_path == tmp_path / "rlaif_preferences.jsonl"
+    assert seen["config"].output_path == tmp_path / "pair_labels.jsonl"
+    assert seen["config"].dry_run is True
+    assert seen["config"].resume is True
+    assert seen["config"].limit == 3
+    assert seen["config"].max_errors == 2
+    assert seen["config"].sleep_seconds == 0.5
+    assert seen["config"].json_retries == 2
+    assert seen["config"].max_context_chars == 9000
+    assert '"tie_count": 1' in captured.out
+
+
+def test_cli_rlaif_label_pairs_rejects_negative_limit(capsys) -> None:
+    exit_code = cli.main(
+        [
+            "rlaif-label-pairs",
+            "--actions",
+            "rlaif_actions.jsonl",
+            "--rewards",
+            "rlaif_rewards.jsonl",
+            "--preferences",
+            "rlaif_preferences.jsonl",
+            "--output",
+            "pair_labels.jsonl",
+            "--limit",
+            "-1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "--limit must be non-negative" in captured.err
+
+
+def test_cli_rlaif_train_smoke_with_mocked_trainer(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_train_offline_selector_policies(config):
+        seen["config"] = config
+        return {
+            "output_path": str(tmp_path / "rlaif_policy.json"),
+            "policy_count": 4,
+            "reward_count": 8,
+            "scored_reward_count": 7,
+            "preference_count": 3,
+            "query_group_count": 2,
+            "signature_count": 4,
+            "runtime_default_replacement": False,
+        }
+
+    monkeypatch.setattr(cli, "train_offline_selector_policies", fake_train_offline_selector_policies)
+
+    exit_code = cli.main(
+        [
+            "rlaif-train",
+            "--rewards",
+            str(tmp_path / "rlaif_rewards.jsonl"),
+            "--preferences",
+            str(tmp_path / "rlaif_preferences.jsonl"),
+            "--output",
+            str(tmp_path / "rlaif_policy.json"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
+    assert seen["config"].preferences_path == tmp_path / "rlaif_preferences.jsonl"
+    assert seen["config"].output_path == tmp_path / "rlaif_policy.json"
+    assert '"policy_count": 4' in captured.out
+    assert '"runtime_default_replacement": false' in captured.out
+
+
+def test_cli_rlaif_eval_smoke_with_mocked_evaluator(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_evaluate_offline_selector_policies(config):
+        seen["config"] = config
+        return {
+            "query_group_count": 2,
+            "policy_metrics": {
+                "fixed": {"coverage": 1.0, "mean_reward": 0.5},
+                "cheapest": {"coverage": 1.0, "mean_reward": 0.6},
+                "best_average": {"coverage": 1.0, "mean_reward": 0.7},
+                "oracle_logged": {"coverage": 1.0, "mean_reward": 0.8},
+            },
+            "runtime_default_replacement": False,
+            "held_out_query_eval": True,
+            "split_manifest_path": str(tmp_path / "split_manifest.json"),
+        }
+
+    monkeypatch.setattr(cli, "evaluate_offline_selector_policies", fake_evaluate_offline_selector_policies)
+
+    exit_code = cli.main(
+        [
+            "rlaif-eval",
+            "--rewards",
+            str(tmp_path / "rlaif_rewards.jsonl"),
+            "--policy",
+            str(tmp_path / "rlaif_policy.json"),
+            "--out-md",
+            str(tmp_path / "rlaif_eval_summary.md"),
+            "--split-manifest",
+            str(tmp_path / "split_manifest.json"),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert seen["config"].rewards_path == tmp_path / "rlaif_rewards.jsonl"
+    assert seen["config"].policy_path == tmp_path / "rlaif_policy.json"
+    assert seen["config"].out_md == tmp_path / "rlaif_eval_summary.md"
+    assert seen["config"].split_manifest_path == tmp_path / "split_manifest.json"
+    assert '"query_group_count": 2' in captured.out
+    assert '"best_average"' in captured.out
+    assert '"held_out_query_eval": true' in captured.out
+
+
 def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     seen = {}
 

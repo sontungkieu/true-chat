@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -83,11 +84,15 @@ def load_env_values(path: str | Path) -> dict[str, str]:
 
 
 def load_env_api_key(path: str | Path, variable: str, *, alias: str) -> ApiKey:
-    """Load one API key from an env file and return a log-safe alias."""
+    """Load one API key from the process env or an env file and return a log-safe alias."""
 
     variable = variable.strip()
     if not variable:
         raise SecretFormatError("API key variable name must not be empty")
+    value = os.environ.get(variable)
+    if value:
+        return ApiKey(alias=alias, value=value)
+
     values = load_env_values(path)
     value = values.get(variable)
     if not value:

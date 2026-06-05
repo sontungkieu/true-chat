@@ -51,6 +51,16 @@ def test_load_env_api_key_reads_named_variable_without_exposing_value(tmp_path: 
     assert key.value == "secret-mimo"
 
 
+def test_load_env_api_key_prefers_process_env_without_requiring_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_path = tmp_path / "missing.env"
+    monkeypatch.setenv("MIMO_API_KEY", "secret-from-env")
+
+    key = load_env_api_key(missing_path, "MIMO_API_KEY", alias="mimo")
+
+    assert key.alias == "mimo"
+    assert key.value == "secret-from-env"
+
+
 def test_load_env_api_key_fails_clearly_when_missing(tmp_path: Path) -> None:
     path = tmp_path / ".env"
     path.write_text("OTHER=value\n", encoding="utf-8")

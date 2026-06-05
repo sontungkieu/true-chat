@@ -14,7 +14,7 @@ Status: implemented and validated on `feature/budgetrag-phase1b`; pending final 
 ## Notes
 
 - Version bump: N/A. This repo currently has no `VERSION` or `versioning.py`.
-- PDF rebuild: N/A. This repo currently has no `pdf/` source directory.
+- PDF report: `pdf/main.pdf` is generated from `pdf/main.tex` and `pdf/references.bib`; LaTeX intermediates must be cleaned after each rebuild.
 - Mindmap update: N/A. No `*.xmind`, `*.drawio`, or `*.mm` files are tracked in this repo.
 
 ## BudgetRAG Phase 1B.1
@@ -59,10 +59,16 @@ Status: implemented and validated locally on `feature/budgetrag-phase1c2`; pendi
 
 ## BudgetRAG Phase 1C.3
 
-Status: planned on `internship`.
+Status: started on `feature/rlaif-retrieval-context-v0`.
 
 - Add a normalized answer-quality and context-evidence feedback layer for BudgetRAG action rows.
-- Keep gold metrics, RAGAS/MiMo judge scores, missing labels, and ambiguous judge results separate.
+- Add schema records for retrieval-context actions, answer feedback, context feedback, rewards, and preferences.
+- Add deterministic action ids that include retriever, fusion strategy, context policy, budget, adaptive profile, selected context action, and generator model while excluding source run ids.
+- Add `rlaif-build` to convert BudgetRAG `query_results.jsonl` outputs into `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md`.
+- Preserve answer text, retrieved records, context metrics, retrieval metrics, latency, token usage, KV estimates, feedback provenance, and missing-label reasons in offline datasets.
+- Keep gold metrics, RAGAS/AI judge scores, missing labels, and ambiguous judge results separate.
+- Harden AI judge provenance so MiMo, DeepSeek, Groq, and future judge rows use auditable provider/model fields instead of falling back to `heuristic`.
+- Allow legacy/full-context action rows without an explicit budget by preserving `budget_chars=null` as a stable action dimension.
 - Add explicit answer and context judge labeling paths with dry-run/resume support.
 - Label minimal evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and context sufficiency.
 - Produce auditable feedback artifacts that can be reused by Phase 1D RLAIF.
@@ -70,11 +76,51 @@ Status: planned on `internship`.
 
 ## BudgetRAG Phase 1D
 
-Status: planned on `internship`.
+Status: started on `feature/rlaif-retrieval-context-v0`.
 
 - Implement offline RLAIF reward and preference builders over Phase 1C.3 feedback.
 - Include retrieval strategy, fusion strategy, context policy, budget, adaptive profile, and generator model in the action space.
 - Keep answer quality and evidence support as primary reward terms while token, latency, and estimated KV costs remain bounded penalties.
 - Add quality guardrails so a cheaper context policy cannot win when it clearly harms answer quality.
 - Build both context-only preferences and retrieval-context preferences.
+- Add `rlaif-reward` to write `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md` from normalized RLAIF action/feedback files.
+- Preserve missing or ambiguous feedback as `reward=null` instead of converting absent quality into score zero.
+- Add pairwise preference skip reasons for missing quality, ambiguous feedback, small reward deltas, and quality guardrail failures.
+- Add `rlaif-train` to write an offline `rlaif_policy.json` artifact with fixed, cheapest, best-average, `family_smoothed_best_average`, `shrinkage_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged selector baselines.
+- Add `rlaif-eval` to report mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, coverage, and oracle gap.
+- Keep selector artifacts offline-only with `runtime_default_replacement=false`; they do not replace `adaptive-heuristic` in runtime defaults.
+- Run a Phase 1D selector smoke on real Phase 1C.3 outputs joined with RAGAS post-hoc answer relevancy and document it in `docs/reports/phase1d_rlaif_selector_smoke.md`.
+- Add `rlaif-split` for deterministic held-out splits by `benchmark + query_id`, keeping all actions for the same query in one split and dropping cross-split preferences.
+- Run held-out selector evaluation with `--split-manifest` and document it in `docs/reports/phase1d_rlaif_heldout_eval.md`.
+- Add `rlaif-label-answers` for resumable AI-judge answer labels over normalized action rows, with JSON repair, progress logging, incremental writes, and ambiguous/null handling for invalid or missing labels.
+- Harden MiMo key loading for RLAIF labelers so private Kaggle jobs can use an injected `MIMO_API_KEY` process environment variable without requiring `.secrets/.env` in the cloned repo.
+- Add `scripts/summarize_rlaif_labels.py` and `docs/reports/phase1d_rlaif_answer_labels_template.md` so MiMo/Groq/DeepSeek judge runs can be summarized as soon as outputs finish.
+- Add `rlaif-reward --answer-labels` so valid AI-judge labels can replace RAGAS feedback while invalid/ambiguous labels fall back cleanly instead of becoming score zero.
+- Add `scripts/estimate_local_qwen_kv_cache.py` and `docs/reports/local_qwen_kv_estimates.md` for analytical Qwen2.5 KV-cache estimates without loading model weights.
+- Add `rlaif-label-contexts` for resumable context-level RLAIF labels over normalized action rows, including selected/redundant/irrelevant chunk ids, context sufficiency, missing evidence, JSON repair, progress logging, and null-score handling for invalid or missing labels.
+- Add `scripts/summarize_rlaif_context_labels.py` and `docs/reports/phase1d_rlaif_context_labels_template.md` so context-label runs can be summarized for sufficiency, redundancy, missing evidence, dropped chunk-id hallucinations, and context quality.
+- Run the first real MiMo context-level RLAIF subset with 50 action rows, merge two safe parallel shards, summarize sufficiency/evidence/chunk-selection labels, and document the result in `docs/reports/phase1d_rlaif_context_labels_mimo50.md`.
+- Add non-default `rlaif-reward --context-labels` so clean non-ambiguous context labels can adjust reward diagnostics while ambiguous/invalid/missing context labels fall back cleanly, then document the MiMo50 context reward candidate in `docs/reports/phase1d_rlaif_context_reward_candidate.md`.
+- Add context reward ablation knobs for quality/support blending and insufficient-context penalty weight, plus `scripts/compare_rlaif_reward_sets.py` to report reward-delta distributions before using context candidates for selector training.
+- Add `scripts/validate_rlaif_context_labels.py` for sharded context-label merge diagnostics, including duplicate action ids, missing/unknown action ids, ambiguous/invalid labels, dropped unknown chunk ids, and deterministic merged output.
+- Add `scripts/run_context_reward_ablation_pipeline.py` and `docs/reports/phase1d_rlaif_full_context_reward_ablation_template.md` so full context-label outputs can be validated, merged, summarized, rebuilt into reward candidates, compared, and selector-swept as soon as Kaggle jobs finish.
+- Complete the full MiMo context-label ablation for all 192 Phase 1D action rows, merge existing labels with Kaggle shards 51-121 and 122-192, validate 177 clean usable labels with no missing/unknown/duplicate action ids, run penalty `0.25/0.50/1.00` reward ablations and six-seed selector sweeps, and document the result in `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`.
+- Add `scripts/select_rlaif_multijudge_audit_cases.py` to select high-impact context audit rows from MiMo insufficiency, large context-reward deltas, high answer quality with low context support, many irrelevant chunks, selector disagreement metadata, and optional pairwise disagreement labels.
+- Add deterministic multi-judge audit sharding so targeted DeepSeek/Groq jobs can run in parallel without overlapping action ids, while preserving full action rows for existing `rlaif-label-contexts` consumption.
+- Add `scripts/aggregate_rlaif_multijudge_audit.py` and `docs/reports/phase1d_rlaif_multijudge_audit_template.md` to summarize MiMo/DeepSeek/Groq agreement, MiMo-harsh rows, consensus-insufficient rows, and high-disagreement rows without averaging judges or changing reward defaults.
+- Complete the first targeted multi-judge audit with 60 high-impact rows: DeepSeek v4 Flash completed a full 192-action secondary context audit, Groq Qwen3 32B labeled the 60-row targeted subset across local/Kaggle shards, and `docs/reports/phase1d_rlaif_multijudge_audit.md` records 51 consensus-insufficient rows plus 6 MiMo-harsh/high-disagreement rows.
+- Add `docs/reports/phase1d_retriever_diversity_run_plan.md` and `scripts/run_retriever_diversity_budgetrag_matrix.sh` to plan `bm25`, `graph-bm25`, and `hybrid-rrf` logged-action coverage before claiming retrieval-strategy allocation.
+- Add the first learned offline selector baseline, `linear_reward_model`, using non-leaking retrieval-context action/cost features and document its held-out result in `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`.
+- Add `scripts/run_rlaif_split_sweep.py` for multi-seed held-out selector evaluation and document the six-seed result in `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`.
+- Add `scripts/inspect_rlaif_action_coverage.py` for action signature sparsity and train/eval coverage diagnostics, then document the result in `docs/reports/phase1d_rlaif_action_coverage.md`.
+- Add `family_smoothed_best_average` to repair exact-signature coverage loss via retrieval-context-family and context-policy backoff, then document the six-seed result in `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`.
+- Add `smoothed_linear_selector` with train-only aggregate reward features for exact signatures, retrieval-context families, context policies, and retrievers, then document the six-seed result in `docs/reports/phase1d_rlaif_v2_smoothed_linear_selector_eval.md`.
+- Add `shrinkage_smoothed_best_average` to score each row with empirical-Bayes shrinkage from exact signature to retrieval-context family, context policy, and global train means, then document the six-seed result in `docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md`.
+- Add `rlaif-label-pairs` for direct pairwise AI-judge comparisons of reward-derived retrieval-context action pairs, with A/B/tie/ambiguous decisions, quality/support/efficiency winners, resume support, JSON repair, and null-score handling for invalid or missing pair data.
+- Add `scripts/summarize_rlaif_pairwise_labels.py` and `docs/reports/phase1d_rlaif_pairwise_labels_template.md` so direct pairwise labels can be summarized for reward-preference agreement, disagreement, tie/ambiguous rates, confidence, quality regret, and unsupported-claim risk.
+- Complete the full MiMo answer-label Kaggle run for the Phase 1D selector smoke, rebuild rewards with `rlaif-reward --answer-labels`, rerun held-out split/train/eval, and document the result in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.
+- Run a 50-pair direct MiMo pairwise audit over AI-judge reward-derived preferences, summarize reward/preference agreement, and document the result in `docs/reports/phase1d_rlaif_pairwise_mimo50.md`.
+- Add pairwise-calibrated reward diagnostics to detect small quality/support deltas where direct pairwise judge prefers lower resource cost, and document the MiMo-50 result in `docs/reports/phase1d_rlaif_pairwise_calibration_diagnostics.md`.
+- Add opt-in `pairwise_tie_v1` reward calibration for preference construction, keep scalar reward/default behavior unchanged, and document the calibrated candidate in `docs/reports/phase1d_rlaif_pairwise_calibrated_reward_candidate.md`.
+- Keep larger held-out evaluation pending until answer/context labels are richer than RAGAS answer relevancy.
 - Train/evaluate a lightweight offline contextual bandit/selector before considering runtime use.

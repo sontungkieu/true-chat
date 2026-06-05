@@ -4,6 +4,30 @@
 
 Implement RLAIF for BudgetRAG on branch `internship` without breaking the Phase 1B/1C context-budgeting baseline.
 
+## Current Framing And Guardrails
+
+Current RLAIF/BudgetRAG infrastructure is strong enough to support end-to-end offline experiments:
+
+```text
+RLAIF labels -> reward/preference -> held-out eval -> selector baselines -> diagnostics
+```
+
+The current result bottlenecks are still data and coverage, not algorithmic sophistication:
+
+- context labels are not full yet;
+- logged query/action data is still small;
+- retriever diversity is low;
+- exact action signatures remain sparse.
+
+Therefore the next bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm. Do not add DPO, PPO, GRPO, runtime KV pruning, or a complex reward model in this phase. Current results should be framed as evidence that the infrastructure works, while learned selectors remain data-limited.
+
+Do not overclaim:
+
+- This is RLAIF-style AI feedback, not human preference learning.
+- The selector is offline logged-candidate evaluation, not online RL.
+- Pairwise RLAIF currently audits and calibrates scalar rewards; it does not train the selector unless a pairwise ranker is implemented later.
+- Context reward remains a non-default candidate until full-label ablation and multi-seed evaluation support it.
+
 The work is split into two connected phases:
 
 - **Phase 1C.3: answer/context feedback layer.** Produce reliable per-action answer feedback and context-evidence feedback from gold metrics, RAGAS/MiMo judges, and existing BudgetRAG matrix outputs.
@@ -37,8 +61,9 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 ## Phase 1C.3 Implementation Plan: Feedback Layer
 
 1. Normalize action rows
+   - Status: dataset builder implemented on `feature/rlaif-retrieval-context-v0`.
    - Read one or more `query_results.jsonl` files from BudgetRAG runs.
-   - Extract stable keys: benchmark, query id, question, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected adaptive action, generator model, answer, references, context metrics, latency, and token usage.
+   - Extract stable keys: benchmark, query id, question, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected adaptive action, generator model, answer, references, context metrics, latency, and token usage.
    - Assign an `action_id` that is deterministic across runs.
    - Represent actions with both retrieval and context dimensions:
 
@@ -54,15 +79,22 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 ```
 
 2. Normalize feedback sources
+   - Status: dataset builder implemented for gold, existing RAGAS fields, existing AI judge fields, and missing-label reasons.
    - Use gold metrics when present: exact match and token F1.
-   - Use RAGAS/MiMo judge fields when present: answer relevancy, faithfulness, answer correctness, and judge rationale.
-   - Record feedback provenance explicitly: `gold`, `ragas`, `mimo_judge`, `heuristic`, or `missing`.
+   - Use RAGAS/AI judge fields when present: answer relevancy, faithfulness, answer correctness, and judge rationale.
+   - Record feedback provenance explicitly: `gold`, `ragas`, `ai_judge`, `mimo_judge` for backward compatibility, `heuristic`, or `missing`.
+   - Store concrete AI judge identity in `judge_provider` and `judge_model` so MiMo, DeepSeek, and Groq rows are auditable without being mislabeled as heuristic.
    - Do not silently treat missing feedback as zero accuracy.
 
+   Note: full-context or legacy baseline rows without an explicit context budget are valid and use `budget_chars: null` in the action identity payload.
+
 3. Add answer-labeling when feedback is absent
+   - Status: implemented on `feature/rlaif-retrieval-context-v0`.
    - If judge fields are not present, implement an explicit answer-labeling path instead of leaving everything as `missing`.
    - The labeling path must support `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, and `--judge-model`.
    - It should write incrementally so a long MiMo judge run can resume safely.
+   - Invalid JSON, empty completions, missing answers, and missing contexts become ambiguous labels with `quality_score: null`, never score zero.
+   - MiMo V2.5 can spend hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
 
 ```bash
 uv run rag-bench rlaif-label-answers \
@@ -74,11 +106,68 @@ uv run rag-bench rlaif-label-answers \
   --resume
 ```
 
+Summarize answer labels and compare with RAGAS answer relevancy:
+
+```bash
+uv run python scripts/summarize_rlaif_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels.jsonl \
+  --ragas-feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_answer_labels_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_answer_labels_summary.json
+```
+
 4. Add context-level RLAIF feedback
+   - Status: schema baseline and `rlaif-label-contexts` CLI implemented; first real MiMo subset completed on 50 action rows and documented in `docs/reports/phase1d_rlaif_context_labels_mimo50.md`.
    - Judge candidate retrieved/context chunks before generation.
    - Identify selected evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and sufficiency.
+   - The labeling path supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, `--judge-model`, JSON repair, progress logging, and incremental writes.
+   - MiMo key loading now prefers the process environment before local `--env-file`, so private Kaggle jobs can inject `MIMO_API_KEY` without creating `.secrets/.env` in the cloned repo.
+   - Missing contexts, invalid JSON, empty completions, and judge errors become ambiguous labels with null scores, never score zero.
+   - Summarize context labels with `scripts/summarize_rlaif_context_labels.py` to track sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk ids, and context quality statistics.
+   - Current subset result: 50 valid JSON labels, 0 invalid JSON, 0 errors, 4 ambiguous rows, 18 sufficient rows, 29 insufficient rows, mean context quality 0.478, mean evidence support 0.410, and mean selected chunks 1.38.
+   - Implemented non-default `rlaif-reward --context-labels` merge path and filter `ambiguous=true` rows out of clean context supervision.
+   - Current context reward candidate result: clean context labels used 46/50; ambiguous context rows fallback 4/50; context labels changed 36 reward rows, with 31 reward decreases and 5 increases; preference count rose from 722 to 822 because context evidence labels sharpened some action-pair gaps.
+   - Added ablation knobs: `--context-quality-blend-weight`, `--context-support-blend-weight`, and `--context-insufficient-penalty-weight`.
+   - Added `scripts/compare_rlaif_reward_sets.py` to report reward delta distribution, clipped reward counts, and changed rows by context sufficiency.
+   - MiMo50 penalty-weight ablation: insufficient penalty `0.25/0.50/1.00` keeps 36 changed rows but changes mean changed-only reward delta from `-0.397` to `-0.558` to `-0.880`, confirming that weight `1.0` is aggressive.
+   - Added `scripts/validate_rlaif_context_labels.py` to validate and dedupe parallel context-label shards before reward construction.
+   - Added `scripts/run_context_reward_ablation_pipeline.py` to orchestrate full-label postprocess: validate/merge, summarize, rebuild answer-only baseline, rebuild context reward candidates, compare reward deltas, and optionally run multi-seed selector sweeps.
+   - Full MiMo context-label run completed for 192/192 action rows by merging existing labels 1-50 with Kaggle shards 51-121 and 122-192.
+   - Full-label validation result: 192 labels, 177 clean usable labels, 15 ambiguous labels, 0 invalid JSON, 0 missing action ids, 0 unknown action ids, 0 duplicate action ids, and 0 dropped unknown chunk ids.
+   - Full context summary: 110 sufficient contexts, 76 insufficient contexts, sufficiency rate 0.591, mean selected chunks 1.276, mean irrelevant chunks 3.708, mean context quality 0.602, and mean evidence support 0.556.
+   - Full context reward ablation result: context candidates changed 140/192 reward rows. Penalty `0.25/0.50/1.00` has mean changed-only deltas `-0.212/-0.316/-0.525` and preference counts `952/946/944`. Penalty `0.25` is the conservative candidate; penalty `1.00` remains diagnostic.
+   - Full context ablation report: `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
+
+4b. Add direct pairwise RLAIF labels
+   - Status: `rlaif-label-pairs` CLI implemented; a 50-pair MiMo audit has been run and documented in `docs/reports/phase1d_rlaif_pairwise_mimo50.md`.
+   - Use `rlaif_preferences.jsonl` only as a source of comparable action pairs.
+   - Present Action A as the reward-derived chosen action and Action B as the rejected action, but instruct the judge to decide independently.
+   - Judge only from logged question, answers, retrieved contexts, and resource costs; do not browse or use external knowledge.
+   - Output `chosen=A|B|null`, `tie`, `ambiguous`, answer-quality winner, evidence-support winner, efficiency winner, quality-regret flag, unsupported-claim risk, confidence, and short rationale.
+   - Invalid JSON, missing actions, missing rewards, missing answers, and missing contexts become ambiguous labels with null confidence, never score zero.
+   - Summarize pairwise labels with `scripts/summarize_rlaif_pairwise_labels.py` to track A/B/tie/ambiguous counts, reward-preference agreement, disagreement, confidence, quality regret, and unsupported-claim risk.
+   - This is for reward/preference calibration and selector analysis only; do not train DPO/reward model or replace runtime defaults in v1.
+   - Initial MiMo-50 audit result: 50 valid JSON labels, 2 ambiguous timeout labels, 41 A wins, 7 B wins, 0 ties, and 0.854 agreement over non-ambiguous decisions.
+   - The observed disagreements cluster around cases where scalar reward prefers slightly higher quality/support scores while the direct judge treats both answers as acceptable or correct abstentions and then favors lower resource cost.
+   - Pairwise-calibrated diagnostics are implemented in `scripts/diagnose_rlaif_pairwise_calibration.py`.
+   - Initial diagnostic result with candidate thresholds `quality=0.10` and `support=0.20`: 38 small quality/support delta pairs, 35 cheaper-wins-when-tied, and 5 scalar-over-quality disagreements, all in `query_id=128`.
+   - Opt-in `pairwise_tie_v1` reward calibration is implemented for preference construction. Default remains `none`; scalar reward rows are unchanged. Initial calibrated candidate creates 1270 preferences, including 900 `pairwise_tie_v1_efficiency` preferences, and is documented in `docs/reports/phase1d_rlaif_pairwise_calibrated_reward_candidate.md`.
+   - Multi-judge audit should wait until full MiMo context reward ablation is available. Use DeepSeek/Groq only on targeted subsets first: MiMo context-insufficient rows, strong reward deltas, selector disagreement cases, and pairwise reward-vs-judge disagreement cases. This is an audit step, not the main blocking path.
+
+```bash
+uv run rag-bench rlaif-label-pairs \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --limit 50 \
+  --resume \
+  --sleep-seconds 0.5
+```
 
 ```bash
 uv run rag-bench rlaif-label-contexts \
@@ -88,6 +177,11 @@ uv run rag-bench rlaif-label-contexts \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
   --limit 50 \
   --resume
+
+uv run python scripts/summarize_rlaif_context_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.json
 ```
 
 Context label schema:
@@ -106,7 +200,7 @@ Context label schema:
   "context_quality_score": 0.85,
   "judge_provider": "mimo",
   "judge_model": "mimo-v2.5-pro",
-  "provenance": "mimo_judge"
+  "provenance": "ai_judge"
 }
 ```
 
@@ -117,9 +211,11 @@ Context label schema:
    - Keep raw judge rationale separate from model inputs so it can be audited later.
 
 6. Outputs
+   - Status: `rlaif-build` writes the first three files below; context labeling outputs remain pending.
    - `rlaif_actions.jsonl`: one normalized candidate action per query/run.
    - `rlaif_feedback.jsonl`: one feedback record per candidate action.
    - `rlaif_answer_labels.jsonl`: explicit judge labels for answers when source runs do not already contain judge fields.
+   - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward/preference calibration.
    - `rlaif_context_labels.jsonl`: context-level RLAIF labels per action.
    - `rlaif_context_preferences.jsonl`: context sufficiency/minimality preference rows.
    - `rlaif_feedback_summary.md`: coverage, missing-label reasons, quality distributions, and judge source counts.
@@ -127,9 +223,11 @@ Context label schema:
 ## Phase 1D Implementation Plan: RLAIF Reward And Preference Layer
 
 1. Build scalar rewards
+   - Status: dataset-level reward builder implemented on `feature/rlaif-retrieval-context-v0`.
+   - Status: optional `--answer-labels` merge path implemented; valid AI-judge labels override original feedback, while invalid/ambiguous/missing labels fall back to original feedback when available and never become score zero.
    - Convert quality, efficiency, and latency into a bounded scalar reward.
    - Default priority: answer quality dominates efficiency.
-   - Proposed default formula:
+   - Implemented default formula:
      - `quality = token_f1` when gold exists.
      - Else `quality = weighted judge score` from answer correctness, answer relevancy, and faithfulness.
      - `evidence_support = context evidence support score` when context labels exist.
@@ -147,10 +245,12 @@ Context label schema:
      - `w_kv = 0.05`
      - `w_error = 1.0`
      - `w_unsupported = 1.0`
-   - Store all components, weights, and provenance in every reward row.
+   - Store all components, weights, provenance, and `reward_mode` in every reward row.
+   - Missing or ambiguous quality writes a reward row with `reward = null` and `reward_mode = missing_quality` or `ambiguous_feedback`; it is not converted to score zero.
    - Do not use KV savings as the only positive efficiency reward. Very short contexts must still lose when quality or support drops.
 
 2. Build pairwise preferences
+   - Status: dataset-level preference builder implemented on `feature/rlaif-retrieval-context-v0`.
    - Build two preference sets:
      - `context_policy_preference`: group by benchmark + query id + retriever + top-k + generator model, then compare context policies/budgets inside the same retriever.
      - `retrieval_context_preference`: group by benchmark + query id + top-k + generator model, then compare retrieval strategy + context policy combinations across retrievers.
@@ -167,19 +267,31 @@ Context label schema:
      - reason code
 
 3. Train the first offline policy
+   - Status: offline selector baselines implemented on `feature/rlaif-retrieval-context-v0`.
    - V1 should be lightweight and auditable, not PPO/DPO fine-tuning.
-   - Start with an offline contextual bandit table or logistic/ranking model over existing features:
-     - query length
-     - candidate count
-     - score gap/entropy/confidence
-     - top document length stats
-     - retrieval strategy
-     - fusion strategy
-     - requested budget
-     - fixed policy/adaptive profile
-   - Output a learned selector artifact that can be evaluated offline before any runtime use.
+   - Implemented baselines:
+     - `fixed`: choose the most common scored action signature when it is available for a query group.
+     - `cheapest`: choose the lowest normalized token + latency + KV cost in the logged query group.
+     - `best_average`: choose the available action signature with the highest training mean reward.
+     - `family_smoothed_best_average`: back off from exact signature mean reward to retrieval-context-family and context-policy mean reward.
+     - `shrinkage_smoothed_best_average`: score each row with empirical-Bayes shrinkage from exact signature to retrieval-context family, context policy, and global train means.
+     - `linear_reward_model`: learned offline ridge-regression selector over retrieval-context action/cost features, excluding reward/quality/support labels and preference outcomes.
+     - `smoothed_linear_selector`: learned offline ridge-regression selector with train-only aggregate reward means/counts for exact signatures, retrieval-context families, context policies, and retrievers.
+     - `oracle_logged`: offline upper bound that chooses the highest observed reward in each logged query group.
+   - Output `rlaif_policy.json` as an offline selector artifact before any runtime use.
+   - Keep pairwise ranker, contextual bandit table, and LinUCB as later steps once the reward dataset is large enough.
 
 4. Evaluate against existing baselines
+   - Status: offline selector evaluator implemented on `feature/rlaif-retrieval-context-v0`.
+   - Status: Phase 1D selector smoke completed and documented in `docs/reports/phase1d_rlaif_selector_smoke.md`.
+   - Status: held-out query split/eval implemented and documented in `docs/reports/phase1d_rlaif_heldout_eval.md`.
+   - Status: full MiMo answer-label run completed on Kaggle, rewards rebuilt with `--answer-labels`, held-out split/train/eval rerun, and documented in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.
+   - Status: first learned offline selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`.
+   - Status: multi-seed held-out selector sweep implemented and documented in `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`.
+   - Status: action coverage/signature sparsity diagnostics implemented and documented in `docs/reports/phase1d_rlaif_action_coverage.md`.
+   - Status: family-smoothed selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`.
+   - Status: smoothed linear selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_smoothed_linear_selector_eval.md`.
+   - Status: shrinkage-smoothed selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -191,15 +303,65 @@ Context label schema:
      - latency
      - preference win rate
      - abstention/ambiguous rate
+   - Implemented first-pass metrics:
+     - mean reward
+     - mean quality
+     - normalized token, latency, and KV cost
+     - selected action distribution
+     - scored coverage and selection coverage
+     - oracle gap
    - The learned policy must not replace `adaptive-heuristic` by default until it beats baseline under quality guardrails.
    - The learned RLAIF/bandit policy must not replace `adaptive-heuristic` as the default runtime policy until it passes offline evaluation and quality guardrails.
+   - Current smoke caveat: the first selector smoke used the same RAGAS-joined logged rewards for train/eval, so it is a resubstitution/offline sanity check rather than held-out generalization.
+   - Current held-out result: `rlaif-split` writes deterministic `benchmark + query_id` train/eval files and `rlaif-eval --split-manifest` records `held_out_query_eval=true`.
+   - Current multi-seed result: `linear_reward_model` beats `cheapest` on average reward and oracle gap while keeping full coverage, but does not consistently beat `best_average` across seeds.
+   - Current action coverage result: exact signatures cover about 0.911 held-out eval groups, matching `best_average` coverage; collapsed retrieval-context families cover 1.000, suggesting family-level backoff before a pairwise ranker.
+   - Current family-smoothed result: coverage reaches 1.000 and oracle gap improves over `best_average`, but mean reward/quality still trail exact-signature `best_average`.
+   - Current smoothed-linear result: coverage stays 1.000 and reward/oracle gap improve slightly over `linear_reward_model`, but it still does not beat `best_average` or `family_smoothed_best_average` on the six-seed mean.
+   - Current shrinkage-smoothed result: coverage stays 1.000, reward improves to 0.602, quality to 0.773, and oracle gap to 0.070; this is the strongest full-coverage non-oracle baseline so far, but still trails `best_average` on reward/quality.
+   - Pairwise calibration limitation: `pairwise_tie_v1` currently changes preference construction and diagnostics, but reward-based selectors still train on scalar reward rows; pairwise preferences affect selection only after a pairwise ranker or calibrated scalar reward path is added.
+   - Cost-feature limitation: current selector cost features are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before pre-generation selection.
+   - Current full-context result: all 192 MiMo context labels have been merged and ablated; penalty `0.25` is the conservative non-default context reward candidate, while `1.00` remains diagnostic.
+   - Current audit result: the first targeted multi-judge audit is complete on 60 high-impact rows, with MiMo/DeepSeek/Groq labels, 51 consensus-insufficient rows, 6 MiMo-harsh/high-disagreement rows, and no invalid JSON or judge errors in the secondary judge outputs.
+   - Next evaluator change: inspect the 6 MiMo-harsh rows and 51 consensus-insufficient rows as calibration examples, then expand logged query groups and retriever diversity before reassessing whether a pairwise ranker is justified.
+   - Retrieval-strategy selection claims require broader logged actions with multiple retrievers such as `bm25`, `graph-bm25`, and `hybrid-rrf`. Current evidence mostly supports context-budget/action selection, not robust retrieval-strategy allocation. Web-search actions remain live stress tests only and must not be mixed with reproducible BEIR benchmark claims.
 
 5. Outputs
+   - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and `rlaif-label-contexts` write the implemented files below; the full 192-action MiMo context-label run, context reward ablations, and six-seed selector sweeps are complete.
    - `rlaif_rewards.jsonl`
    - `rlaif_preferences.jsonl`
+   - `rlaif_reward_summary.md`
    - `rlaif_context_preferences.jsonl`
-   - `rlaif_policy.json`
-   - `rlaif_eval_summary.md`
+   - `split_manifest.json`: deterministic query-level split manifest.
+   - `split_summary.md`: query-level split summary.
+   - `rlaif_policy.json`: fixed, cheapest, best-average, `family_smoothed_best_average`, `shrinkage_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged offline selector baselines.
+   - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
+   - `selector_sweep_summary.md`: multi-seed selector mean/std report.
+   - `rlaif_action_coverage.md`: action signature sparsity and split coverage diagnostics.
+   - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
+   - `rlaif_context_labels_mimo50_summary.md`: context-label sufficiency, evidence support, minimality, and chunk-selection summary.
+   - `rlaif_reward_summary.md` with `--context-labels`: non-default context reward candidate summary with clean/fallback context-label merge counts.
+   - `reward_delta_summary.md`: reward-delta distribution comparing answer-only and context-label candidates.
+   - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
+   - `rlaif_pairwise_labels_summary.md`: direct pairwise label agreement and risk summary.
+   - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
+   - `docs/reports/phase1d_rlaif_heldout_eval.md`: curated held-out query eval report.
+   - `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`: curated held-out query eval report after full MiMo answer labels and `rlaif-reward --answer-labels`.
+   - `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`: curated held-out query eval report for the first learned offline selector baseline.
+   - `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`: curated multi-seed selector robustness report.
+   - `docs/reports/phase1d_rlaif_action_coverage.md`: curated action coverage and signature sparsity report.
+   - `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`: curated family-smoothed selector report.
+   - `docs/reports/phase1d_rlaif_v2_smoothed_linear_selector_eval.md`: curated smoothed-linear selector report.
+   - `docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md`: curated shrinkage-smoothed selector report.
+   - `docs/reports/phase1d_rlaif_context_labels_mimo50.md`: curated first real context-level RLAIF subset report.
+   - `docs/reports/phase1d_rlaif_context_reward_candidate.md`: curated non-default reward candidate report after merging clean MiMo50 context labels.
+   - `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`: curated full 192-action context-label validation, reward ablation, and multi-seed selector sweep report.
+   - `docs/reports/phase1d_rlaif_multijudge_audit_template.md`: targeted multi-judge audit template for MiMo/DeepSeek/Groq agreement, MiMo-harsh rows, and consensus-insufficient rows.
+   - `docs/reports/phase1d_rlaif_multijudge_audit.md`: curated targeted multi-judge audit report over 60 high-impact rows using MiMo, DeepSeek v4 Flash, and Groq Qwen3 32B.
+   - `docs/reports/phase1d_retriever_diversity_run_plan.md`: retriever-diversity run plan for `bm25`, `graph-bm25`, and `hybrid-rrf` logged action coverage.
+   - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
+   - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
+   - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.
    - Optional CSV summary for slides/reports.
 
 ## Non-Blocking KV/Qwen Scaffold
@@ -213,11 +375,13 @@ Phase 1D should not implement full KV pruning, but it should leave a clear path 
 
 ## CLI And File Layout
 
-Proposed CLI:
+Current reward/preference CLI:
 
 ```bash
-uv run rag-bench rlaif-build \
-  --inputs benchmark_results/budgetrag/<matrix-run> \
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels.jsonl \
   --output-dir benchmark_results/rlaif/<run-name> \
   --quality-weight 0.75 \
   --support-weight 0.10 \
@@ -248,15 +412,87 @@ uv run rag-bench rlaif-label-contexts \
   --judge-model mimo-v2.5-pro \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
   --resume
+
+uv run python scripts/summarize_rlaif_context_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_context_labels_summary.json
 ```
 
-Optional follow-up:
+Pairwise preference labeling:
 
 ```bash
-uv run rag-bench rlaif-train \
-  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+uv run rag-bench rlaif-label-pairs \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
-  --output benchmark_results/rlaif/<run-name>/rlaif_policy.json
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --limit 50 \
+  --resume \
+  --sleep-seconds 0.5
+
+uv run python scripts/summarize_rlaif_pairwise_labels.py \
+  --input benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo_summary.json
+```
+
+After the current Kaggle answer-label job completes, use this auditable path before writing a curated report:
+
+```bash
+uv run python scripts/summarize_rlaif_labels.py \
+  --labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --ragas-feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo_summary.json
+
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>_ai_judge
+
+uv run rag-bench rlaif-split \
+  --rewards benchmark_results/rlaif/<run-name>_ai_judge/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>_ai_judge/rlaif_preferences.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>_ai_judge/split_seed42 \
+  --train-ratio 0.8 \
+  --seed 42
+
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/train_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/train_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/rlaif_policy.json
+
+uv run rag-bench rlaif-eval \
+  --rewards benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/eval_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/rlaif_policy.json \
+  --split-manifest benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/split_manifest.json \
+  --out-md benchmark_results/rlaif/<run-name>_ai_judge/split_seed42/rlaif_eval_summary.md
+```
+
+Offline selector baselines:
+
+```bash
+uv run rag-bench rlaif-split \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>/split_seed42 \
+  --train-ratio 0.8 \
+  --seed 42
+
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/train_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/split_seed42/train_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json
+
+uv run rag-bench rlaif-eval \
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/eval_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json \
+  --out-md benchmark_results/rlaif/<run-name>/split_seed42/rlaif_eval_summary.md \
+  --split-manifest benchmark_results/rlaif/<run-name>/split_seed42/split_manifest.json
 ```
 
 Default output directory:
@@ -275,6 +511,9 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - Build scalar rewards with stable, bounded values.
    - Build context-only pairwise preferences only inside the same query/retriever group.
    - Build retrieval-context preferences across retrievers for the same query/model.
+   - Train fixed, cheapest, best-average, `family_smoothed_best_average`, `shrinkage_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged offline selector baselines.
+   - Split reward/preference rows by `benchmark + query_id` so action rows for the same query cannot leak across train/eval.
+   - Evaluate selector reward, quality, cost, coverage, selected-action distribution, and oracle gap.
    - Enforce quality guardrails so efficiency cannot win over a clearly worse answer.
    - Enforce context sufficiency guardrails so minimality cannot win over missing evidence.
    - Reject ambiguous or invalid judge rows.
@@ -282,6 +521,11 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
 2. CLI tests
    - `rag-bench rlaif-build` writes all expected files on a tiny fixture.
    - `rag-bench rlaif-label-answers --dry-run` and `rag-bench rlaif-label-contexts --dry-run` write valid placeholder labels without network calls.
+   - `rag-bench rlaif-label-contexts` filters unknown judge-returned chunk ids and preserves null scores for missing/ambiguous labels.
+   - `rag-bench rlaif-label-pairs --dry-run` writes ambiguous placeholder labels without network calls.
+   - `rag-bench rlaif-label-pairs` preserves null confidence for missing/ambiguous pair data and records A/B/tie decisions without trusting reward-derived preferences.
+   - `scripts/summarize_rlaif_pairwise_labels.py` reports reward-preference agreement, disagreement, ties, ambiguity, confidence, quality regret, and unsupported-claim risk.
+   - `scripts/summarize_rlaif_context_labels.py` reports sufficiency, missing evidence, chunk selection counts, dropped unknown chunk ids, and score statistics.
    - Labeling commands support `--resume` without duplicating completed action ids.
    - Invalid inputs fail with actionable errors.
    - Output records do not include secrets or provider API keys.
@@ -310,10 +554,14 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
 ## Definition Of Done
 
 - Phase 1C.3 feedback schema is implemented or explicitly stubbed with tests.
-- Context-level RLAIF labels are represented in schema/tests and can be generated through a dry-run labeler.
+- Context-level RLAIF labels are represented in schema/tests and have a first real MiMo-50 subset report.
 - Phase 1D reward/preference builder is implemented and covered by tests.
 - Both context-only and retrieval-context preference modes are represented.
 - CLI can build rewards/preferences from existing BudgetRAG output folders.
+- CLI can rebuild rewards with optional answer-label files without treating invalid labels as zero quality.
+- CLI can rebuild rewards with optional context-label files without treating ambiguous/invalid context labels as zero quality.
+- CLI exposes context-label blend and insufficient-penalty weights so aggressive candidates can be ablated before selector training.
 - Summary markdown explains reward coverage, preference coverage, and tradeoffs.
+- Answer-label and local Qwen KV-cache summary scripts are documented and covered by tests.
 - `README.md` and `milestones.md` are updated when implementation lands.
 - Existing test suite still passes.

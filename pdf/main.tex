@@ -1,0 +1,418 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\IfFileExists{newtxtext.sty}{%
+  \usepackage{newtxtext}
+  \usepackage{newtxmath}
+}{%
+  \usepackage{mathptmx}
+}
+\usepackage[margin=2.35cm]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\sloppy
+
+\title{\textbf{Báo cáo kỹ thuật: BudgetRAG và RLAIF cho lựa chọn retrieval--context}}
+\author{Branch: \texttt{feature/rlaif-retrieval-context-v0}}
+\date{Ngày 04 tháng 06 năm 2026}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
+\toprule
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, non-default \texttt{rlaif-reward --context-labels}, context reward ablation knobs, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{family\_smoothed\_best\_average}, \texttt{shrinkage\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector}, multi-seed selector sweep, action coverage diagnostics, targeted multi-judge audit tooling, retriever-diversity run plan, answer/context/pairwise-label summaries, reward-delta diagnostics, pairwise calibration diagnostics và Qwen KV estimates \\
+Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
+Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
+Trạng thái test gần nhất & \texttt{214 passed} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Tóm tắt}
+
+BudgetRAG hiện đã chuyển từ một hệ thống so sánh chiến thuật context-budget thủ công sang một nền tảng có thể tạo dữ liệu RLAIF offline. Điểm thay đổi quan trọng là action không còn chỉ là ``giữ bao nhiêu context'', mà là một \textbf{retrieval--context action}: chọn retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected context action và generator model.
+
+Các commit gần nhất tạo nền cho Phase 1C.3:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{fdefb63}: định nghĩa schema cho action, answer feedback, context feedback, scalar reward và preference.
+  \item \texttt{78cf83d}: thêm \texttt{rlaif-build} để đọc BudgetRAG output và ghi các dataset RLAIF chuẩn hóa.
+  \item Hardening hiện tại: chuẩn hóa AI judge provenance thành \texttt{ai\_judge} và cho phép full-context/legacy action không có explicit budget.
+  \item Answer judge hiện tại: thêm \texttt{rlaif-label-answers} với resume, progress logging, JSON repair và guardrail không biến invalid/missing label thành score 0.
+  \item Context judge hiện tại: thêm \texttt{rlaif-label-contexts} để label sufficient context, selected/redundant/irrelevant chunks, missing evidence và context quality với cùng cơ chế dry-run/resume/JSON repair; đã chạy đủ MiMo 192 action rows, merge/validate shard song song và ghi report \texttt{docs/reports/phase1d\_rlaif\_full\_context\_reward\_ablation.md}.
+  \item Pairwise judge hiện tại: thêm \texttt{rlaif-label-pairs} để judge trực tiếp action A/B từ \texttt{rlaif\_preferences.jsonl}, nhưng không bắt buộc tin preference cũ; output có A/B/tie/ambiguous, quality/support/efficiency winner, quality regret, unsupported-claim risk và confidence.
+  \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ và non-default \texttt{--context-labels} để thử context-supervision candidate.
+  \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average, \texttt{family\_smoothed\_best\_average}, \texttt{shrinkage\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector} và oracle-logged baselines.
+  \item Multi-seed selector hiện tại: thêm \texttt{scripts/run\_rlaif\_split\_sweep.py} để chạy nhiều split seed và báo mean/std cho selector metrics.
+  \item Action coverage hiện tại: thêm \texttt{scripts/inspect\_rlaif\_action\_coverage.py} để phân tích exact signature sparsity và collapsed family coverage.
+  \item AI-judge held-out hiện tại: full MiMo answer-label run trên Kaggle đã hoàn tất; reward được rebuild bằng \texttt{--answer-labels}, rerun split/train/eval và ghi report \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}.
+  \item Direct pairwise audit hiện tại: chạy MiMo trên 50 reward-derived preference pairs, ghi 50 valid JSON labels, 2 ambiguous timeouts, 41 A wins, 7 B wins và agreement 0.854 trên non-ambiguous decisions; report nằm ở \texttt{docs/reports/phase1d\_rlaif\_pairwise\_mimo50.md}.
+  \item Pairwise calibration diagnostics hiện tại: thêm \texttt{scripts/diagnose\_rlaif\_pairwise\_calibration.py}; MiMo-50 diagnostics ghi 38 small quality/support delta pairs, 35 cheaper-wins-when-tied và 5 scalar-over-quality disagreements.
+  \item Reward calibration candidate hiện tại: thêm opt-in \texttt{--reward-calibration pairwise\_tie\_v1}; default vẫn là \texttt{none}, scalar reward rows không đổi, chỉ preference construction dùng efficiency tie-break khi quality/support nằm trong tie band.
+  \item Multi-judge audit hiện tại: thêm \texttt{scripts/select\_rlaif\_multijudge\_audit\_cases.py} để chọn/shard case tác động cao và \texttt{scripts/aggregate\_rlaif\_multijudge\_audit.py} để đo agreement giữa MiMo, DeepSeek và Groq mà không đổi reward default; audit đầu tiên trên 60 high-impact rows ghi 51 consensus-insufficient rows và 6 MiMo-harsh/high-disagreement rows.
+  \item Retriever-diversity hiện tại: thêm plan \texttt{docs/reports/phase1d\_retriever\_diversity\_run\_plan.md} và scaffold \texttt{scripts/run\_retriever\_diversity\_budgetrag\_matrix.sh}; mục tiêu là bổ sung logged actions cho \texttt{bm25}, \texttt{graph-bm25} và \texttt{hybrid-rrf} trước khi claim retrieval-strategy allocation.
+\end{itemize}
+
+Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit online thật, và \textbf{chưa} thực hiện KV pruning runtime. Full MiMo context-level judge run đã hoàn tất cho 192 action rows, nhưng context reward vẫn là candidate non-default. Ranh giới này quan trọng để tránh ``fake RL''.
+
+\section{Bối cảnh nghiên cứu}
+
+Project nên được đặt tại giao điểm của sáu cụm nghiên cứu: RAG, evaluation, prompt/context compression, KV-cache compression, GraphRAG/retrieval strategy selection, và RLAIF/contextual bandit.
+
+RAG đặt nền cho việc kết hợp parametric memory với retrieved external memory trong generation \cite{lewis2020rag}. BEIR cung cấp chuẩn đánh giá retrieval đa domain và cho thấy retriever không có một cấu hình tốt tuyệt đối trên mọi tập \cite{thakur2021beir}. RAGAS bổ sung góc nhìn evaluation ở cấp RAG, đặc biệt là faithfulness, answer relevance và context relevance \cite{es2023ragas}.
+
+BudgetRAG khác các prompt compression chung như LLMLingua, LongLLMLingua và Selective Context \cite{jiang2023llmlingua,jiang2023longllmlingua,li2023selectivecontext} ở chỗ compression được coi là một \textbf{action trong bài toán retrieval-grounded decision}. Policy phải quyết định giữ bằng chứng nào dưới ràng buộc chất lượng, token, latency và estimated KV, thay vì chỉ nén prompt theo một mục tiêu cố định.
+
+Các hướng KV-cache như H2O, StreamingLLM, KIVI, SnapKV và PyramidKV \cite{zhang2023h2o,xiao2023streamingllm,liu2024kivi,li2024snapkv,cai2024pyramidkv} can thiệp sâu hơn vào runtime/model cache. BudgetRAG hiện đi theo hướng ít xâm lấn hơn: giảm context trước inference, sau đó dùng context-level RLAIF labels làm bằng chứng cho bước evidence mask/KV retention proof of concept.
+
+GraphRAG nhấn mạnh vai trò của graph-based text index cho các truy vấn global hoặc sensemaking \cite{edge2024graphrag}. Vì vậy action space của Phase 1D phải bao gồm retrieval strategy, không chỉ context budget.
+
+RLAIF và preference learning cung cấp cách biến feedback từ AI judge thành reward/preference \cite{bai2022constitutional,rafailov2023dpo}. Với BudgetRAG, feedback này không nhằm alignment chatbot tổng quát, mà nhằm chấm \textbf{context sufficiency} và \textbf{grounded answer quality}. Vì mỗi query chỉ cần một lựa chọn retrieval--context ở một bước, offline contextual bandit là formulation đầu tiên hợp lý hơn PPO/GRPO \cite{li2010contextualbandit}.
+
+\section{Định vị so với related work}
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.0cm} >{\raggedright\arraybackslash}p{4.3cm} >{\raggedright\arraybackslash}p{6.7cm}}
+\toprule
+\textbf{Research line} & \textbf{Trọng tâm} & \textbf{Vị trí của BudgetRAG} \\
+\midrule
+RAG & Retrieve external evidence cho generation & Thêm bài toán phân bổ context theo tài nguyên và chất lượng. \\
+BEIR/RAGAS & Đánh giá retrieval/RAG & Mở rộng metric bằng token, latency, estimated KV và feedback provenance. \\
+Prompt compression & Prompt/context compression & Biến compression thành query-level decision action trong RAG. \\
+KV-cache methods & Runtime KV compression/pruning & Bắt đầu model-agnostic, sau đó dùng evidence labels cho KV retention. \\
+RLAIF/DPO & AI/preference feedback & Label context sufficiency và grounded answer quality. \\
+Contextual bandit & Học one-step action policy từ feedback & Học retrieval--context action dưới reward có quality guardrail. \\
+\bottomrule
+\end{longtable}
+
+\section{Trạng thái implementation hiện tại}
+
+\subsection{Schema}
+
+Module \texttt{rag\_bench.rlaif\_schema} định nghĩa:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{RetrievalContextAction}: state/action ở cấp query, bao gồm retriever, fusion, top-k, context policy, optional budget, adaptive profile, selected context policy/budget và generator model. Full-context hoặc legacy action thiếu explicit budget dùng \texttt{budget\_chars=None}.
+  \item \texttt{RlaifAnswerFeedback}: feedback cấp answer với provenance \texttt{gold}, \texttt{ragas}, \texttt{ai\_judge}, \texttt{mimo\_judge} cho backward compatibility, \texttt{heuristic}, \texttt{missing}.
+  \item \texttt{RlaifContextFeedback}: feedback cấp context với sufficient, selected/redundant/irrelevant chunks, missing evidence, minimality score, evidence support score và context quality score.
+  \item \texttt{RlaifReward}: reward tách quality/support/token/latency/KV/error/unsupported claim.
+  \item \texttt{RlaifPreference}: preference type cho context-policy, retrieval-context và context-sufficiency.
+\end{itemize}
+
+Action id deterministic là một điểm đúng hướng: id gồm benchmark, query id, retrieval strategy, fusion strategy, top-k, context policy, budget, adaptive profile, selected context action và generator model, nhưng loại source run id để nhiều lần chạy cùng cấu hình có thể merge được.
+
+\subsection{Dataset builder}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-build \
+  --inputs benchmark_results/budgetrag/<matrix-run> \
+  --output-dir benchmark_results/rlaif/<run-name>
+\end{verbatim}
+
+Builder thực hiện:
+
+\begin{itemize}[leftmargin=*]
+  \item discover mọi \texttt{query\_results.jsonl} trong input file hoặc directory;
+  \item convert từng row thành normalized action qua \texttt{action\_from\_budgetrag\_row};
+  \item giữ observation payload: answer text, retrieved records, context metrics, retrieval metrics, retrieval metadata, KV estimate, latency, token usage, generation error/retry/rate-limit metadata;
+  \item tạo answer feedback theo thứ tự: gold EM/F1, RAGAS fields, AI judge fields, rồi missing;
+  \item ghi summary với provenance counts, missing reason counts, generation error count và invalid rows.
+\end{itemize}
+
+Quan trọng: missing feedback không bị gán score 0. Generation skipped, generation error và missing answer được ghi bằng \texttt{missing\_reason} riêng, trong đó generation error được đánh dấu \texttt{ambiguous=True}.
+
+\subsection{Answer judge labeler}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-label-answers \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --resume \
+  --json-retries 1 \
+  --max-completion-tokens 4096
+\end{verbatim}
+
+\texttt{rlaif-label-answers} chỉ judge từ question, answer và retrieved context đã log; prompt cấm browse và external knowledge. Output ghi incremental nên có thể resume sau khi kernel/local process bị ngắt. MiMo key được đọc ưu tiên từ process environment, ví dụ private Kaggle notebook set \texttt{MIMO\_API\_KEY}; nếu biến môi trường không có thì mới fallback về \texttt{--env-file} local. Nếu model trả invalid JSON, empty content, thiếu answer hoặc thiếu context, label được ghi là ambiguous với \texttt{quality\_score=null}; không có path nào biến lỗi judge thành score 0.
+
+Script \texttt{scripts/summarize\_rlaif\_labels.py} đọc \texttt{rlaif\_answer\_labels.jsonl} và báo label count, valid/invalid JSON, ambiguous labels, judge provider/model counts, score mean/std, unsupported-claim penalty và correlation với RAGAS answer relevancy khi có \texttt{rlaif\_feedback.jsonl}. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_answer\_labels\_template.md}.
+
+Full MiMo answer-label run hiện có 192 labels, 192 valid JSON, 25 ambiguous labels, 191 scored labels và correlation với RAGAS answer relevancy khoảng 0.277. Report held-out sau khi rebuild reward bằng AI-judge labels nằm ở \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}. Đây là AI-judge feedback, không phải human labels.
+
+\subsection{Context judge labeler}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-label-contexts \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --resume \
+  --json-retries 1 \
+  --max-completion-tokens 4096
+\end{verbatim}
+
+\texttt{rlaif-label-contexts} judge chỉ từ question, optional logged answer và retrieved chunks đã log. Output ghi \texttt{sufficient}, \texttt{selected\_chunk\_ids}, \texttt{redundant\_chunk\_ids}, \texttt{irrelevant\_chunk\_ids}, \texttt{missing\_evidence}, \texttt{minimality\_score}, \texttt{evidence\_support\_score} và \texttt{context\_quality\_score}. Nếu judge trả chunk id không thuộc action row, id đó bị drop và ghi vào metadata. MiMo key dùng cùng cơ chế env-first như answer labeler để private Kaggle jobs không cần tạo \texttt{.secrets/.env} trong cloned repo. Missing context, invalid JSON, empty completion hoặc judge error đều thành ambiguous label với score \texttt{null}, không thành 0.
+
+Script \texttt{scripts/summarize\_rlaif\_context\_labels.py} đọc \texttt{rlaif\_context\_labels.jsonl} và báo valid/invalid JSON, ambiguous labels, sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk-id count, context quality, evidence support và minimality statistics. Script \texttt{scripts/validate\_rlaif\_context\_labels.py} kiểm shard song song trước khi merge: duplicate action id, missing action id, unknown action id, ambiguous/invalid labels, dropped unknown chunk ids và clean usable labels. Script \texttt{scripts/run\_context\_reward\_ablation\_pipeline.py} ghép các bước postprocess sau khi Kaggle xong: validate/merge, summarize, rebuild answer-only reward, rebuild context reward candidates, compare reward deltas và chạy selector sweep nhiều seed. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md} và \texttt{docs/reports/phase1d\_rlaif\_full\_context\_reward\_ablation\_template.md}.
+
+\subsection{Pairwise judge labeler}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-label-pairs \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
+  --judge-provider mimo \
+  --judge-model mimo-v2.5-pro \
+  --limit 50 \
+  --resume
+\end{verbatim}
+
+\texttt{rlaif-label-pairs} dùng preference cũ chỉ để chọn cặp action có thể so sánh. Action A là action reward formula đang chọn, Action B là action bị reject, nhưng judge được yêu cầu quyết định độc lập giữa A, B, tie hoặc ambiguous dựa trên question, answer, retrieved context và token/latency/KV cost đã log. Missing action/reward, missing answer/context, invalid JSON hoặc judge error đều thành ambiguous label với confidence \texttt{null}, không thành score 0. Đây là dữ liệu calibration offline, chưa train reward model, DPO hoặc thay runtime policy.
+
+Script \texttt{scripts/summarize\_rlaif\_pairwise\_labels.py} đọc \texttt{rlaif\_pairwise\_labels.jsonl} và báo A/B/tie/ambiguous counts, agreement/disagreement với reward-derived preference, confidence statistics, quality-regret count, unsupported-claim risk count và judge provider/model counts. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_pairwise\_labels\_template.md}.
+
+MiMo-50 audit đầu tiên trên reward/preference set đã rebuild bằng full MiMo answer labels có kết quả:
+
+\begin{center}
+\begin{tabular}{l r}
+\toprule
+Metric & Value \\
+\midrule
+Pair labels & 50 \\
+Valid JSON & 50 \\
+Invalid JSON & 0 \\
+Ambiguous/timeouts & 2 \\
+A wins & 41 \\
+B wins & 7 \\
+Ties & 0 \\
+Agreement over non-ambiguous decisions & 0.854 \\
+Mean confidence & 0.914 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Các disagreement đều nằm trong cùng một query group, nơi scalar reward thích action có quality/support score cao hơn một chút, còn direct pairwise judge xem hai câu trả lời đều acceptable hoặc đều là correct abstention rồi chọn action rẻ hơn. Điều này cho thấy hướng calibration tiếp theo nên giảm ảnh hưởng của quality delta nhỏ khi direct judge đánh dấu answer quality/evidence support là tie.
+
+Script \texttt{scripts/diagnose\_rlaif\_pairwise\_calibration.py} join pairwise labels với reward/action rows để tìm candidate calibration pattern. Với ngưỡng candidate \texttt{quality=0.10} và \texttt{support=0.20}, MiMo-50 diagnostics có kết quả:
+
+\begin{center}
+\begin{tabular}{l r}
+\toprule
+Metric & Value \\
+\midrule
+Valid non-ambiguous decisions & 48 \\
+Small quality/support delta pairs & 38 \\
+Cheaper wins when quality/support tied & 35 \\
+Scalar-over-quality disagreements & 5 \\
+Scalar-over-quality disagreement rate & 0.104 \\
+Cheaper-win rate when quality/support tied & 0.921 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Đây là diagnostic analysis-only, chưa đổi công thức reward. Candidate rule nên được bật bằng flag riêng: nếu quality/support gaps nằm trong tie band và không có unsupported-claim risk khác biệt, giảm ảnh hưởng của quality/support delta nhỏ rồi để token, latency và KV efficiency quyết định mạnh hơn.
+
+\texttt{pairwise\_tie\_v1} hiện đã được thêm vào \texttt{rlaif-reward} dưới dạng candidate opt-in. Với \texttt{quality\_tie\_threshold=0.10}, \texttt{support\_tie\_threshold=0.20} và \texttt{--tie-break-by-efficiency}, calibrated candidate trên AI-judge reward set tạo 1270 preferences thay vì 722 preferences, trong đó 900 preferences có reason \texttt{pairwise\_tie\_v1\_efficiency}. Scalar reward rows giữ nguyên, nên fixed/cheapest/best-average/oracle eval metrics hiện không đổi; tác động thực tế sẽ xuất hiện ở preference-aware hoặc learned selectors.
+
+\subsection{Reward/preference builder}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-reward \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --context-quality-blend-weight 0.5 \
+  --context-support-blend-weight 0.5 \
+  --context-insufficient-penalty-weight 1.0 \
+  --output-dir benchmark_results/rlaif/<run-name> \
+  --quality-weight 0.75 \
+  --support-weight 0.10 \
+  --token-weight 0.05 \
+  --latency-weight 0.05 \
+  --kv-weight 0.05 \
+  --min-reward-delta 0.03 \
+  --max-quality-regret 0.02
+\end{verbatim}
+
+Khi có \texttt{--answer-labels}, reward builder dùng AI-judge labels hợp lệ làm feedback chính. Nếu label invalid, ambiguous, errored hoặc thiếu quality, builder fallback về feedback gốc như RAGAS khi có và ghi rõ merge reason trong metadata. Nếu cả hai nguồn đều thiếu quality hợp lệ, reward vẫn là \texttt{null}, không phải 0.
+
+Khi bật non-default \texttt{--context-labels}, builder chỉ dùng context labels sạch với \texttt{ambiguous=false}; context labels ambiguous, invalid, errored hoặc thiếu quality đều fallback về answer-level feedback. Context quality và evidence support được blend vào diagnostics/reward bằng các blend weights trong khoảng \([0,1]\), còn \texttt{sufficient=false} có thể tăng unsupported-claim penalty theo \texttt{--context-insufficient-penalty-weight}. Merge reason được ghi trong metadata và summary; path này vẫn là offline candidate, không thay runtime policy.
+
+Builder ghi ba artifact:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{rlaif\_rewards.jsonl}: reward row cho mỗi action, gồm reward, reward components, weights, provenance và reward mode.
+  \item \texttt{rlaif\_preferences.jsonl}: pairwise preferences cho context-policy và retrieval-context groups.
+  \item \texttt{rlaif\_reward\_summary.md}: coverage, reward modes, preference types, skip reasons và weights.
+\end{itemize}
+
+Guardrail quan trọng: nếu feedback thiếu quality hoặc ambiguous, reward vẫn được ghi để audit nhưng \texttt{reward=null}; nó không bị biến thành 0. Preference chỉ được tạo giữa các action có reward thật, cùng query group, reward gap đủ lớn, và không vi phạm \texttt{max-quality-regret}. Vì vậy action rẻ hơn không được thắng nếu answer quality tụt rõ.
+
+\subsection{Offline selector baselines}
+
+Command hiện có:
+
+\begin{verbatim}
+uv run rag-bench rlaif-split \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
+  --output-dir benchmark_results/rlaif/<run-name>/split_seed42 \
+  --train-ratio 0.8 \
+  --seed 42
+
+uv run rag-bench rlaif-train \
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/train_rewards.jsonl \
+  --preferences benchmark_results/rlaif/<run-name>/split_seed42/train_preferences.jsonl \
+  --output benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json
+
+uv run rag-bench rlaif-eval \
+  --rewards benchmark_results/rlaif/<run-name>/split_seed42/eval_rewards.jsonl \
+  --policy benchmark_results/rlaif/<run-name>/split_seed42/rlaif_policy.json \
+  --out-md benchmark_results/rlaif/<run-name>/split_seed42/rlaif_eval_summary.md \
+  --split-manifest benchmark_results/rlaif/<run-name>/split_seed42/split_manifest.json
+\end{verbatim}
+
+\texttt{rlaif-split} chia theo \texttt{benchmark + query\_id}, không chia random theo action row. Tất cả action của cùng một query luôn nằm cùng train hoặc eval split. Preference chỉ được giữ nếu cả chosen/rejected action cùng nằm trong train hoặc cùng nằm trong eval; preference cắt ngang split bị drop và được đếm trong manifest.
+
+\texttt{rlaif-train} hiện tạo bảy baseline offline:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{fixed}: chọn action signature có nhiều reward thật nhất, tie-break bằng reward trung bình.
+  \item \texttt{cheapest}: chọn action có chi phí token + latency + estimated KV thấp nhất trong logged query group.
+  \item \texttt{best-average}: chọn action signature khả dụng có reward trung bình cao nhất trong dữ liệu train.
+  \item \texttt{family\_smoothed\_best\_average}: chọn theo exact signature mean nếu có; nếu không có thì backoff sang retrieval-context-family mean rồi context-policy mean.
+  \item \texttt{shrinkage\_smoothed\_best\_average}: score từng row bằng empirical-Bayes shrinkage từ exact signature mean về retrieval-context-family mean, context-policy mean rồi global train mean.
+  \item \texttt{linear\_reward\_model}: learned offline selector bằng ridge regression trên action/context/cost features, không dùng reward, quality, evidence-support labels hoặc preference outcome làm input feature.
+  \item \texttt{smoothed\_linear\_selector}: learned offline selector bằng ridge regression trên action/context/cost features cộng thêm exact/family/context-policy/retriever reward means và counts được tính chỉ từ train split; eval rows không được dùng để fill aggregate features.
+  \item \texttt{oracle-logged}: upper bound offline, chọn action có reward quan sát cao nhất trong cùng query group.
+\end{itemize}
+
+\texttt{rlaif-eval} báo cáo mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, scored coverage, selection coverage và paired oracle gap. Khi truyền \texttt{--split-manifest}, summary ghi \texttt{held\_out\_query\_eval=true}. Policy artifact luôn ghi \texttt{runtime\_default\_replacement=false}; nó là artifact đánh giá offline, không thay runtime default.
+
+Held-out smoke đầu tiên dùng split seed 42 trên reward rows đã join RAGAS. Split có 27 train queries, 7 eval queries, 178 train reward rows, 14 eval reward rows, 572 train preferences và 6 eval preferences. Trên eval set, \texttt{best-average} đạt mean reward 0.425 và mean quality 0.538 với coverage 0.889; \texttt{cheapest} đạt mean reward 0.377 và mean quality 0.476 với coverage 1.0. Kết quả này củng cố trade-off chính: tiết kiệm token/KV đơn thuần làm giảm quality, còn selector tốt cần giữ quality guardrail.
+
+Sau khi có full MiMo answer labels và candidate \texttt{pairwise\_tie\_v1}, \texttt{linear\_reward\_model} được train trên 178 train reward rows và eval trên 9 held-out query groups. Trong eval nhỏ này, \texttt{linear\_reward\_model} đạt coverage 1.0, mean reward 0.713, mean quality 0.872 và paired oracle gap 0.075; \texttt{cheapest} đạt reward 0.704, quality 0.861 và oracle gap 0.083; \texttt{best-average} đạt reward 0.707, quality 0.869 với coverage 0.889. Đây là sanity check cho learned offline selector, chưa phải generalization claim lớn vì eval set còn nhỏ.
+
+Multi-seed sweep với seeds 1, 2, 3, 4, 5 và 42 cho thấy seed 42 hơi lạc quan. Trung bình 6 seed, \texttt{linear\_reward\_model} giữ coverage 1.0 và tốt hơn \texttt{cheapest} về reward trung bình (0.586 so với 0.577) và oracle gap (0.086 so với 0.094), nhưng chưa vượt \texttt{best-average} về reward/quality trung bình. Điều này biến kết quả v2 thành positive first signal thay vì claim ổn định.
+
+Action coverage diagnostics cho thấy bottleneck chính là exact-signature sparsity. Có 77 exact signatures trên 192 reward rows và 34 queries; 20 signatures là singleton (26.0\%). Trung bình qua 6 split, exact-signature eval group coverage là 0.911, khớp với coverage của \texttt{best-average}. Khi collapse xuống \texttt{retrieval\_context\_family} gồm retriever, context policy, budget bucket và adaptive profile, eval group coverage lên 1.0. Vì vậy bước kế tiếp nên là family-level smoothing/backoff, chưa phải pairwise ranker phức tạp.
+
+\texttt{family\_smoothed\_best\_average} đã được thêm để kiểm chứng giả thuyết này. Trung bình 6 seed, policy này đạt coverage 1.0, reward 0.598, quality 0.767 và oracle gap 0.074. Nó sửa coverage loss của \texttt{best-average} và giảm oracle gap (0.074 so với 0.080), nhưng vẫn thấp hơn \texttt{best-average} về reward/quality trung bình (0.598/0.767 so với 0.618/0.794). Kết luận: family smoothing hữu ích như coverage repair, nhưng chưa đủ để thay thế exact-signature ranking.
+
+\texttt{smoothed\_linear\_selector} kiểm tra xem aggregate train means có giúp learned selector tốt hơn không. Policy này giữ coverage 1.0 và cải thiện nhẹ so với \texttt{linear\_reward\_model}: reward 0.595 so với 0.586, oracle gap 0.076 so với 0.086. Tuy nhiên nó vẫn thấp hơn \texttt{family\_smoothed\_best\_average} và \texttt{best-average}. Diễn giải đúng là aggregate train means hữu ích, nhưng trong small-data logged-candidate regime hiện tại, simple family smoothing và exact-signature averaging vẫn là baseline rất mạnh.
+
+\texttt{shrinkage\_smoothed\_best\_average} sửa điểm yếu của hard backoff bằng cách score từng row thay vì dừng ở level exact-signature cho cả query group. Trung bình 6 seed, policy này đạt coverage 1.0, reward 0.602, quality 0.773 và oracle gap 0.070. Đây là full-coverage non-oracle baseline mạnh nhất hiện tại, nhưng vẫn thấp hơn \texttt{best-average} về reward/quality trung bình. Ngoài ra, \texttt{pairwise\_tie\_v1} hiện mới ảnh hưởng preference construction; các selector reward-based này vẫn train từ scalar reward rows. Pairwise preferences sẽ đi vào selection sau khi có pairwise ranker hoặc calibrated scalar reward path. Các cost feature hiện cũng là logged/offline normalized costs; runtime cần estimated token/KV costs và predicted latency trước generation.
+
+Context-level RLAIF subset đầu tiên đã chạy trên 50 action rows bằng MiMo. Kết quả: 50 valid JSON labels, 0 invalid JSON, 0 errors, 4 ambiguous rows, 18 sufficient rows, 29 insufficient rows, mean context quality 0.478, mean evidence support 0.410 và trung bình 1.38 selected chunks/action. Trung bình irrelevant chunks là 5.90/action, cho thấy answer-level reward chưa đủ để học evidence mask/KV pruning; cần context-label merge path riêng và lọc \texttt{ambiguous=false} trước khi dùng làm clean supervision.
+
+Full context-label ablation hiện đã hoàn tất cho 192 action rows. Merge 3 shard cho 192 labels, 177 clean usable labels, 15 ambiguous labels, 0 invalid JSON, 0 missing/unknown/duplicate action ids và 0 dropped unknown chunk ids. Context summary: 110 sufficient, 76 insufficient, sufficiency rate 0.591, mean selected chunks 1.276, mean irrelevant chunks 3.708, mean context quality 0.602 và mean evidence support 0.556. Report nằm ở \texttt{docs/reports/phase1d\_rlaif\_full\_context\_reward\_ablation.md}.
+
+Full reward-delta diagnostics xác nhận context reward candidate thay đổi 140/192 reward rows. Penalty weight \texttt{0.25/0.50/1.00} cho mean changed-only delta lần lượt \texttt{-0.212/-0.316/-0.525} và preference count \texttt{952/946/944}. Penalty \texttt{0.25} là candidate bảo thủ nhất; penalty \texttt{1.00} vẫn là diagnostic vì nén reward scale mạnh.
+
+\section{Hai điểm đã harden trước reward/preference}
+
+Pasted review đã chỉ ra hai điểm yếu hợp lý cần sửa trước khi xây reward/preference builder. Hai điểm này đã được xử lý trong hardening hiện tại.
+
+\subsection{Judge provenance cho non-MiMo}
+
+Trước hardening, \texttt{\_feedback\_from\_judge} map provider khác \texttt{mimo} thành \texttt{heuristic}. Điều này có thể làm DeepSeek hoặc Groq judge bị ghi nhầm là heuristic. Cách sửa đã chọn là:
+
+\begin{itemize}[leftmargin=*]
+  \item mở rộng provenance thành \texttt{ai\_judge};
+  \item lưu provider cụ thể ở \texttt{judge\_provider};
+  \item lưu model cụ thể ở \texttt{judge\_model};
+  \item giữ \texttt{mimo\_judge} trong schema để backward compatibility với artifact cũ.
+\end{itemize}
+
+Như vậy MiMo, DeepSeek, Groq hoặc judge LLM khác không bị trộn vào heuristic. \texttt{heuristic} chỉ còn dùng cho label không đến từ LLM judge.
+
+\subsection{Full-context/legacy action không có explicit budget}
+
+\texttt{RetrievalContextAction.budget\_chars} trước đây là positive int bắt buộc. Với legacy/full action hoặc output cũ không có explicit budget, converter có thể invalid. Schema hiện cho phép:
+
+\begin{verbatim}
+budget_chars: int | None
+\end{verbatim}
+
+Nếu \texttt{budget\_chars=None}, action id vẫn ổn định và biểu diễn đúng ``full-context'' hoặc legacy baseline. Điều này hợp hơn với Phase 1D, vì baseline full/legacy phải có mặt trong action space thay vì bị loại vì thiếu metadata.
+
+\section{Local Qwen KV Estimate}
+
+Script \texttt{scripts/estimate\_local\_qwen\_kv\_cache.py} ước lượng KV-cache cho các model Qwen2.5 mà không load weights. Công thức dùng:
+
+\begin{verbatim}
+KV bytes = 2 * layers * num_key_value_heads * head_dim
+           * seq_len * batch_size * dtype_bytes
+\end{verbatim}
+
+Report \texttt{docs/reports/local\_qwen\_kv\_estimates.md} hiện ghi bảng cho Qwen2.5 0.5B, 1.5B, 3B, 7B và 14B ở 1K, 2K, 4K, 8K, 16K, 32K và 128K tokens với batch size 1, dtype 2 bytes. Ví dụ analytical KV-cache của Qwen2.5-14B là khoảng 0.750 GiB ở 4K, 6.000 GiB ở 32K và 24.000 GiB ở 128K. Đây chỉ là KV-cache estimate; chưa bao gồm weights, activations, allocator fragmentation, paged-attention block overhead hoặc runtime server overhead.
+
+\section{Multi-Judge Audit và Retriever Diversity}
+
+Sau full MiMo context-label ablation, bước đúng không phải là thêm DPO/PPO/GRPO, mà là audit chất lượng supervision và mở rộng logged action coverage. Script \texttt{scripts/select\_rlaif\_multijudge\_audit\_cases.py} chọn các row có tác động cao: MiMo đánh dấu context insufficient, reward giảm mạnh sau khi merge context label, answer quality cao nhưng context quality/support thấp, nhiều irrelevant chunks, hoặc có pairwise reward-vs-judge disagreement. Output giữ nguyên action row để \texttt{rlaif-label-contexts} có thể chạy lại bằng DeepSeek/Groq; DeepSeek dùng \texttt{DS\_API\_KEY} từ process environment hoặc \texttt{.secrets/.env} giống MiMo, và model mục tiêu là \texttt{deepseek-v4-flash}.
+
+Script \texttt{scripts/aggregate\_rlaif\_multijudge\_audit.py} chỉ tổng hợp audit signal: label counts, sufficiency agreement, score correlation nếu có numeric labels, MiMo-harsh rows, consensus-insufficient rows và high-disagreement rows. Nó không average judge scores để thay reward. Nếu judges disagree mạnh, row đó nên được đánh dấu low-confidence thay vì ép thành nhãn đúng/sai.
+
+Audit đầu tiên đã hoàn tất trên 60 high-impact rows. DeepSeek \texttt{deepseek-v4-flash} đã chạy đủ 192 action rows rồi được lọc về subset 60; Groq \texttt{qwen/qwen3-32b} chạy 60 rows bằng hai shard local/Kaggle. Kết quả chính: MiMo--DeepSeek sufficiency agreement là 0.915 trên 47 comparable rows, MiMo--Groq là 0.870 trên 46 comparable rows, DeepSeek--Groq là 0.951 trên 41 comparable rows. Majority vote đánh dấu 55/60 rows là insufficient; 51/60 là consensus-insufficient; 6 rows là MiMo-harsh/high-disagreement. Đây là bằng chứng audit tốt cho context penalty candidate, nhưng vẫn chưa phải human preference hoặc reward default.
+
+Plan \texttt{docs/reports/phase1d\_retriever\_diversity\_run\_plan.md} định nghĩa matrix tiếp theo với \texttt{bm25}, \texttt{graph-bm25}, \texttt{hybrid-rrf}; context policies full/evidence-aware/score-density/adaptive-balanced/adaptive-aggressive; budgets 1000/2000/4000. Mục tiêu là chuyển evidence từ context-budget selection sang retrieval-context allocation. Web search vẫn chỉ là live stress test, không được trộn với BEIR-style reproducible benchmark claims.
+
+\section{Roadmap tiếp theo}
+
+Thứ tự tiếp theo nên giữ như sau:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Context reward calibration}: dùng full-label ablation để audit penalty \texttt{0.25} như candidate bảo thủ, chưa bật default.
+  \item \textbf{Targeted multi-judge audit}: dùng selector/shard đã có để chạy DeepSeek/Groq trên subset có MiMo insufficient, reward delta mạnh, selector disagreement hoặc pairwise disagreement.
+  \item \textbf{Reward-delta follow-up}: nếu multi-judge cho thấy MiMo quá harsh, hiệu chỉnh context penalty trước khi dùng candidate cho selector training.
+  \item \textbf{Context-label multi-seed eval}: tiếp tục so answer-only và context-candidate sweeps nhiều seed, không claim generalization nếu kết quả chưa ổn định.
+  \item \textbf{More logged query groups}: chạy logged matrix với \texttt{bm25}, \texttt{graph-bm25} và \texttt{hybrid-rrf} trước khi kết luận selector learned có generalization ổn định.
+  \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
+  \item \textbf{Simple ranking baseline}: sau khi có thêm data/context labels, cân nhắc pairwise ranker nhẹ từ preference rows.
+  \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.
+\end{enumerate}
+
+Guardrail chính phải giữ: learned RLAIF/bandit policy không được thay \texttt{adaptive-heuristic} làm default runtime policy trước khi pass offline evaluation và quality guardrails. Web-search actions chỉ là live stress-test actions, không trộn với reproducible BEIR benchmark claims.
+
+\section{Kết luận}
+
+Repo hiện đã có engineering story tốt hơn trước: plan checkpoint, schema checkpoint, dataset builder checkpoint, reward/preference checkpoint, offline selector checkpoint và test suite pass. Bổ sung research grounding giúp báo cáo không còn giống một pipeline tự phát, mà đứng tại giao điểm của RAG evaluation, prompt/context compression, KV-cache compression, RLAIF và contextual bandit learning.
+
+Điểm cần làm ngay tiếp theo là hoàn tất judge runs và tăng coverage dữ liệu trước khi đi sang simple ranking model hoặc contextual bandit thật. Đây là đường đi đúng để RLAIF trong project trở thành một cơ chế học action có dữ liệu và guardrail, không phải một nhãn ``RL'' gắn sau.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
