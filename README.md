@@ -310,6 +310,32 @@ uv run python scripts/summarize_rlaif_context_labels.py \
 
 The summary reports valid/invalid JSON counts, ambiguous labels, sufficiency and missing-evidence counts, average selected/redundant/irrelevant chunk counts, dropped unknown chunk-id counts, and context quality/evidence support/minimality score statistics.
 
+Validate and merge sharded context-label jobs before using them in reward candidates:
+
+```bash
+uv run python scripts/validate_rlaif_context_labels.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --labels shard_1/rlaif_context_labels.jsonl shard_2/rlaif_context_labels.jsonl \
+  --merged-output benchmark_results/rlaif/<run-name>/rlaif_context_labels_merged.jsonl
+```
+
+The validator reports duplicate `action_id` rows, shard overlap, missing expected actions, unknown action ids, invalid/ambiguous labels, dropped unknown chunk ids, and clean usable label count. When writing a merged file, duplicate rows are resolved deterministically by preferring clean usable labels, then non-ambiguous/non-invalid rows, then the first row; unknown action ids are excluded from the merged output.
+
+Run the full postprocess path after context-label jobs finish:
+
+```bash
+uv run python scripts/run_context_reward_ablation_pipeline.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --context-labels shard_1/rlaif_context_labels.jsonl shard_2/rlaif_context_labels.jsonl \
+  --output-root benchmark_results/rlaif/<run-name>_full_context_ablation \
+  --penalty-weights 0.25,0.50,1.00 \
+  --seeds 1,2,3,4,5,42
+```
+
+The pipeline writes a merged label file, validation summary, context-label summary, answer-only base reward set, context reward candidates for each insufficient-context penalty, reward delta summaries, and optional multi-seed selector sweeps. Outputs are experiment artifacts under `benchmark_results/`; only curated reports should be committed.
+
 Label reward-derived action pairs with a direct pairwise AI judge:
 
 ```bash

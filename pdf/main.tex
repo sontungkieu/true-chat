@@ -176,7 +176,7 @@ uv run rag-bench rlaif-label-contexts \
 
 \texttt{rlaif-label-contexts} judge chỉ từ question, optional logged answer và retrieved chunks đã log. Output ghi \texttt{sufficient}, \texttt{selected\_chunk\_ids}, \texttt{redundant\_chunk\_ids}, \texttt{irrelevant\_chunk\_ids}, \texttt{missing\_evidence}, \texttt{minimality\_score}, \texttt{evidence\_support\_score} và \texttt{context\_quality\_score}. Nếu judge trả chunk id không thuộc action row, id đó bị drop và ghi vào metadata. MiMo key dùng cùng cơ chế env-first như answer labeler để private Kaggle jobs không cần tạo \texttt{.secrets/.env} trong cloned repo. Missing context, invalid JSON, empty completion hoặc judge error đều thành ambiguous label với score \texttt{null}, không thành 0.
 
-Script \texttt{scripts/summarize\_rlaif\_context\_labels.py} đọc \texttt{rlaif\_context\_labels.jsonl} và báo valid/invalid JSON, ambiguous labels, sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk-id count, context quality, evidence support và minimality statistics. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md}.
+Script \texttt{scripts/summarize\_rlaif\_context\_labels.py} đọc \texttt{rlaif\_context\_labels.jsonl} và báo valid/invalid JSON, ambiguous labels, sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk-id count, context quality, evidence support và minimality statistics. Script \texttt{scripts/validate\_rlaif\_context\_labels.py} kiểm shard song song trước khi merge: duplicate action id, missing action id, unknown action id, ambiguous/invalid labels, dropped unknown chunk ids và clean usable labels. Script \texttt{scripts/run\_context\_reward\_ablation\_pipeline.py} ghép các bước postprocess sau khi Kaggle xong: validate/merge, summarize, rebuild answer-only reward, rebuild context reward candidates, compare reward deltas và chạy selector sweep nhiều seed. Template report nằm ở \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md} và \texttt{docs/reports/phase1d\_rlaif\_full\_context\_reward\_ablation\_template.md}.
 
 \subsection{Pairwise judge labeler}
 
@@ -383,6 +383,7 @@ Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Full context-label run}: chạy tiếp 142 action rows còn lại để tránh candidate reward chỉ dựa trên subset 46 labels sạch.
+  \item \textbf{Postprocess pipeline}: khi hai shard Kaggle xong, chạy \texttt{run\_context\_reward\_ablation\_pipeline.py} để validate/merge/dedupe, summarize full context labels, rebuild reward candidates và sinh selector sweep.
   \item \textbf{Reward-delta ablation}: sau full labels, chạy lại delta diagnostics và penalty-weight ablation trước khi chọn candidate reward.
   \item \textbf{Context-label multi-seed eval}: sau khi có full context labels và chọn candidate weight, rebuild reward và chạy lại selector sweep nhiều seed.
   \item \textbf{More logged query groups}: tăng số query/action groups và retriever diversity trước khi kết luận selector learned có generalization ổn định.

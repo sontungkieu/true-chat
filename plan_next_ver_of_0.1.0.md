@@ -106,6 +106,8 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Added ablation knobs: `--context-quality-blend-weight`, `--context-support-blend-weight`, and `--context-insufficient-penalty-weight`.
    - Added `scripts/compare_rlaif_reward_sets.py` to report reward delta distribution, clipped reward counts, and changed rows by context sufficiency.
    - MiMo50 penalty-weight ablation: insufficient penalty `0.25/0.50/1.00` keeps 36 changed rows but changes mean changed-only reward delta from `-0.397` to `-0.558` to `-0.880`, confirming that weight `1.0` is aggressive.
+   - Added `scripts/validate_rlaif_context_labels.py` to validate and dedupe parallel context-label shards before reward construction.
+   - Added `scripts/run_context_reward_ablation_pipeline.py` to orchestrate full-label postprocess: validate/merge, summarize, rebuild answer-only baseline, rebuild context reward candidates, compare reward deltas, and optionally run multi-seed selector sweeps.
    - Next implementation change: label the remaining 142 action rows, rerun reward-delta ablations, then run multi-seed held-out selector evaluation with full context-label coverage.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.

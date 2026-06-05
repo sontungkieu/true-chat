@@ -36,6 +36,14 @@ reward_set_compare = _load_script("compare_rlaif_reward_sets", "scripts/compare_
 selector_sweep = _load_script("run_rlaif_split_sweep", "scripts/run_rlaif_split_sweep.py")
 action_coverage = _load_script("inspect_rlaif_action_coverage", "scripts/inspect_rlaif_action_coverage.py")
 kv_estimates = _load_script("estimate_local_qwen_kv_cache", "scripts/estimate_local_qwen_kv_cache.py")
+context_label_validation = _load_script(
+    "validate_rlaif_context_labels",
+    "scripts/validate_rlaif_context_labels.py",
+)
+context_reward_pipeline = _load_script(
+    "run_context_reward_ablation_pipeline",
+    "scripts/run_context_reward_ablation_pipeline.py",
+)
 
 
 def test_summarize_rlaif_labels_counts_scores_and_ragas_correlation(tmp_path: Path) -> None:
@@ -171,6 +179,134 @@ def test_compare_rlaif_reward_sets_reports_delta_distribution(tmp_path: Path) ->
     rendered = reward_set_compare.render_markdown(summary)
     assert "RLAIF Reward Delta Diagnostics" in rendered
     assert "changed rewards" in rendered
+
+
+def test_validate_rlaif_context_labels_merges_shards_and_reports_gaps(tmp_path: Path) -> None:
+    actions_path = tmp_path / "rlaif_actions.jsonl"
+    shard_a = tmp_path / "context_a.jsonl"
+    shard_b = tmp_path / "context_b.jsonl"
+    merged_path = tmp_path / "merged_context.jsonl"
+    _write_jsonl(
+        actions_path,
+        [
+            {"action_id": "a1"},
+            {"action_id": "a2"},
+            {"action_id": "a3"},
+        ],
+    )
+    _write_jsonl(
+        shard_a,
+        [
+            _context_label("a1", quality=0.4, support=0.5, ambiguous=True),
+            _context_label("a2", quality=0.7, support=0.8),
+        ],
+    )
+    _write_jsonl(
+        shard_b,
+        [
+            _context_label("a1", quality=0.9, support=0.9),
+            _context_label("unknown", quality=0.8, support=0.8),
+        ],
+    )
+
+    summary = context_label_validation.validate_context_labels(
+        actions_path=actions_path,
+        label_paths=[shard_a, shard_b],
+        merged_output=merged_path,
+    )
+
+    merged = _read_jsonl(merged_path)
+    assert summary["action_count"] == 3
+    assert summary["label_row_count"] == 4
+    assert summary["merged_label_count"] == 2
+    assert summary["missing_action_count"] == 1
+    assert summary["unknown_action_count"] == 1
+    assert summary["duplicate_action_id_count"] == 1
+    assert summary["duplicate_conflict_count"] == 1
+    assert summary["shard_overlap_action_count"] == 1
+    assert summary["clean_usable_label_count"] == 2
+    assert {row["action_id"] for row in merged} == {"a1", "a2"}
+    assert {row["action_id"]: row for row in merged}["a1"]["context_quality_score"] == 0.9
+    rendered = context_label_validation.render_markdown(summary)
+    assert "RLAIF Context Label Validation" in rendered
+    assert "Merge rule" in rendered
+
+
+def test_context_reward_ablation_pipeline_builds_candidates_and_manifest(tmp_path: Path) -> None:
+    actions_path = tmp_path / "rlaif_actions.jsonl"
+    feedback_path = tmp_path / "rlaif_feedback.jsonl"
+    answer_labels_path = tmp_path / "rlaif_answer_labels.jsonl"
+    context_labels_path = tmp_path / "rlaif_context_labels.jsonl"
+    _write_jsonl(
+        actions_path,
+        [
+            _pipeline_action("a1", context_policy="legacy", total_tokens=100),
+            _pipeline_action("a2", context_policy="evidence-aware", total_tokens=80),
+        ],
+    )
+    _write_jsonl(
+        feedback_path,
+        [
+            _pipeline_feedback("a1", quality=0.7),
+            _pipeline_feedback("a2", quality=0.7),
+        ],
+    )
+    _write_jsonl(
+        answer_labels_path,
+        [
+            {
+                "action_id": "a1",
+                "query_id": "q1",
+                "quality_score": 0.8,
+                "evidence_support": 0.8,
+                "faithfulness": 0.8,
+                "unsupported_claim_penalty": 0.1,
+                "ambiguous": False,
+                "invalid_json": False,
+                "error": None,
+            },
+            {
+                "action_id": "a2",
+                "query_id": "q1",
+                "quality_score": 0.8,
+                "evidence_support": 0.8,
+                "faithfulness": 0.8,
+                "unsupported_claim_penalty": 0.1,
+                "ambiguous": False,
+                "invalid_json": False,
+                "error": None,
+            },
+        ],
+    )
+    _write_jsonl(
+        context_labels_path,
+        [
+            _context_label("a1", quality=0.2, support=0.2, sufficient=False),
+            _context_label("a2", quality=0.9, support=0.9, sufficient=True),
+        ],
+    )
+
+    summary = context_reward_pipeline.run_context_reward_ablation_pipeline(
+        actions_path=actions_path,
+        feedback_path=feedback_path,
+        answer_labels_path=answer_labels_path,
+        context_label_paths=[context_labels_path],
+        output_root=tmp_path / "pipeline",
+        penalty_weights=[0.25, 0.5],
+        seeds=[],
+        train_ratio=0.5,
+    )
+
+    assert summary["validation"]["merged_label_count"] == 2
+    assert summary["context_label_summary"]["label_count"] == 2
+    assert len(summary["candidate_runs"]) == 2
+    assert summary["candidate_runs"][0]["changed_reward_count"] == 2
+    assert (tmp_path / "pipeline" / "answer_only_reward" / "rlaif_rewards.jsonl").is_file()
+    assert (tmp_path / "pipeline" / "context_reward_penalty_0_25" / "reward_delta_summary.md").is_file()
+    assert (tmp_path / "pipeline" / "context_reward_ablation_manifest.md").is_file()
+    rendered = context_reward_pipeline.render_pipeline_markdown(summary)
+    assert "RLAIF Context Reward Ablation Pipeline" in rendered
+    assert "adaptive-heuristic" in rendered
 
 
 def test_inspect_rlaif_action_coverage_reports_signature_sparsity(tmp_path: Path) -> None:
@@ -479,11 +615,75 @@ def _reward(action_id: str, *, quality: float, support: float, token: float, lat
     }
 
 
+def _context_label(
+    action_id: str,
+    *,
+    quality: float,
+    support: float,
+    sufficient: bool = True,
+    ambiguous: bool = False,
+) -> dict:
+    return {
+        "action_id": action_id,
+        "query_id": "q1",
+        "judge_provider": "mimo",
+        "judge_model": "mimo-v2.5-pro",
+        "context_quality_score": quality,
+        "evidence_support_score": support,
+        "minimality_score": 0.8,
+        "sufficient": sufficient,
+        "missing_evidence": False,
+        "selected_chunk_ids": ["c1"],
+        "redundant_chunk_ids": [],
+        "irrelevant_chunk_ids": [],
+        "ambiguous": ambiguous,
+        "invalid_json": False,
+        "error": None,
+    }
+
+
+def _pipeline_action(action_id: str, *, context_policy: str, total_tokens: int) -> dict:
+    return {
+        "action_id": action_id,
+        "benchmark": "scifact",
+        "query_id": "q1",
+        "question": "What is alpha?",
+        "retrieval_strategy": "bm25",
+        "fusion_strategy": None,
+        "top_k": 5,
+        "context_policy": context_policy,
+        "budget_chars": 2000,
+        "adaptive_profile": None,
+        "selected_context_policy": context_policy,
+        "selected_budget_chars": 2000,
+        "generator_model": "mimo-v2.5-pro",
+        "token_usage": {"total_tokens": total_tokens},
+        "latency": {"total_latency_s": total_tokens / 100.0},
+        "kv_estimate": {"after_mb": float(total_tokens) / 10.0},
+        "generation": {"error": None},
+    }
+
+
+def _pipeline_feedback(action_id: str, *, quality: float) -> dict:
+    return {
+        "action_id": action_id,
+        "query_id": "q1",
+        "provenance": "ragas",
+        "quality_score": quality,
+        "faithfulness": quality,
+        "ambiguous": False,
+    }
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.write_text(
         "\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows) + "\n",
         encoding="utf-8",
     )
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _sweep_reward(

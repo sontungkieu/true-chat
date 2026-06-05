@@ -1,0 +1,132 @@
+# Phase 1D RLAIF Full Context Reward Ablation
+
+Status: template. Fill this after the remaining context-label shards finish and
+`scripts/run_context_reward_ablation_pipeline.py` has produced a manifest.
+
+## Scope
+
+This report covers the full context-label postprocess path:
+
+```text
+download context-label shards
+-> validate / merge / dedupe
+-> summarize context labels
+-> rebuild answer-only reward baseline
+-> rebuild context reward candidates
+-> compare reward deltas
+-> run multi-seed held-out selector sweeps
+```
+
+This is an offline reward-candidate audit. It does not replace the runtime
+`adaptive-heuristic` policy and does not claim online RL.
+
+## Inputs
+
+| Input | Value |
+| --- | --- |
+| actions | `TODO` |
+| feedback | `TODO` |
+| answer labels | `TODO` |
+| context label shards | `TODO` |
+| merged context labels | `TODO` |
+| output root | `TODO` |
+
+## Context Label Validation
+
+| Metric | Value |
+| --- | ---: |
+| action count | TODO |
+| label rows | TODO |
+| merged labels | TODO |
+| missing actions | TODO |
+| unknown action ids | TODO |
+| duplicate action ids | TODO |
+| duplicate conflicts | TODO |
+| clean usable labels | TODO |
+
+Notes:
+
+- Duplicate labels should be resolved by the validator merge rule, not by manual editing.
+- Unknown action ids should be investigated before using the merged file.
+- Ambiguous/invalid labels should remain explicit and must not become score zero.
+
+## Context Label Summary
+
+| Metric | Value |
+| --- | ---: |
+| valid JSON labels | TODO |
+| invalid JSON labels | TODO |
+| ambiguous labels | TODO |
+| sufficient contexts | TODO |
+| insufficient contexts | TODO |
+| sufficiency rate | TODO |
+| dropped unknown chunk ids | TODO |
+| mean selected chunks | TODO |
+| mean irrelevant chunks | TODO |
+| mean context quality | TODO |
+| mean evidence support | TODO |
+| mean minimality | TODO |
+
+## Reward Candidate Ablation
+
+Default answer-only reward remains the baseline. Context reward candidates are
+non-default and should be compared against that baseline.
+
+| Penalty | Reward rows | Preferences | Changed rewards | Mean changed delta | Negative deltas | Positive deltas |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.25 | TODO | TODO | TODO | TODO | TODO | TODO |
+| 0.50 | TODO | TODO | TODO | TODO | TODO | TODO |
+| 1.00 | TODO | TODO | TODO | TODO | TODO | TODO |
+
+Interpretation:
+
+- If penalty `1.00` creates many clipped rewards or very large negative deltas,
+  it should remain diagnostic only.
+- If penalty `0.25` changes too few preferences, it may be too weak for selector
+  training.
+- Candidate selection should use held-out selector sweeps, not only reward delta
+  counts.
+
+## Multi-Seed Held-Out Selector Sweep
+
+| Candidate | Policy | Coverage | Reward | Quality | Oracle gap |
+| --- | --- | ---: | ---: | ---: | ---: |
+| answer-only | cheapest | TODO | TODO | TODO | TODO |
+| answer-only | best_average | TODO | TODO | TODO | TODO |
+| answer-only | shrinkage_smoothed_best_average | TODO | TODO | TODO | TODO |
+| answer-only | smoothed_linear_selector | TODO | TODO | TODO | TODO |
+| penalty 0.25 | cheapest | TODO | TODO | TODO | TODO |
+| penalty 0.25 | best_average | TODO | TODO | TODO | TODO |
+| penalty 0.25 | shrinkage_smoothed_best_average | TODO | TODO | TODO | TODO |
+| penalty 0.25 | smoothed_linear_selector | TODO | TODO | TODO | TODO |
+| penalty 0.50 | cheapest | TODO | TODO | TODO | TODO |
+| penalty 0.50 | best_average | TODO | TODO | TODO | TODO |
+| penalty 0.50 | shrinkage_smoothed_best_average | TODO | TODO | TODO | TODO |
+| penalty 0.50 | smoothed_linear_selector | TODO | TODO | TODO | TODO |
+| penalty 1.00 | cheapest | TODO | TODO | TODO | TODO |
+| penalty 1.00 | best_average | TODO | TODO | TODO | TODO |
+| penalty 1.00 | shrinkage_smoothed_best_average | TODO | TODO | TODO | TODO |
+| penalty 1.00 | smoothed_linear_selector | TODO | TODO | TODO | TODO |
+
+## Qualitative Examples
+
+Add a few examples after running an example sampler or manual audit:
+
+1. High answer score but context insufficient: TODO.
+2. Many irrelevant chunks but one useful evidence chunk: TODO.
+3. Acceptable abstention where cheaper context should win: TODO.
+
+## Limitations
+
+- Context labels are AI-judge labels, not human labels.
+- The evaluation remains logged-candidate offline evaluation.
+- Selector metrics depend on available action rows; they do not imply online
+  deployment quality.
+- Context reward candidates are opt-in and must not replace runtime defaults.
+
+## Next
+
+1. Choose a conservative context penalty candidate if multi-seed metrics support it.
+2. Run a direct pairwise audit after context labels are merged into reward candidates.
+3. Use context labels to design evidence-mask/KV pruning supervision only after
+   the reward-candidate behavior is stable.
