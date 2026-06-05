@@ -32,6 +32,7 @@ and does not claim online RL or online generalization.
 | `fixed` | 0.026 +/- 0.057 | 0.829 +/- 0.000 | 1.000 +/- 0.000 | 0.146 +/- 0.000 | 0.098 +/- 0.000 | 0.184 +/- 0.000 | 0.007 +/- 0.000 |
 | `cheapest` | 1.000 +/- 0.000 | 0.577 +/- 0.159 | 0.770 +/- 0.152 | 0.162 +/- 0.024 | 0.081 +/- 0.011 | 0.213 +/- 0.034 | 0.094 +/- 0.058 |
 | `best_average` | 0.911 +/- 0.050 | 0.618 +/- 0.147 | 0.794 +/- 0.125 | 0.178 +/- 0.034 | 0.081 +/- 0.017 | 0.240 +/- 0.049 | 0.080 +/- 0.050 |
+| `family_smoothed_best_average` | 1.000 +/- 0.000 | 0.598 +/- 0.138 | 0.767 +/- 0.122 | 0.176 +/- 0.033 | 0.093 +/- 0.022 | 0.238 +/- 0.046 | 0.074 +/- 0.047 |
 | `linear_reward_model` | 1.000 +/- 0.000 | 0.586 +/- 0.153 | 0.774 +/- 0.110 | 0.197 +/- 0.031 | 0.126 +/- 0.033 | 0.269 +/- 0.045 | 0.086 +/- 0.042 |
 | `oracle_logged` | 1.000 +/- 0.000 | 0.671 +/- 0.134 | 0.834 +/- 0.138 | 0.166 +/- 0.030 | 0.081 +/- 0.012 | 0.221 +/- 0.048 | 0.000 +/- 0.000 |
 
@@ -41,6 +42,8 @@ The seed-42 result was positive but somewhat optimistic. Across six seeds:
 
 - `linear_reward_model` keeps full coverage and improves over `cheapest` on mean reward
   (`0.586` vs `0.577`) and oracle gap (`0.086` vs `0.094`).
+- `family_smoothed_best_average` keeps full coverage and improves over `linear_reward_model`
+  on mean reward and oracle gap, but trails `best_average` on mean quality.
 - `best_average` remains the strongest non-oracle selector by average reward and quality, but
   it has lower coverage (`0.911`) because some eval groups do not contain a train-ranked action
   signature.
@@ -68,12 +71,12 @@ while seeds 1, 4, 5 were more favorable to `linear_reward_model` than the cheape
 
 ## Next Step
 
-The next engineering step should be action coverage diagnostics:
+Action coverage diagnostics have since confirmed exact-signature sparsity. The next engineering
+step should be a smoothed learned selector that uses train-only exact/family/context-policy means
+as non-leaking features:
 
 ```text
-scripts/inspect_rlaif_action_coverage.py
+smoothed_linear_selector
 ```
 
-This should identify sparse action signatures, train/eval signature mismatch, and whether
-collapsing parts of the action signature would make `best_average` and learned policies more
-robust. After that, a pairwise ranker can be considered as v2.1.
+After that, a pairwise ranker can be considered as v2.1.

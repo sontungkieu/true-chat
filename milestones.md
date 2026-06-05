@@ -86,7 +86,7 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add `rlaif-reward` to write `rlaif_rewards.jsonl`, `rlaif_preferences.jsonl`, and `rlaif_reward_summary.md` from normalized RLAIF action/feedback files.
 - Preserve missing or ambiguous feedback as `reward=null` instead of converting absent quality into score zero.
 - Add pairwise preference skip reasons for missing quality, ambiguous feedback, small reward deltas, and quality guardrail failures.
-- Add `rlaif-train` to write an offline `rlaif_policy.json` artifact with fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged selector baselines.
+- Add `rlaif-train` to write an offline `rlaif_policy.json` artifact with fixed, cheapest, best-average, `family_smoothed_best_average`, `linear_reward_model`, and oracle-logged selector baselines.
 - Add `rlaif-eval` to report mean reward, mean quality, normalized token/latency/KV cost, selected action distribution, coverage, and oracle gap.
 - Keep selector artifacts offline-only with `runtime_default_replacement=false`; they do not replace `adaptive-heuristic` in runtime defaults.
 - Run a Phase 1D selector smoke on real Phase 1C.3 outputs joined with RAGAS post-hoc answer relevancy and document it in `docs/reports/phase1d_rlaif_selector_smoke.md`.
@@ -101,6 +101,7 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Add the first learned offline selector baseline, `linear_reward_model`, using non-leaking retrieval-context action/cost features and document its held-out result in `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`.
 - Add `scripts/run_rlaif_split_sweep.py` for multi-seed held-out selector evaluation and document the six-seed result in `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`.
 - Add `scripts/inspect_rlaif_action_coverage.py` for action signature sparsity and train/eval coverage diagnostics, then document the result in `docs/reports/phase1d_rlaif_action_coverage.md`.
+- Add `family_smoothed_best_average` to repair exact-signature coverage loss via retrieval-context-family and context-policy backoff, then document the six-seed result in `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`.
 - Add `rlaif-label-pairs` for direct pairwise AI-judge comparisons of reward-derived retrieval-context action pairs, with A/B/tie/ambiguous decisions, quality/support/efficiency winners, resume support, JSON repair, and null-score handling for invalid or missing pair data.
 - Add `scripts/summarize_rlaif_pairwise_labels.py` and `docs/reports/phase1d_rlaif_pairwise_labels_template.md` so direct pairwise labels can be summarized for reward-preference agreement, disagreement, tie/ambiguous rates, confidence, quality regret, and unsupported-claim risk.
 - Complete the full MiMo answer-label Kaggle run for the Phase 1D selector smoke, rebuild rewards with `rlaif-reward --answer-labels`, rerun held-out split/train/eval, and document the result in `docs/reports/phase1d_rlaif_ai_judge_heldout_eval.md`.

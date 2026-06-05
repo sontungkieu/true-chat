@@ -6,6 +6,7 @@ from pathlib import Path
 from rag_bench.rlaif_policy import (
     BestAverageActionPolicy,
     CheapestActionPolicy,
+    FamilySmoothedBestAveragePolicy,
     FixedActionPolicy,
     LinearRewardModelPolicy,
     OracleLoggedPolicy,
@@ -41,7 +42,7 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
     )
 
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    assert summary["policy_count"] == 5
+    assert summary["policy_count"] == 6
     assert summary["reward_count"] == 4
     assert summary["preference_count"] == 1
     assert policy["runtime_default_replacement"] is False
@@ -49,11 +50,14 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
         "fixed",
         "cheapest",
         "best_average",
+        "family_smoothed_best_average",
         "linear_reward_model",
         "oracle_logged",
     }
     assert policy["policies"]["fixed"]["signature"]["context_policy"] == "evidence-aware"
     assert policy["policies"]["best_average"]["signatures"][0]["signature"]["context_policy"] == "evidence-aware"
+    assert policy["policies"]["family_smoothed_best_average"]["retrieval_context_families"]
+    assert policy["policies"]["family_smoothed_best_average"]["context_policies"]
     linear_model = policy["policies"]["linear_reward_model"]
     assert linear_model["training_rows"] == 4
     assert linear_model["runtime_default_replacement"] is False
@@ -64,6 +68,7 @@ def test_public_policy_names_match_artifact_keys() -> None:
     assert FixedActionPolicy.policy_type == "fixed"
     assert CheapestActionPolicy.policy_type == "cheapest"
     assert BestAverageActionPolicy.policy_type == "best_average"
+    assert FamilySmoothedBestAveragePolicy.policy_type == "family_smoothed_best_average"
     assert LinearRewardModelPolicy.policy_type == "linear_reward_model"
     assert OracleLoggedPolicy.policy_type == "oracle_logged"
 
@@ -125,6 +130,39 @@ def test_eval_reports_oracle_gap_and_policy_costs(tmp_path: Path) -> None:
     assert best_average["coverage"] == 1.0
     assert linear["coverage"] == 1.0
     assert out_md.read_text(encoding="utf-8").startswith("# RLAIF Offline Selector Evaluation")
+
+
+def test_family_smoothed_selector_backs_off_for_unseen_exact_signature(tmp_path: Path) -> None:
+    train_rewards_path = tmp_path / "train_rewards.jsonl"
+    eval_rewards_path = tmp_path / "eval_rewards.jsonl"
+    policy_path = tmp_path / "rlaif_policy.json"
+    _write_jsonl(
+        train_rewards_path,
+        [
+            _reward("q1", "bm25", "evidence-aware", 0.85, 0.90, token=0.30),
+            _reward("q1", "bm25", "legacy", 0.30, 0.40, token=0.10),
+            _reward("q2", "bm25", "evidence-aware", 0.80, 0.86, token=0.32),
+            _reward("q2", "bm25", "legacy", 0.35, 0.45, token=0.12),
+        ],
+    )
+    eval_evidence = _reward("q3", "bm25", "evidence-aware", 0.75, 0.82, token=0.35)
+    eval_legacy = _reward("q3", "bm25", "legacy", 0.40, 0.50, token=0.09)
+    eval_evidence["metadata"]["action_signature_id"] = "unseen-evidence-signature"  # type: ignore[index]
+    eval_legacy["metadata"]["action_signature_id"] = "unseen-legacy-signature"  # type: ignore[index]
+    _write_jsonl(eval_rewards_path, [eval_evidence, eval_legacy])
+    train_offline_selector_policies(
+        RlaifTrainConfig(rewards_path=train_rewards_path, output_path=policy_path)
+    )
+
+    summary = evaluate_offline_selector_policies(
+        RlaifEvalConfig(rewards_path=eval_rewards_path, policy_path=policy_path)
+    )
+
+    family_smoothed = summary["policy_metrics"]["family_smoothed_best_average"]
+    best_average = summary["policy_metrics"]["best_average"]
+    assert best_average["coverage"] == 0.0
+    assert family_smoothed["coverage"] == 1.0
+    assert family_smoothed["mean_reward"] == 0.75
 
 
 def test_eval_keeps_missing_reward_separate_from_zero(tmp_path: Path) -> None:

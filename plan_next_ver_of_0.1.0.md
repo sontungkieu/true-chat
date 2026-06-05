@@ -234,6 +234,7 @@ Context label schema:
      - `fixed`: choose the most common scored action signature when it is available for a query group.
      - `cheapest`: choose the lowest normalized token + latency + KV cost in the logged query group.
      - `best_average`: choose the available action signature with the highest training mean reward.
+     - `family_smoothed_best_average`: back off from exact signature mean reward to retrieval-context-family and context-policy mean reward.
      - `linear_reward_model`: learned offline ridge-regression selector over retrieval-context action/cost features, excluding reward/quality/support labels and preference outcomes.
      - `oracle_logged`: offline upper bound that chooses the highest observed reward in each logged query group.
    - Output `rlaif_policy.json` as an offline selector artifact before any runtime use.
@@ -247,6 +248,7 @@ Context label schema:
    - Status: first learned offline selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`.
    - Status: multi-seed held-out selector sweep implemented and documented in `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`.
    - Status: action coverage/signature sparsity diagnostics implemented and documented in `docs/reports/phase1d_rlaif_action_coverage.md`.
+   - Status: family-smoothed selector baseline implemented and documented in `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`.
    - Compare learned policy against:
      - `legacy`
      - fixed budget policies
@@ -271,7 +273,8 @@ Context label schema:
    - Current held-out result: `rlaif-split` writes deterministic `benchmark + query_id` train/eval files and `rlaif-eval --split-manifest` records `held_out_query_eval=true`.
    - Current multi-seed result: `linear_reward_model` beats `cheapest` on average reward and oracle gap while keeping full coverage, but does not consistently beat `best_average` across seeds.
    - Current action coverage result: exact signatures cover about 0.911 held-out eval groups, matching `best_average` coverage; collapsed retrieval-context families cover 1.000, suggesting family-level backoff before a pairwise ranker.
-   - Next evaluator change: add a family-smoothed selector that backs off from exact signature means to retrieval-context-family and context-policy means.
+   - Current family-smoothed result: coverage reaches 1.000 and oracle gap improves over `best_average`, but mean reward/quality still trail exact-signature `best_average`.
+   - Next evaluator change: add a smoothed learned selector that uses exact/family/context-policy training means as non-leaking features.
 
 5. Outputs
    - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and the `rlaif-label-contexts` skeleton write the implemented files below; a full context-label run remains pending.
@@ -281,7 +284,7 @@ Context label schema:
    - `rlaif_context_preferences.jsonl`
    - `split_manifest.json`: deterministic query-level split manifest.
    - `split_summary.md`: query-level split summary.
-   - `rlaif_policy.json`: fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged offline selector baselines.
+   - `rlaif_policy.json`: fixed, cheapest, best-average, `family_smoothed_best_average`, `linear_reward_model`, and oracle-logged offline selector baselines.
    - `rlaif_eval_summary.md`: selector reward/quality/cost/coverage/oracle-gap report.
    - `selector_sweep_summary.md`: multi-seed selector mean/std report.
    - `rlaif_action_coverage.md`: action signature sparsity and split coverage diagnostics.
@@ -294,6 +297,7 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_v2_linear_selector_heldout.md`: curated held-out query eval report for the first learned offline selector baseline.
    - `docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md`: curated multi-seed selector robustness report.
    - `docs/reports/phase1d_rlaif_action_coverage.md`: curated action coverage and signature sparsity report.
+   - `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`: curated family-smoothed selector report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.
@@ -446,7 +450,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
    - Build scalar rewards with stable, bounded values.
    - Build context-only pairwise preferences only inside the same query/retriever group.
    - Build retrieval-context preferences across retrievers for the same query/model.
-   - Train fixed, cheapest, best-average, `linear_reward_model`, and oracle-logged offline selector baselines.
+   - Train fixed, cheapest, best-average, `family_smoothed_best_average`, `linear_reward_model`, and oracle-logged offline selector baselines.
    - Split reward/preference rows by `benchmark + query_id` so action rows for the same query cannot leak across train/eval.
    - Evaluate selector reward, quality, cost, coverage, selected-action distribution, and oracle gap.
    - Enforce quality guardrails so efficiency cannot win over a clearly worse answer.

@@ -70,15 +70,15 @@ features, but its mean reward is not yet consistently above `best_average`. The 
 suggest the next improvement should be family-level smoothing/backoff, not a more complex
 pairwise ranker immediately.
 
-## Recommended Next Change
+## Follow-Up Implemented
 
-Implement a selector between `best_average` and `linear_reward_model`:
+The immediate follow-up has been implemented as:
 
 ```text
 family_smoothed_best_average
 ```
 
-Candidate behavior:
+Behavior:
 
 ```text
 1. try exact signature mean reward if available
@@ -87,5 +87,7 @@ Candidate behavior:
 4. use cost tie-break inside equal/scarce families
 ```
 
-This should preserve the strong signal from exact signatures while avoiding coverage loss when
-held-out groups contain unseen exact signatures.
+Six-seed evaluation shows it repairs coverage to `1.000` and improves oracle gap over
+`best_average`, but it still trails `best_average` on mean reward/quality. The next step is a
+smoothed learned selector that uses exact/family/context-policy train means as non-leaking
+features.

@@ -12,7 +12,14 @@ from rag_bench.rlaif_schema import stable_record_id
 
 
 POLICY_VERSION = "rlaif-policy-v1"
-POLICY_NAMES = ("fixed", "cheapest", "best_average", "linear_reward_model", "oracle_logged")
+POLICY_NAMES = (
+    "fixed",
+    "cheapest",
+    "best_average",
+    "family_smoothed_best_average",
+    "linear_reward_model",
+    "oracle_logged",
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +69,31 @@ class BestAverageActionPolicy:
         return min(candidates, key=lambda row: (rank[_signature_id(row)], str(row.get("action_id"))))
 
 
+class FamilySmoothedBestAveragePolicy:
+    policy_type = "family_smoothed_best_average"
+
+    def select(self, group_rewards: list[dict[str, Any]], policy: dict[str, Any]) -> dict[str, Any] | None:
+        policy_config = policy["policies"].get("family_smoothed_best_average", {})
+        for level in ("exact_signature", "retrieval_context_family", "context_policy"):
+            candidates = [
+                (row, score)
+                for row in group_rewards
+                if (score := _family_smoothed_score(row, policy_config, level=level)) is not None
+            ]
+            if not candidates:
+                continue
+            return max(
+                candidates,
+                key=lambda item: (
+                    item[1]["mean_reward"],
+                    item[1]["count"],
+                    -_cost_sum(item[0]),
+                    str(item[0].get("action_id")),
+                ),
+            )[0]
+        return None
+
+
 class OracleLoggedPolicy:
     policy_type = "oracle_logged"
 
@@ -94,6 +126,7 @@ POLICY_IMPLEMENTATIONS = {
     FixedActionPolicy.policy_type: FixedActionPolicy(),
     CheapestActionPolicy.policy_type: CheapestActionPolicy(),
     BestAverageActionPolicy.policy_type: BestAverageActionPolicy(),
+    FamilySmoothedBestAveragePolicy.policy_type: FamilySmoothedBestAveragePolicy(),
     LinearRewardModelPolicy.policy_type: LinearRewardModelPolicy(),
     OracleLoggedPolicy.policy_type: OracleLoggedPolicy(),
 }
@@ -119,6 +152,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
         signature_stats,
         key=lambda row: (-row["mean_reward"], -row["count"], row["signature_id"]),
     )
+    family_smoothed = _train_family_smoothed_best_average(scored_rewards, signature_stats)
     linear_model = _train_linear_reward_model(scored_rewards)
     policy = {
         "schema_version": POLICY_VERSION,
@@ -150,6 +184,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
                 "selection_rule": "choose the available signature with highest training mean reward",
                 "signatures": best_average_signatures,
             },
+            "family_smoothed_best_average": family_smoothed,
             "linear_reward_model": linear_model,
             "oracle_logged": {
                 "policy_type": "oracle_logged",
@@ -270,6 +305,73 @@ def _train_linear_reward_model(scored_rewards: list[dict[str, Any]]) -> dict[str
         "training_rows": len(scored_rewards),
         "target": "reward",
         "label_leakage_guard": "features exclude reward, quality, evidence_support labels, and preference outcomes",
+    }
+
+
+def _train_family_smoothed_best_average(
+    scored_rewards: list[dict[str, Any]],
+    signature_stats: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "policy_type": "family_smoothed_best_average",
+        "selection_rule": "score candidates by exact signature mean reward, then retrieval-context family mean, then context-policy mean; tie-break by specificity, support count, and cost",
+        "runtime_default_replacement": False,
+        "backoff_order": [
+            "exact_signature",
+            "retrieval_context_family",
+            "context_policy",
+        ],
+        "signatures": sorted(
+            signature_stats,
+            key=lambda row: (-row["mean_reward"], -row["count"], row["signature_id"]),
+        ),
+        "retrieval_context_families": _family_stats(
+            scored_rewards,
+            key_fn=_retrieval_context_family_id,
+            payload_fn=_retrieval_context_family_payload,
+            id_name="family_id",
+        ),
+        "context_policies": _family_stats(
+            scored_rewards,
+            key_fn=_context_policy_id,
+            payload_fn=_context_policy_payload,
+            id_name="context_policy_id",
+        ),
+    }
+
+
+def _family_smoothed_score(row: dict[str, Any], policy_config: dict[str, Any], *, level: str) -> dict[str, Any] | None:
+    signature_stats = {
+        str(item.get("signature_id")): item
+        for item in policy_config.get("signatures", [])
+        if item.get("signature_id")
+    }
+    family_stats = {
+        str(item.get("family_id")): item
+        for item in policy_config.get("retrieval_context_families", [])
+        if item.get("family_id")
+    }
+    context_policy_stats = {
+        str(item.get("context_policy_id")): item
+        for item in policy_config.get("context_policies", [])
+        if item.get("context_policy_id")
+    }
+    level_maps = {
+        "exact_signature": (_signature_id(row), signature_stats),
+        "retrieval_context_family": (_retrieval_context_family_id(row), family_stats),
+        "context_policy": (_context_policy_id(row), context_policy_stats),
+    }
+    if level not in level_maps:
+        return None
+    key, stats_by_key = level_maps[level]
+    stats = stats_by_key.get(key)
+    if stats is None or stats.get("mean_reward") is None:
+        return None
+    return {
+        "level": level,
+        "key": key,
+        "count": int(stats.get("count") or 0),
+        "mean_reward": float(stats["mean_reward"]),
     }
 
 
@@ -461,6 +563,36 @@ def _bounded_norm(value: Any, max_value: float) -> float:
     return max(0.0, min(number / max_value, 1.0))
 
 
+def _family_stats(
+    scored_rewards: Iterable[dict[str, Any]],
+    *,
+    key_fn: Any,
+    payload_fn: Any,
+    id_name: str,
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in scored_rewards:
+        groups[key_fn(row)].append(row)
+    stats = []
+    for family_id, rows in groups.items():
+        stats.append(
+            {
+                id_name: family_id,
+                **payload_fn(rows[0]),
+                "count": len(rows),
+                "mean_reward": _mean_field(rows, "reward"),
+                "mean_quality": _mean_field(rows, "quality"),
+                "mean_token_cost": _mean_field(rows, "token_cost_norm"),
+                "mean_latency": _mean_field(rows, "latency_norm"),
+                "mean_kv_cost": _mean_field(rows, "kv_cost_norm"),
+            }
+        )
+    return sorted(
+        stats,
+        key=lambda row: (-(row["mean_reward"] or 0.0), -row["count"], str(row[id_name])),
+    )
+
+
 def _signature_stats(scored_rewards: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in scored_rewards:
@@ -523,6 +655,53 @@ def _signature_id(row: dict[str, Any]) -> str:
     if isinstance(value, str) and value.strip():
         return value
     return stable_record_id("rlaif-action-signature-v1", _signature(row), length=12)
+
+
+def _retrieval_context_family_id(row: dict[str, Any]) -> str:
+    signature = _signature(row)
+    return "|".join(
+        [
+            str(signature.get("retrieval_strategy") or "missing"),
+            str(signature.get("context_policy") or "missing"),
+            _budget_bucket(signature.get("budget_chars")),
+            str(signature.get("adaptive_profile") or "none"),
+        ]
+    )
+
+
+def _retrieval_context_family_payload(row: dict[str, Any]) -> dict[str, Any]:
+    signature = _signature(row)
+    return {
+        "family": {
+            "retrieval_strategy": signature.get("retrieval_strategy"),
+            "context_policy": signature.get("context_policy"),
+            "budget_bucket": _budget_bucket(signature.get("budget_chars")),
+            "adaptive_profile": signature.get("adaptive_profile"),
+        }
+    }
+
+
+def _context_policy_id(row: dict[str, Any]) -> str:
+    return str(_signature(row).get("context_policy") or "missing")
+
+
+def _context_policy_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {"context_policy": _context_policy_id(row)}
+
+
+def _budget_bucket(value: Any) -> str:
+    number = _number_or_none(value)
+    if number is None:
+        return "none"
+    if number <= 4_000:
+        return "<=4k"
+    if number <= 8_000:
+        return "<=8k"
+    if number <= 16_000:
+        return "<=16k"
+    if number <= 32_000:
+        return "<=32k"
+    return ">32k"
 
 
 def _metadata_dict(row: dict[str, Any]) -> dict[str, Any]:
