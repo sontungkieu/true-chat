@@ -336,6 +336,8 @@ uv run python scripts/run_context_reward_ablation_pipeline.py \
 
 The pipeline writes a merged label file, validation summary, context-label summary, answer-only base reward set, context reward candidates for each insufficient-context penalty, reward delta summaries, and optional multi-seed selector sweeps. Outputs are experiment artifacts under `benchmark_results/`; only curated reports should be committed.
 
+The first full MiMo context-label ablation is documented in `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`. It merged all 192 action rows with 177 clean usable context labels, no missing/unknown/duplicate action ids, and no invalid JSON. Context candidates changed 140 reward rows; penalty `0.25` is the least aggressive candidate, while penalty `1.00` heavily compresses reward scale and should remain diagnostic.
+
 Label reward-derived action pairs with a direct pairwise AI judge:
 
 ```bash

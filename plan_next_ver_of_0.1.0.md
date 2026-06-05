@@ -132,7 +132,11 @@ uv run python scripts/summarize_rlaif_labels.py \
    - MiMo50 penalty-weight ablation: insufficient penalty `0.25/0.50/1.00` keeps 36 changed rows but changes mean changed-only reward delta from `-0.397` to `-0.558` to `-0.880`, confirming that weight `1.0` is aggressive.
    - Added `scripts/validate_rlaif_context_labels.py` to validate and dedupe parallel context-label shards before reward construction.
    - Added `scripts/run_context_reward_ablation_pipeline.py` to orchestrate full-label postprocess: validate/merge, summarize, rebuild answer-only baseline, rebuild context reward candidates, compare reward deltas, and optionally run multi-seed selector sweeps.
-   - Next implementation change: finish the remaining 142 action rows without rerunning existing MiMo labels, merge existing labels 1-50 with shards 51-121 and 122-192, validate/dedupe, rerun reward-delta ablations, then run multi-seed held-out selector evaluation with full context-label coverage.
+   - Full MiMo context-label run completed for 192/192 action rows by merging existing labels 1-50 with Kaggle shards 51-121 and 122-192.
+   - Full-label validation result: 192 labels, 177 clean usable labels, 15 ambiguous labels, 0 invalid JSON, 0 missing action ids, 0 unknown action ids, 0 duplicate action ids, and 0 dropped unknown chunk ids.
+   - Full context summary: 110 sufficient contexts, 76 insufficient contexts, sufficiency rate 0.591, mean selected chunks 1.276, mean irrelevant chunks 3.708, mean context quality 0.602, and mean evidence support 0.556.
+   - Full context reward ablation result: context candidates changed 140/192 reward rows. Penalty `0.25/0.50/1.00` has mean changed-only deltas `-0.212/-0.316/-0.525` and preference counts `952/946/944`. Penalty `0.25` is the conservative candidate; penalty `1.00` remains diagnostic.
+   - Full context ablation report: `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
@@ -321,7 +325,7 @@ Context label schema:
    - Retrieval-strategy selection claims require broader logged actions with multiple retrievers such as `bm25`, `graph-bm25`, and `hybrid-rrf`. Current evidence mostly supports context-budget/action selection, not robust retrieval-strategy allocation. Web-search actions remain live stress tests only and must not be mixed with reproducible BEIR benchmark claims.
 
 5. Outputs
-   - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and `rlaif-label-contexts` write the implemented files below; a 50-action real context-label subset and non-default context reward candidate are complete, while a full 192-action context-label run remains pending.
+   - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and `rlaif-label-contexts` write the implemented files below; the full 192-action MiMo context-label run, context reward ablations, and six-seed selector sweeps are complete.
    - `rlaif_rewards.jsonl`
    - `rlaif_preferences.jsonl`
    - `rlaif_reward_summary.md`
@@ -349,6 +353,7 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md`: curated shrinkage-smoothed selector report.
    - `docs/reports/phase1d_rlaif_context_labels_mimo50.md`: curated first real context-level RLAIF subset report.
    - `docs/reports/phase1d_rlaif_context_reward_candidate.md`: curated non-default reward candidate report after merging clean MiMo50 context labels.
+   - `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`: curated full 192-action context-label validation, reward ablation, and multi-seed selector sweep report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.

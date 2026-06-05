@@ -69,7 +69,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item Reward calibration candidate hiện tại: thêm opt-in \texttt{--reward-calibration pairwise\_tie\_v1}; default vẫn là \texttt{none}, scalar reward rows không đổi, chỉ preference construction dùng efficiency tie-break khi quality/support nằm trong tie band.
 \end{itemize}
 
-Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit thật, \textbf{chưa} có full context-level judge run, và \textbf{chưa} thực hiện KV pruning runtime. Ranh giới này quan trọng để tránh ``fake RL''.
+Đây vẫn là bước dữ liệu và đánh giá offline. Hệ thống \textbf{chưa} thay \texttt{adaptive-heuristic} bằng learned policy, \textbf{chưa} train contextual bandit online thật, và \textbf{chưa} thực hiện KV pruning runtime. Full MiMo context-level judge run đã hoàn tất cho 192 action rows, nhưng context reward vẫn là candidate non-default. Ranh giới này quan trọng để tránh ``fake RL''.
 
 \section{Bối cảnh nghiên cứu}
 
@@ -335,9 +335,9 @@ Action coverage diagnostics cho thấy bottleneck chính là exact-signature spa
 
 Context-level RLAIF subset đầu tiên đã chạy trên 50 action rows bằng MiMo. Kết quả: 50 valid JSON labels, 0 invalid JSON, 0 errors, 4 ambiguous rows, 18 sufficient rows, 29 insufficient rows, mean context quality 0.478, mean evidence support 0.410 và trung bình 1.38 selected chunks/action. Trung bình irrelevant chunks là 5.90/action, cho thấy answer-level reward chưa đủ để học evidence mask/KV pruning; cần context-label merge path riêng và lọc \texttt{ambiguous=false} trước khi dùng làm clean supervision.
 
-Context-label reward candidate hiện đã chạy trên MiMo50 subset. Trong 50 context labels, 46 labels sạch được merge, 4 ambiguous rows fallback, và 142 action rows còn lại chưa có context label nên giữ answer-level feedback. So với answer-only reward set, preference count tăng từ 722 lên 822; quality-guardrail skips tăng từ 4 lên 12; 36 reward rows thay đổi, gồm 31 rows giảm và 5 rows tăng. Seed-42 sanity check cho thấy \texttt{shrinkage\_smoothed\_best\_average} đạt reward 0.745, quality 0.914 và oracle gap 0.002 trên eval nhỏ, nhưng đây chỉ là diagnostic vì context labels mới phủ 46/192 action rows.
+Full context-label ablation hiện đã hoàn tất cho 192 action rows. Merge 3 shard cho 192 labels, 177 clean usable labels, 15 ambiguous labels, 0 invalid JSON, 0 missing/unknown/duplicate action ids và 0 dropped unknown chunk ids. Context summary: 110 sufficient, 76 insufficient, sufficiency rate 0.591, mean selected chunks 1.276, mean irrelevant chunks 3.708, mean context quality 0.602 và mean evidence support 0.556. Report nằm ở \texttt{docs/reports/phase1d\_rlaif\_full\_context\_reward\_ablation.md}.
 
-Reward-delta diagnostics xác nhận candidate weight \texttt{1.0} là aggressive: trên 36 changed rows, min delta là -1.475, median delta là -1.235 và mean changed-only delta là -0.880. Khi chỉ giảm \texttt{--context-insufficient-penalty-weight} xuống 0.25, số changed rows vẫn là 36 nhưng mean changed-only delta còn -0.397. Vì vậy context-label reward phải được ablate theo penalty weights 0.25/0.50/1.00 trước khi dùng cho selector training.
+Full reward-delta diagnostics xác nhận context reward candidate thay đổi 140/192 reward rows. Penalty weight \texttt{0.25/0.50/1.00} cho mean changed-only delta lần lượt \texttt{-0.212/-0.316/-0.525} và preference count \texttt{952/946/944}. Penalty \texttt{0.25} là candidate bảo thủ nhất; penalty \texttt{1.00} vẫn là diagnostic vì nén reward scale mạnh.
 
 \section{Hai điểm đã harden trước reward/preference}
 
@@ -382,10 +382,10 @@ Report \texttt{docs/reports/local\_qwen\_kv\_estimates.md} hiện ghi bảng cho
 Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
-  \item \textbf{Full context-label run}: chạy tiếp 142 action rows còn lại để tránh candidate reward chỉ dựa trên subset 46 labels sạch.
-  \item \textbf{Postprocess pipeline}: khi hai shard Kaggle xong, chạy \texttt{run\_context\_reward\_ablation\_pipeline.py} để validate/merge/dedupe, summarize full context labels, rebuild reward candidates và sinh selector sweep.
-  \item \textbf{Reward-delta ablation}: sau full labels, chạy lại delta diagnostics và penalty-weight ablation trước khi chọn candidate reward.
-  \item \textbf{Context-label multi-seed eval}: sau khi có full context labels và chọn candidate weight, rebuild reward và chạy lại selector sweep nhiều seed.
+  \item \textbf{Context reward calibration}: dùng full-label ablation để audit penalty \texttt{0.25} như candidate bảo thủ, chưa bật default.
+  \item \textbf{Targeted multi-judge audit}: chỉ chạy DeepSeek/Groq trên subset có MiMo insufficient, reward delta mạnh, selector disagreement hoặc pairwise disagreement.
+  \item \textbf{Reward-delta follow-up}: nếu multi-judge cho thấy MiMo quá harsh, hiệu chỉnh context penalty trước khi dùng candidate cho selector training.
+  \item \textbf{Context-label multi-seed eval}: tiếp tục so answer-only và context-candidate sweeps nhiều seed, không claim generalization nếu kết quả chưa ổn định.
   \item \textbf{More logged query groups}: tăng số query/action groups và retriever diversity trước khi kết luận selector learned có generalization ổn định.
   \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
   \item \textbf{Simple ranking baseline}: sau khi có thêm data/context labels, cân nhắc pairwise ranker nhẹ từ preference rows.
