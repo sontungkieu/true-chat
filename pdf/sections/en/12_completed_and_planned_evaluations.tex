@@ -37,6 +37,9 @@ The follow-up step was a small MiMo-\code{v2.5} generation subset with explicit 
   \item 30 jobs produced 300 retriever-diverse action rows over BM25, graph-BM25, and hybrid-RRF with standard \code{mimo-v2.5}.
   \item MiMo answer judging produced 300 labels, 299 valid JSON labels, 222 labels with numeric diagnostics, and 186 clean reward rows after filtering ambiguous labels.
   \item The reward build produced 1559 preference pairs, including 1189 retrieval-context preferences.
+  \item Separate validation and answer-quality diagnostics now report generation coverage, missing-answer rate, answer quality, support, unsupported-claim risk, and cost by retriever and context policy.
+  \item Full context-level MiMo judging now covers the same 300 action rows: 300 valid JSON context labels, 253 clean usable labels, 134 sufficient contexts, 158 insufficient contexts, mean context quality 0.505, and mean evidence support 0.436.
+  \item A non-default context reward candidate changed 156/300 reward rows, mostly downward, and increased preference pairs from 1559 to 2412. This confirms that context labels add evidence-quality supervision, but the candidate remains a calibration target rather than a default selector target.
   \item Six-seed held-out selector evaluation is only a diagnostic because the run contains 10 query groups; it verifies the pipeline but does not support a learned-selector generalization claim.
 \end{itemize}
 

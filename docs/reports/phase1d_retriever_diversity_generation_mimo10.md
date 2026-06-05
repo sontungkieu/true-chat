@@ -79,9 +79,13 @@ budgetrag_summary.md
 rlaif_actions.jsonl
 rlaif_feedback.jsonl
 rlaif_answer_labels_mimo_v25.jsonl
+rlaif_context_labels_mimo_v25.jsonl
 rlaif_answer_label_summary_mimo_v25.md
+rlaif_context_label_summary_mimo_v25.md
 reward_mimo_answer/rlaif_rewards.jsonl
 reward_mimo_answer/rlaif_preferences.jsonl
+context_penalty_025/rlaif_rewards.jsonl
+context_penalty_025/rlaif_preferences.jsonl
 reward_mimo_answer/split_sweep_seeds_1_2_3_4_5_42/
 reward_mimo_answer/action_coverage.md
 ```
@@ -131,6 +135,35 @@ over two shards.
 The distinction between numeric diagnostics and clean reward supervision matters.
 `rlaif-reward` filters ambiguous labels instead of treating them as score zero.
 
+## Context Labeling
+
+The follow-up context-level judge run used standard MiMo V2.5 over two
+non-overlapping 150-action shards and then merged/deduped the outputs:
+
+| Metric | Value |
+| --- | ---: |
+| Context labels | 300 |
+| Valid JSON labels | 300 |
+| Invalid JSON labels | 0 |
+| Ambiguous labels | 47 |
+| Clean usable labels | 253 |
+| Missing action ids | 0 |
+| Unknown action ids | 0 |
+| Duplicate rows | 0 |
+| Sufficient contexts | 134 |
+| Insufficient contexts | 158 |
+| Missing-evidence rows | 10 |
+| Mean selected chunks | 0.963 |
+| Mean irrelevant chunks | 3.817 |
+| Mean context quality | 0.505 |
+| Mean evidence support | 0.436 |
+
+This confirms that the retriever-diverse subset now has both answer-level and
+context-level RLAIF supervision. It also shows why context supervision matters:
+the judge usually selected about one useful chunk while marking nearly four
+chunks as irrelevant. Answer-level reward alone would not expose that context
+noise.
+
 ## Reward And Preference Build
 
 ```bash
@@ -156,6 +189,32 @@ uv run --frozen rag-bench rlaif-reward \
 
 The reward build turns this subset from a coverage-only run into a small
 retriever-diverse quality-supervision run.
+
+## Context Reward Candidate
+
+A non-default context reward candidate was built with:
+
+```text
+context_quality_blend_weight = 0.50
+context_support_blend_weight = 0.50
+context_insufficient_penalty_weight = 0.25
+```
+
+| Metric | Answer-only | Context candidate |
+| --- | ---: | ---: |
+| Reward rows | 300 | 300 |
+| Scored reward rows | 186 | 212 |
+| Preferences | 1559 | 2412 |
+| Context-policy preferences | 370 | 571 |
+| Retrieval-context preferences | 1189 | 1841 |
+| Quality-guardrail skips | 8 | 123 |
+| Small reward-delta skips | 873 | 493 |
+
+The candidate changed 156/300 reward rows. Of the changed rows, 138 decreased
+and 18 increased, with mean changed-only delta `-0.301`. This is the expected
+direction for a context-evidence penalty, but the size of the shift means the
+candidate must remain non-default until more query groups and calibration data
+are available.
 
 ## Reward By Retriever
 
@@ -188,6 +247,20 @@ The 4000-character budget has better judged quality and reward in this subset,
 but it also has higher token/KV cost. This keeps the quality-efficiency
 trade-off visible.
 
+## Evidence Quality By Retriever
+
+Ambiguous context labels are excluded from this table.
+
+| Retriever | Rows | Sufficient | Selected chunks | Irrelevant chunks | Context quality | Evidence support |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `bm25` | 83 | 0.542 | 0.855 | 4.000 | 0.507 | 0.459 |
+| `graph-bm25` | 87 | 0.529 | 0.943 | 3.943 | 0.528 | 0.496 |
+| `hybrid-rrf` | 83 | 0.518 | 0.711 | 4.084 | 0.470 | 0.439 |
+
+In this subset, graph-BM25 has the strongest context-quality and
+evidence-support means, while hybrid-RRF is noisier. This is a useful
+retriever-diversity diagnostic, not a stable retriever ranking.
+
 ## Multi-Seed Selector Diagnostic
 
 The six-seed query-level split sweep used only 10 query groups, so each eval
@@ -207,6 +280,12 @@ selector claim.
 The selector sweep confirms that the offline pipeline works on retriever-diverse
 rows, but it does not yet support a learned-selector claim. Coverage and reward
 variance are dominated by the tiny eval splits and missing/ambiguous labels.
+
+The context-candidate selector sweep is harsher. It increases scored reward rows
+and preference pairs, but the stricter context penalty reduces selector reward
+and makes simple smoothed baselines fragile on the 10-query split. This is
+evidence that context labels should be treated as calibration supervision first,
+not as a default selector target.
 
 ## Action Coverage
 
@@ -233,6 +312,11 @@ generation + answer-label subset:
   adds first retriever-diverse quality supervision
   creates 186 scored rewards and 1559 preferences
   verifies that BM25, graph-BM25, and hybrid-RRF rows can enter the same RLAIF pipeline
+
+generation + answer/context-label subset:
+  creates full 300-row context supervision
+  exposes evidence noise and insufficiency per retriever/policy
+  confirms context reward is useful but currently too harsh as a default target
 ```
 
 The run also exposes two bottlenecks:

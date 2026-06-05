@@ -113,6 +113,25 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
    - Invalid JSON, empty completions, missing answers, and missing contexts become ambiguous labels with `quality_score: null`, never score zero.
    - MiMo V2.5 can spend hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
    - First retriever-diverse MiMo V2.5 generation/answer-label subset: 300 action rows over 10 SciFact queries, 300 answer labels, 299 valid JSON labels, 222 labels with numeric diagnostics, 186 clean AI-judge reward rows, and 1559 preference pairs. The run is documented in `docs/reports/phase1d_retriever_diversity_generation_mimo10.md`.
+   - Added separate retriever-diversity diagnostics for the subset:
+     `docs/reports/phase1d_retriever_diversity_generation_subset_validation.md`,
+     `docs/reports/phase1d_retriever_diversity_answer_labels.md`,
+     `docs/reports/phase1d_retriever_diversity_action_coverage.md`, and
+     `docs/reports/phase1d_retriever_diversity_answer_quality.md`.
+   - Completed full retriever-diverse context labeling for the same 300-row
+     subset: 300 valid MiMo V2.5 context labels, 253 clean usable labels, 47
+     ambiguous labels, 134 sufficient contexts, 158 insufficient contexts,
+     mean context quality `0.505`, and mean evidence support `0.436`.
+   - Added retriever-diversity context/evidence reports:
+     `docs/reports/phase1d_retriever_diversity_context_label_validation.md`,
+     `docs/reports/phase1d_retriever_diversity_context_labels.md`,
+     `docs/reports/phase1d_retriever_diversity_evidence_quality.md`,
+     `docs/reports/phase1d_retriever_diversity_reward_ablation.md`, and
+     `docs/reports/phase1d_retriever_diversity_selector_eval.md`.
+   - The non-default retriever-diverse context reward candidate changed
+     156/300 reward rows, mostly downward, with mean changed-only delta
+     `-0.301` and preference count rising from 1559 to 2412. Treat it as
+     calibration supervision, not as a default reward or selector target.
    - Do not scale that subset directly to the full 2250-row matrix with `MAX_COMPLETION_TOKENS=256`; the low cap produced 77 empty generated answers with no request errors. Use a larger generation cap first, then re-check empty-answer and label coverage.
 
 ```bash

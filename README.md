@@ -493,6 +493,29 @@ The pipeline writes a merged label file, validation summary, context-label summa
 
 The first full MiMo context-label ablation is documented in `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`. It merged all 192 action rows with 177 clean usable context labels, no missing/unknown/duplicate action ids, and no invalid JSON. Context candidates changed 140 reward rows; penalty `0.25` is the least aggressive candidate, while penalty `1.00` heavily compresses reward scale and should remain diagnostic.
 
+The retriever-diverse 10-query MiMo V2.5 subset now has full 300-row context labels as well as answer labels. Validation found 300 unique context labels, 253 clean usable labels, no missing/unknown/duplicate action ids, and no invalid JSON. The context summary found 134 sufficient contexts, 158 insufficient contexts, mean context quality `0.505`, mean evidence support `0.436`, and mean irrelevant chunks `3.817`. The non-default context reward candidate with insufficient-context penalty `0.25` changed 156/300 reward rows, mostly downward, and should be treated as calibration supervision rather than a default selector target. Curated reports are split by purpose:
+
+- `docs/reports/phase1d_retriever_diversity_generation_mimo10.md`: main run summary and interpretation.
+- `docs/reports/phase1d_retriever_diversity_context_labels.md`: full context-label summary.
+- `docs/reports/phase1d_retriever_diversity_evidence_quality.md`: evidence quality by retriever and policy.
+- `docs/reports/phase1d_retriever_diversity_reward_ablation.md`: answer-only versus context-candidate reward comparison.
+- `docs/reports/phase1d_retriever_diversity_selector_eval.md`: diagnostic held-out selector sweeps.
+
+Inspect retriever-diverse answer and evidence quality after labels exist:
+
+```bash
+uv run python scripts/analyze_retriever_diversity_answer_quality.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/reward_mimo_answer/rlaif_rewards.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/answer_quality_by_retriever_policy.md
+
+uv run python scripts/analyze_context_policy_evidence_quality.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>/evidence_quality_by_retriever_policy.md
+```
+
 Select high-impact rows for a targeted multi-judge context audit:
 
 ```bash
@@ -731,6 +754,34 @@ scripts/run_retriever_diversity_budgetrag_matrix.sh
 ```
 
 Future MiMo jobs default to standard `mimo-v2.5`; `mimo-v2.5-pro` is kept only for historical provenance and disabled in the default model matrix. Merged reports may combine historical Pro rows with future standard-v2.5 rows, but they must annotate `judge_model`/`generator_model` drift and keep model provenance visible. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with `legacy`, `evidence-aware`, `score-density`, and `adaptive-heuristic` profiles `balanced/aggressive` over budgets `1000`, `2000`, and `4000`. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
+
+Validate a retriever-diverse generation subset before spending judge budget:
+
+```bash
+uv run python scripts/validate_retriever_diversity_generation_subset.py \
+  --input-dir benchmark_results/budgetrag/phase1d_retriever_diversity_smoke/<run-name> \
+  --expected-rows 300 \
+  --expected-query-count 10 \
+  --expected-retrievers bm25,graph-bm25,hybrid-rrf \
+  --expected-policies legacy,evidence-aware,score-density,adaptive-heuristic \
+  --expected-budgets 1000,4000 \
+  --out-md benchmark_results/rlaif/<run-name>/generation_subset_validation.md
+```
+
+The 10-query MiMo V2.5 generation smoke is documented in `docs/reports/phase1d_retriever_diversity_generation_mimo10.md` and its validation report is in `docs/reports/phase1d_retriever_diversity_generation_subset_validation.md`. It produced 300 action rows with full retriever/policy/budget coverage and zero request-level generation errors, but 77 rows had empty answer strings at `MAX_COMPLETION_TOKENS=256`. Treat those as missing-answer rows and use a larger generation cap before scaling to the full 2250-row matrix.
+
+After answer labels and rewards exist, inspect answer quality by retriever and policy:
+
+```bash
+uv run python scripts/analyze_retriever_diversity_answer_quality.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo_v25.jsonl \
+  --rewards benchmark_results/rlaif/<run-name>/answer_only/rlaif_rewards.jsonl \
+  --out-csv benchmark_results/rlaif/<run-name>/answer_quality_by_retriever_policy.csv \
+  --out-md benchmark_results/rlaif/<run-name>/answer_quality_by_retriever_policy.md
+```
+
+The analyzer groups clean scored labels by retriever, context policy, retriever-policy pair, adaptive profile, and budget. It reports answer quality, correctness, evidence support, unsupported-claim risk, reward, and normalized token/latency/KV cost. Ambiguous unscored labels are excluded by default and must be read together with the answer-label summary.
 
 After context labels exist for the resulting actions, inspect evidence quality by retriever and policy:
 

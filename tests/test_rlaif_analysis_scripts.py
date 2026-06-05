@@ -56,6 +56,14 @@ context_policy_evidence = _load_script(
     "analyze_context_policy_evidence_quality",
     "scripts/analyze_context_policy_evidence_quality.py",
 )
+generation_subset_validation = _load_script(
+    "validate_retriever_diversity_generation_subset",
+    "scripts/validate_retriever_diversity_generation_subset.py",
+)
+retriever_answer_quality = _load_script(
+    "analyze_retriever_diversity_answer_quality",
+    "scripts/analyze_retriever_diversity_answer_quality.py",
+)
 
 
 def test_summarize_rlaif_labels_counts_scores_and_ragas_correlation(tmp_path: Path) -> None:
@@ -629,6 +637,110 @@ def test_analyze_context_policy_evidence_quality_groups_clean_labels(tmp_path: P
     assert "Ambiguous/invalid/error labels are excluded" in md_text
 
 
+def test_validate_retriever_diversity_generation_subset_reports_coverage_and_missing_answers(tmp_path: Path) -> None:
+    run_dir = tmp_path / "budgetrag"
+    cell = run_dir / "cell" / "run"
+    cell.mkdir(parents=True)
+    _write_jsonl(
+        cell / "query_results.jsonl",
+        [
+            {
+                "query_id": "1",
+                "retriever": "bm25",
+                "context_policy": "legacy",
+                "context_budget": 1000,
+                "answer": "supported answer",
+                "generation_skipped": False,
+                "error": None,
+            },
+            {
+                "query_id": "1",
+                "retriever": "graph-bm25",
+                "context_policy": "evidence-aware",
+                "context_budget": 4000,
+                "answer": "",
+                "generation_skipped": False,
+                "error": None,
+            },
+        ],
+    )
+
+    summary = generation_subset_validation.validate_generation_subset(
+        input_dir=run_dir,
+        expected_rows=2,
+        expected_query_count=1,
+        expected_retrievers=["bm25", "graph-bm25"],
+        expected_policies=["legacy", "evidence-aware"],
+        expected_budgets=[1000, 4000],
+    )
+
+    assert summary["status"] == "ok"
+    assert summary["row_count"] == 2
+    assert summary["generation_success_count"] == 2
+    assert summary["missing_answer_count"] == 1
+    assert summary["retriever_counts"] == {"bm25": 1, "graph-bm25": 1}
+    rendered = generation_subset_validation.render_markdown(summary)
+    assert "missing answer rate" in rendered
+    assert "larger generation cap" in rendered
+
+
+def test_analyze_retriever_diversity_answer_quality_groups_labels_and_rewards(tmp_path: Path) -> None:
+    actions_path = tmp_path / "actions.jsonl"
+    labels_path = tmp_path / "labels.jsonl"
+    rewards_path = tmp_path / "rewards.jsonl"
+    _write_jsonl(
+        actions_path,
+        [
+            _answer_quality_action("a1", retriever="bm25", context_policy="legacy", budget=1000),
+            _answer_quality_action("a2", retriever="hybrid-rrf", context_policy="evidence-aware", budget=4000),
+            _answer_quality_action("a3", retriever="hybrid-rrf", context_policy="legacy", budget=1000),
+        ],
+    )
+    _write_jsonl(
+        labels_path,
+        [
+            _answer_label("a1", quality=0.9, support=0.8, unsupported=0.0),
+            _answer_label("a2", quality=0.4, support=0.3, unsupported=0.7),
+            {
+                "action_id": "a3",
+                "overall_quality": None,
+                "answer_correctness": None,
+                "evidence_support": None,
+                "unsupported_claim_penalty": None,
+                "ambiguous": True,
+                "invalid_json": False,
+                "missing_reason": "missing_answer",
+            },
+        ],
+    )
+    _write_jsonl(
+        rewards_path,
+        [
+            _answer_reward("a1", reward=0.7, token=0.2),
+            _answer_reward("a2", reward=0.1, token=0.6),
+            {"action_id": "a3", "reward": None, "reward_components": {}},
+        ],
+    )
+
+    summary = retriever_answer_quality.analyze_answer_quality(
+        actions_path=actions_path,
+        labels_path=labels_path,
+        rewards_path=rewards_path,
+    )
+
+    retriever_rows = {
+        row["group"]: row
+        for row in summary["rows"]
+        if row["group_by"] == "retrieval_strategy"
+    }
+    assert retriever_rows["bm25"]["quality_mean"] == 0.9
+    assert retriever_rows["hybrid-rrf"]["quality_mean"] == 0.4
+    assert retriever_rows["hybrid-rrf"]["unsupported_claim_penalty_mean"] == 0.7
+    rendered = retriever_answer_quality.render_markdown(summary)
+    assert "Retriever-Diversity Answer Quality" in rendered
+    assert "unsupported" in rendered
+
+
 def test_qwen_kv_estimate_formula_and_table() -> None:
     spec = kv_estimates.ModelSpec(
         model_id="tiny",
@@ -976,6 +1088,44 @@ def _evidence_action(
         },
         "kv_estimate": {
             "savings_mb": kv_savings,
+        },
+    }
+
+
+def _answer_quality_action(action_id: str, *, retriever: str, context_policy: str, budget: int) -> dict:
+    return {
+        "action_id": action_id,
+        "retrieval_strategy": retriever,
+        "context_policy": context_policy,
+        "adaptive_profile": "conservative",
+        "budget_chars": budget,
+        "latency": {"answer_latency_s": 1.5},
+        "context_metrics": {"kept_context_chars": budget},
+    }
+
+
+def _answer_label(action_id: str, *, quality: float, support: float | None = None, unsupported: float = 0.0) -> dict:
+    support_value = quality if support is None else support
+    return {
+        "action_id": action_id,
+        "overall_quality": quality,
+        "answer_correctness": quality,
+        "evidence_support": support_value,
+        "unsupported_claim_penalty": unsupported,
+        "ambiguous": False,
+        "invalid_json": False,
+        "missing_reason": None,
+    }
+
+
+def _answer_reward(action_id: str, *, reward: float, token: float) -> dict:
+    return {
+        "action_id": action_id,
+        "reward": reward,
+        "reward_components": {
+            "token_cost_norm": token,
+            "latency_norm": token / 2.0,
+            "kv_cost_norm": token,
         },
     }
 
