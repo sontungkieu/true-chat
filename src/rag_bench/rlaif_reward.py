@@ -19,6 +19,9 @@ class RlaifRewardConfig:
     output_dir: Path | None = None
     answer_labels_path: Path | None = None
     context_labels_path: Path | None = None
+    context_quality_blend_weight: float = 0.5
+    context_support_blend_weight: float = 0.5
+    context_insufficient_penalty_weight: float = 1.0
     quality_weight: float = 0.75
     support_weight: float = 0.10
     token_weight: float = 0.05
@@ -65,6 +68,9 @@ def build_rlaif_rewards(config: RlaifRewardConfig) -> dict[str, Any]:
                     ),
                     context_label=context_label_by_action_id.get(str(action.get("action_id"))),
                     stats=context_label_stats,
+                    quality_blend_weight=config.context_quality_blend_weight,
+                    support_blend_weight=config.context_support_blend_weight,
+                    insufficient_penalty_weight=config.context_insufficient_penalty_weight,
                 ),
                 scales=scales,
                 weights=weights,
@@ -246,6 +252,9 @@ def _feedback_with_context_label(
     feedback: dict[str, Any] | None,
     context_label: dict[str, Any] | None,
     stats: Counter[str],
+    quality_blend_weight: float,
+    support_blend_weight: float,
+    insufficient_penalty_weight: float,
 ) -> dict[str, Any] | None:
     if context_label is None:
         stats["missing_context_label"] += 1
@@ -280,19 +289,21 @@ def _feedback_with_context_label(
     quality = _score_or_none(feedback.get("quality_score"))
     context_quality = _score_or_none(context_label.get("context_quality_score"))
     if quality is not None and context_quality is not None:
-        feedback["quality_score"] = mean([quality, context_quality])
+        feedback["quality_score"] = _blend_scores(quality, context_quality, quality_blend_weight)
     elif quality is None and context_quality is not None:
         feedback["quality_score"] = context_quality
 
     faithfulness = _score_or_none(feedback.get("faithfulness"))
     context_support = _score_or_none(context_label.get("evidence_support_score"))
     if context_support is not None:
-        feedback["faithfulness"] = context_support if faithfulness is None else mean([faithfulness, context_support])
+        feedback["faithfulness"] = (
+            context_support if faithfulness is None else _blend_scores(faithfulness, context_support, support_blend_weight)
+        )
 
     if context_label.get("sufficient") is False:
         feedback["unsupported_claim_penalty"] = max(
             _score_or_none(feedback.get("unsupported_claim_penalty")) or 0.0,
-            1.0 - (context_support or 0.0),
+            insufficient_penalty_weight * (1.0 - (context_support or 0.0)),
         )
 
     merged_metadata = _dict_or_empty(feedback.get("metadata")).copy()
@@ -306,6 +317,9 @@ def _feedback_with_context_label(
         "selected_chunk_count": feedback["selected_chunk_count"],
         "redundant_chunk_count": feedback["redundant_chunk_count"],
         "irrelevant_chunk_count": feedback["irrelevant_chunk_count"],
+        "quality_blend_weight": quality_blend_weight,
+        "support_blend_weight": support_blend_weight,
+        "insufficient_penalty_weight": insufficient_penalty_weight,
     }
     feedback["metadata"] = merged_metadata
     return feedback
@@ -675,6 +689,9 @@ def _build_summary(
         "context_label_count": context_label_count,
         "duplicate_context_label_count": duplicate_context_label_count,
         "context_label_merge_counts": dict(context_label_stats),
+        "context_quality_blend_weight": config.context_quality_blend_weight,
+        "context_support_blend_weight": config.context_support_blend_weight,
+        "context_insufficient_penalty_weight": config.context_insufficient_penalty_weight,
         "reward_count": len(reward_rows),
         "scored_reward_count": scored_reward_count,
         "missing_quality_count": len(reward_rows) - scored_reward_count,
@@ -725,7 +742,20 @@ def _render_summary_markdown(summary: dict[str, Any]) -> str:
         if not summary["answer_label_merge_counts"]:
             lines.append("| N/A | 0 |")
     if summary["context_labels_path"] is not None:
-        lines.extend(["", "## Context Label Merge", "", f"- Context labels path: `{summary['context_labels_path']}`", "", "| Status | Count |", "| --- | ---: |"])
+        lines.extend(
+            [
+                "",
+                "## Context Label Merge",
+                "",
+                f"- Context labels path: `{summary['context_labels_path']}`",
+                f"- Context quality blend weight: {summary['context_quality_blend_weight']}",
+                f"- Context support blend weight: {summary['context_support_blend_weight']}",
+                f"- Context insufficient penalty weight: {summary['context_insufficient_penalty_weight']}",
+                "",
+                "| Status | Count |",
+                "| --- | ---: |",
+            ]
+        )
         for key, value in sorted(summary["context_label_merge_counts"].items()):
             lines.append(f"| `{key}` | {value} |")
         if not summary["context_label_merge_counts"]:
@@ -840,6 +870,12 @@ def _validate_config(config: RlaifRewardConfig) -> None:
         raise ValueError("quality_tie_threshold must be non-negative")
     if config.support_tie_threshold < 0:
         raise ValueError("support_tie_threshold must be non-negative")
+    if not 0.0 <= config.context_quality_blend_weight <= 1.0:
+        raise ValueError("context_quality_blend_weight must be between 0 and 1")
+    if not 0.0 <= config.context_support_blend_weight <= 1.0:
+        raise ValueError("context_support_blend_weight must be between 0 and 1")
+    if config.context_insufficient_penalty_weight < 0:
+        raise ValueError("context_insufficient_penalty_weight must be non-negative")
     if config.reward_calibration not in {"none", "pairwise_tie_v1"}:
         raise ValueError("reward_calibration must be one of: none, pairwise_tie_v1")
     if config.reward_calibration == "none" and config.tie_break_by_efficiency:
@@ -955,3 +991,7 @@ def _dict_or_empty(value: Any) -> dict[str, Any]:
 
 def _list_or_empty(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _blend_scores(original: float, context: float, context_weight: float) -> float:
+    return (1.0 - context_weight) * original + context_weight * context

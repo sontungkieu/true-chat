@@ -38,10 +38,10 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, non-default \texttt{rlaif-reward --context-labels}, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{family\_smoothed\_best\_average}, \texttt{shrinkage\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector}, multi-seed selector sweep, action coverage diagnostics, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, non-default \texttt{rlaif-reward --context-labels}, context reward ablation knobs, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{family\_smoothed\_best\_average}, \texttt{shrinkage\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector}, multi-seed selector sweep, action coverage diagnostics, answer/context/pairwise-label summaries, reward-delta diagnostics, pairwise calibration diagnostics và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{207 passed} \\
+Trạng thái test gần nhất & \texttt{209 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -251,6 +251,9 @@ uv run rag-bench rlaif-reward \
   --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
   --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
   --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --context-quality-blend-weight 0.5 \
+  --context-support-blend-weight 0.5 \
+  --context-insufficient-penalty-weight 1.0 \
   --output-dir benchmark_results/rlaif/<run-name> \
   --quality-weight 0.75 \
   --support-weight 0.10 \
@@ -263,7 +266,7 @@ uv run rag-bench rlaif-reward \
 
 Khi có \texttt{--answer-labels}, reward builder dùng AI-judge labels hợp lệ làm feedback chính. Nếu label invalid, ambiguous, errored hoặc thiếu quality, builder fallback về feedback gốc như RAGAS khi có và ghi rõ merge reason trong metadata. Nếu cả hai nguồn đều thiếu quality hợp lệ, reward vẫn là \texttt{null}, không phải 0.
 
-Khi bật non-default \texttt{--context-labels}, builder chỉ dùng context labels sạch với \texttt{ambiguous=false}; context labels ambiguous, invalid, errored hoặc thiếu quality đều fallback về answer-level feedback. Context quality và evidence support được blend vào diagnostics/reward, còn \texttt{sufficient=false} có thể tăng unsupported-claim penalty. Merge reason được ghi trong metadata và summary; path này vẫn là offline candidate, không thay runtime policy.
+Khi bật non-default \texttt{--context-labels}, builder chỉ dùng context labels sạch với \texttt{ambiguous=false}; context labels ambiguous, invalid, errored hoặc thiếu quality đều fallback về answer-level feedback. Context quality và evidence support được blend vào diagnostics/reward bằng các blend weights trong khoảng \([0,1]\), còn \texttt{sufficient=false} có thể tăng unsupported-claim penalty theo \texttt{--context-insufficient-penalty-weight}. Merge reason được ghi trong metadata và summary; path này vẫn là offline candidate, không thay runtime policy.
 
 Builder ghi ba artifact:
 
@@ -334,6 +337,8 @@ Context-level RLAIF subset đầu tiên đã chạy trên 50 action rows bằng 
 
 Context-label reward candidate hiện đã chạy trên MiMo50 subset. Trong 50 context labels, 46 labels sạch được merge, 4 ambiguous rows fallback, và 142 action rows còn lại chưa có context label nên giữ answer-level feedback. So với answer-only reward set, preference count tăng từ 722 lên 822; quality-guardrail skips tăng từ 4 lên 12; 36 reward rows thay đổi, gồm 31 rows giảm và 5 rows tăng. Seed-42 sanity check cho thấy \texttt{shrinkage\_smoothed\_best\_average} đạt reward 0.745, quality 0.914 và oracle gap 0.002 trên eval nhỏ, nhưng đây chỉ là diagnostic vì context labels mới phủ 46/192 action rows.
 
+Reward-delta diagnostics xác nhận candidate weight \texttt{1.0} là aggressive: trên 36 changed rows, min delta là -1.475, median delta là -1.235 và mean changed-only delta là -0.880. Khi chỉ giảm \texttt{--context-insufficient-penalty-weight} xuống 0.25, số changed rows vẫn là 36 nhưng mean changed-only delta còn -0.397. Vì vậy context-label reward phải được ablate theo penalty weights 0.25/0.50/1.00 trước khi dùng cho selector training.
+
 \section{Hai điểm đã harden trước reward/preference}
 
 Pasted review đã chỉ ra hai điểm yếu hợp lý cần sửa trước khi xây reward/preference builder. Hai điểm này đã được xử lý trong hardening hiện tại.
@@ -378,7 +383,8 @@ Thứ tự tiếp theo nên giữ như sau:
 
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Full context-label run}: chạy tiếp 142 action rows còn lại để tránh candidate reward chỉ dựa trên subset 46 labels sạch.
-  \item \textbf{Context-label multi-seed eval}: sau khi có full context labels, rebuild reward và chạy lại selector sweep nhiều seed.
+  \item \textbf{Reward-delta ablation}: sau full labels, chạy lại delta diagnostics và penalty-weight ablation trước khi chọn candidate reward.
+  \item \textbf{Context-label multi-seed eval}: sau khi có full context labels và chọn candidate weight, rebuild reward và chạy lại selector sweep nhiều seed.
   \item \textbf{More logged query groups}: tăng số query/action groups và retriever diversity trước khi kết luận selector learned có generalization ổn định.
   \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
   \item \textbf{Simple ranking baseline}: sau khi có thêm data/context labels, cân nhắc pairwise ranker nhẹ từ preference rows.

@@ -32,6 +32,7 @@ pairwise_calibration = _load_script(
     "diagnose_rlaif_pairwise_calibration",
     "scripts/diagnose_rlaif_pairwise_calibration.py",
 )
+reward_set_compare = _load_script("compare_rlaif_reward_sets", "scripts/compare_rlaif_reward_sets.py")
 selector_sweep = _load_script("run_rlaif_split_sweep", "scripts/run_rlaif_split_sweep.py")
 action_coverage = _load_script("inspect_rlaif_action_coverage", "scripts/inspect_rlaif_action_coverage.py")
 kv_estimates = _load_script("estimate_local_qwen_kv_cache", "scripts/estimate_local_qwen_kv_cache.py")
@@ -122,6 +123,54 @@ def test_run_rlaif_selector_sweep_writes_multiseed_summary(tmp_path: Path) -> No
     assert "Runtime default replacement: `false`" in rendered
     assert summary["policy_stats"]["linear_reward_model"]["coverage"]["count"] == 2
     assert summary["policy_stats"]["oracle_logged"]["oracle_gap"]["mean"] == 0.0
+
+
+def test_compare_rlaif_reward_sets_reports_delta_distribution(tmp_path: Path) -> None:
+    base_path = tmp_path / "base_rewards.jsonl"
+    candidate_path = tmp_path / "candidate_rewards.jsonl"
+    _write_jsonl(
+        base_path,
+        [
+            {"action_id": "a1", "reward": 0.8},
+            {"action_id": "a2", "reward": 0.2},
+            {"action_id": "a3", "reward": None},
+        ],
+    )
+    _write_jsonl(
+        candidate_path,
+        [
+            {
+                "action_id": "a1",
+                "reward": -1.0,
+                "metadata": {
+                    "context_label_merge": "used",
+                    "context_label": {"sufficient": False},
+                },
+            },
+            {
+                "action_id": "a2",
+                "reward": 0.4,
+                "metadata": {
+                    "context_label_merge": "used",
+                    "context_label": {"sufficient": True},
+                },
+            },
+            {"action_id": "a3", "reward": 0.1},
+        ],
+    )
+
+    summary = reward_set_compare.compare_reward_sets(base_path=base_path, candidate_path=candidate_path)
+
+    assert summary["shared_action_count"] == 3
+    assert summary["changed_reward_count"] == 2
+    assert summary["negative_delta_count"] == 1
+    assert summary["positive_delta_count"] == 1
+    assert summary["missing_reward_counts"] == {"base_missing": 1}
+    assert summary["clipped_counts"]["candidate_at_minus_one"] == 1
+    assert summary["changed_by_context_sufficient"] == {"false": 1, "true": 1}
+    rendered = reward_set_compare.render_markdown(summary)
+    assert "RLAIF Reward Delta Diagnostics" in rendered
+    assert "changed rewards" in rendered
 
 
 def test_inspect_rlaif_action_coverage_reports_signature_sparsity(tmp_path: Path) -> None:

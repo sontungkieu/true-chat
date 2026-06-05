@@ -26,6 +26,16 @@ uv run --frozen rag-bench rlaif-reward \
 
 `--context-labels` is explicitly opt-in. The default `rlaif-reward` path is unchanged.
 
+The candidate now exposes three ablation knobs:
+
+```text
+--context-quality-blend-weight
+--context-support-blend-weight
+--context-insufficient-penalty-weight
+```
+
+The reported main run keeps blend weights at `0.5` and uses the aggressive insufficient-context penalty weight `1.0`, matching the original MiMo50 candidate.
+
 ## Merge Coverage
 
 | Metric | Count |
@@ -56,6 +66,47 @@ Compared with the answer-label-only reward set:
 Context labels changed 36 reward rows. Of those rows, 31 moved down and 5 moved up, with mean reward delta `-0.880` over changed rows.
 
 This is expected: the MiMo50 context audit found many insufficient or noisy retrieval contexts, so context-level supervision mostly penalizes answer rows whose answer-level score looked acceptable but whose supporting context was weak.
+
+## Reward Delta Distribution
+
+The new delta diagnostic script compares answer-only rewards against the context-label candidate:
+
+```bash
+uv run --frozen python scripts/compare_rlaif_reward_sets.py \
+  --base benchmark_results/rlaif/phase1d_selector_smoke_ai_judge/rlaif_rewards.jsonl \
+  --candidate benchmark_results/rlaif/phase1d_selector_smoke_ai_context_mimo50_penalty_100/rlaif_rewards.jsonl \
+  --out-md benchmark_results/rlaif/phase1d_selector_smoke_ai_context_mimo50_penalty_100/reward_delta_summary.md \
+  --out-json benchmark_results/rlaif/phase1d_selector_smoke_ai_context_mimo50_penalty_100/reward_delta_summary.json
+```
+
+For the aggressive penalty weight `1.0`:
+
+| Scope | min | p25 | median | p75 | max | mean |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| all scored | -1.475 | 0.000 | 0.000 | 0.000 | 0.475 | -0.165 |
+| changed only | -1.475 | -1.359 | -1.235 | -0.295 | 0.475 | -0.880 |
+
+Changed rows by context sufficiency:
+
+| Context sufficient | Changed rows |
+| --- | ---: |
+| `false` | 24 |
+| `missing` | 3 |
+| `true` | 9 |
+
+The large negative tail confirms the review concern: this is an aggressive candidate. It is useful for diagnosing weak context, but not safe as a default training reward without fuller coverage and ablation.
+
+## Penalty-Weight Ablation
+
+Only `--context-insufficient-penalty-weight` was varied; quality/support blend weights stayed at `0.5`.
+
+| Insufficient penalty weight | Preferences | Quality guardrail skips | Small-delta skips | Changed rows | Mean delta changed-only |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.25 | 806 | 12 | 456 | 36 | -0.397 |
+| 0.50 | 814 | 14 | 446 | 36 | -0.558 |
+| 1.00 | 822 | 12 | 440 | 36 | -0.880 |
+
+The ablation keeps the same 36 changed rows but controls penalty magnitude. This suggests the next full-label run should report at least `0.25`, `0.50`, and `1.00` before choosing a candidate reward for selector training.
 
 ## Held-Out Seed 42 Sanity Check
 
@@ -96,13 +147,14 @@ The important result is not that one selector wins on this small split. The impo
 - Context labels are only a 50-row subset; clean context supervision is 46 rows.
 - Context labels are AI feedback, not human labels.
 - Reward rows still use answer labels for the 142 actions without context labels.
+- The main candidate uses aggressive insufficient-context penalty weight `1.0`; ablation shows this can strongly depress reward rows.
 - The selector eval above is a seed-42 sanity check. Multi-seed evaluation should wait until full context labels are available.
 - No runtime policy changes were made. `adaptive-heuristic` remains the default runtime policy.
 
 ## Verification
 
-- Full test suite: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen pytest` -> 207 passed.
-- Targeted tests after final cleanup: `tests/test_rlaif_reward.py tests/test_cli.py` -> 25 passed.
+- Full test suite: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --frozen pytest` -> 209 passed.
+- Targeted tests after adding ablation knobs and delta diagnostics: `tests/test_rlaif_reward.py tests/test_cli.py tests/test_rlaif_analysis_scripts.py` -> 34 passed.
 - PDF report rebuilt from `pdf/main.tex`; LaTeX intermediate files were cleaned.
 
 ## Next

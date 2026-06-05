@@ -392,10 +392,25 @@ uv run rag-bench rlaif-reward \
   --feedback benchmark_results/rlaif/<run-name>/rlaif_feedback.jsonl \
   --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
   --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
+  --context-quality-blend-weight 0.5 \
+  --context-support-blend-weight 0.5 \
+  --context-insufficient-penalty-weight 1.0 \
   --output-dir benchmark_results/rlaif/<run-name>_context_candidate
 ```
 
-`--context-labels` is non-default and offline-only. Clean non-ambiguous context labels blend context quality/evidence support into reward diagnostics and can penalize insufficient context; ambiguous, invalid, errored, or missing context labels fall back to answer-level feedback instead of becoming score zero. The merge status is recorded in reward metadata and summary counts. This candidate path is intended for analysis and selector experiments, not for replacing the runtime `adaptive-heuristic` policy.
+`--context-labels` is non-default and offline-only. Clean non-ambiguous context labels blend context quality/evidence support into reward diagnostics and can penalize insufficient context; ambiguous, invalid, errored, or missing context labels fall back to answer-level feedback instead of becoming score zero. The merge status is recorded in reward metadata and summary counts. The context blend weights must be in `[0, 1]`; `--context-insufficient-penalty-weight` is non-negative and should be ablated, for example `0.25`, `0.50`, and `1.00`, before using a candidate reward for selector training. This candidate path is intended for analysis and selector experiments, not for replacing the runtime `adaptive-heuristic` policy.
+
+Compare answer-only and context-label reward candidates:
+
+```bash
+uv run python scripts/compare_rlaif_reward_sets.py \
+  --base benchmark_results/rlaif/<run-name>_answer_only/rlaif_rewards.jsonl \
+  --candidate benchmark_results/rlaif/<run-name>_context_candidate/rlaif_rewards.jsonl \
+  --out-md benchmark_results/rlaif/<run-name>_context_candidate/reward_delta_summary.md \
+  --out-json benchmark_results/rlaif/<run-name>_context_candidate/reward_delta_summary.json
+```
+
+The delta summary reports min/p25/median/p75/max reward deltas, positive/negative changed rows, clipped reward counts, and changed rows by context sufficiency. It is useful for checking whether a context candidate is too aggressive.
 
 Optional pairwise tie-aware preference calibration:
 

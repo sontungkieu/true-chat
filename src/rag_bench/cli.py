@@ -305,6 +305,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional rlaif_context_labels.jsonl file. Clean non-ambiguous context labels adjust reward diagnostics; invalid labels fall back cleanly.",
     )
     rlaif_reward_parser.add_argument(
+        "--context-quality-blend-weight",
+        type=float,
+        default=0.5,
+        help="Weight assigned to context_quality_score when blending answer quality with context quality. Range: 0..1.",
+    )
+    rlaif_reward_parser.add_argument(
+        "--context-support-blend-weight",
+        type=float,
+        default=0.5,
+        help="Weight assigned to context evidence support when blending answer faithfulness/support. Range: 0..1.",
+    )
+    rlaif_reward_parser.add_argument(
+        "--context-insufficient-penalty-weight",
+        type=float,
+        default=1.0,
+        help="Multiplier for insufficient-context unsupported penalty. Defaults to the aggressive candidate weight 1.0.",
+    )
+    rlaif_reward_parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -768,9 +786,14 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
         "max_quality_regret",
         "quality_tie_threshold",
         "support_tie_threshold",
+        "context_insufficient_penalty_weight",
     ):
         if getattr(args, name) < 0:
             print(f"--{name.replace('_', '-')} must be non-negative.", file=sys.stderr)
+            return 2
+    for name in ("context_quality_blend_weight", "context_support_blend_weight"):
+        if not 0.0 <= getattr(args, name) <= 1.0:
+            print(f"--{name.replace('_', '-')} must be between 0 and 1.", file=sys.stderr)
             return 2
     if args.reward_calibration == "none" and args.tie_break_by_efficiency:
         print("--tie-break-by-efficiency requires --reward-calibration pairwise_tie_v1.", file=sys.stderr)
@@ -783,6 +806,9 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
                 output_dir=args.output_dir,
                 answer_labels_path=args.answer_labels,
                 context_labels_path=args.context_labels,
+                context_quality_blend_weight=args.context_quality_blend_weight,
+                context_support_blend_weight=args.context_support_blend_weight,
+                context_insufficient_penalty_weight=args.context_insufficient_penalty_weight,
                 quality_weight=args.quality_weight,
                 support_weight=args.support_weight,
                 token_weight=args.token_weight,
@@ -814,6 +840,9 @@ def _rlaif_reward(args: argparse.Namespace) -> int:
                 "answer_label_merge_counts": summary["answer_label_merge_counts"],
                 "context_label_count": summary["context_label_count"],
                 "context_label_merge_counts": summary["context_label_merge_counts"],
+                "context_quality_blend_weight": summary["context_quality_blend_weight"],
+                "context_support_blend_weight": summary["context_support_blend_weight"],
+                "context_insufficient_penalty_weight": summary["context_insufficient_penalty_weight"],
                 "preference_type_counts": summary["preference_type_counts"],
                 "preference_reason_counts": summary["preference_reason_counts"],
                 "preference_skip_reason_counts": summary["preference_skip_reason_counts"],

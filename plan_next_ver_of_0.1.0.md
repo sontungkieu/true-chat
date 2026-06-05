@@ -102,7 +102,10 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Current subset result: 50 valid JSON labels, 0 invalid JSON, 0 errors, 4 ambiguous rows, 18 sufficient rows, 29 insufficient rows, mean context quality 0.478, mean evidence support 0.410, and mean selected chunks 1.38.
    - Implemented non-default `rlaif-reward --context-labels` merge path and filter `ambiguous=true` rows out of clean context supervision.
    - Current context reward candidate result: clean context labels used 46/50; ambiguous context rows fallback 4/50; context labels changed 36 reward rows, with 31 reward decreases and 5 increases; preference count rose from 722 to 822 because context evidence labels sharpened some action-pair gaps.
-   - Next implementation change: label the remaining 142 action rows, then run multi-seed held-out selector evaluation with full context-label coverage.
+   - Added ablation knobs: `--context-quality-blend-weight`, `--context-support-blend-weight`, and `--context-insufficient-penalty-weight`.
+   - Added `scripts/compare_rlaif_reward_sets.py` to report reward delta distribution, clipped reward counts, and changed rows by context sufficiency.
+   - MiMo50 penalty-weight ablation: insufficient penalty `0.25/0.50/1.00` keeps 36 changed rows but changes mean changed-only reward delta from `-0.397` to `-0.558` to `-0.880`, confirming that weight `1.0` is aggressive.
+   - Next implementation change: label the remaining 142 action rows, rerun reward-delta ablations, then run multi-seed held-out selector evaluation with full context-label coverage.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
@@ -303,6 +306,7 @@ Context label schema:
    - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
    - `rlaif_context_labels_mimo50_summary.md`: context-label sufficiency, evidence support, minimality, and chunk-selection summary.
    - `rlaif_reward_summary.md` with `--context-labels`: non-default context reward candidate summary with clean/fallback context-label merge counts.
+   - `reward_delta_summary.md`: reward-delta distribution comparing answer-only and context-label candidates.
    - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
    - `rlaif_pairwise_labels_summary.md`: direct pairwise label agreement and risk summary.
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
@@ -517,6 +521,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
 - CLI can build rewards/preferences from existing BudgetRAG output folders.
 - CLI can rebuild rewards with optional answer-label files without treating invalid labels as zero quality.
 - CLI can rebuild rewards with optional context-label files without treating ambiguous/invalid context labels as zero quality.
+- CLI exposes context-label blend and insufficient-penalty weights so aggressive candidates can be ablated before selector training.
 - Summary markdown explains reward coverage, preference coverage, and tradeoffs.
 - Answer-label and local Qwen KV-cache summary scripts are documented and covered by tests.
 - `README.md` and `milestones.md` are updated when implementation lands.

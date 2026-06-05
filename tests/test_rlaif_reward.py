@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from rag_bench.rlaif_reward import RlaifRewardConfig, build_rlaif_rewards
 
 
@@ -228,6 +230,44 @@ def test_rlaif_reward_falls_back_when_context_label_is_ambiguous(tmp_path: Path)
     assert summary["context_label_merge_counts"]["fallback_to_feedback"] == 1
     assert reward["quality"] == 0.55
     assert reward["metadata"]["context_label_skip_reason"] == "ambiguous"
+
+
+def test_rlaif_reward_context_merge_weights_reduce_aggressive_penalty(tmp_path: Path) -> None:
+    actions = [_action("a1")]
+    feedback = [_feedback("a1", quality=0.8, faithfulness=0.8, provenance="ai_judge")]
+    context_labels = [
+        _context_label(
+            "a1",
+            context_quality=0.2,
+            evidence_support=0.1,
+            sufficient=False,
+            selected=["c1"],
+        )
+    ]
+    _write_jsonl(tmp_path / "rlaif_actions.jsonl", actions)
+    _write_jsonl(tmp_path / "rlaif_feedback.jsonl", feedback)
+    _write_jsonl(tmp_path / "rlaif_context_labels.jsonl", context_labels)
+
+    summary = build_rlaif_rewards(
+        RlaifRewardConfig(
+            actions_path=tmp_path / "rlaif_actions.jsonl",
+            feedback_path=tmp_path / "rlaif_feedback.jsonl",
+            context_labels_path=tmp_path / "rlaif_context_labels.jsonl",
+            context_quality_blend_weight=0.25,
+            context_support_blend_weight=0.25,
+            context_insufficient_penalty_weight=0.25,
+            output_dir=tmp_path / "out",
+        )
+    )
+
+    reward = _read_jsonl(tmp_path / "out" / "rlaif_rewards.jsonl")[0]
+    assert summary["context_quality_blend_weight"] == 0.25
+    assert summary["context_support_blend_weight"] == 0.25
+    assert summary["context_insufficient_penalty_weight"] == 0.25
+    assert reward["quality"] == pytest.approx(0.65)
+    assert reward["evidence_support"] == pytest.approx(0.625)
+    assert reward["unsupported_claim_penalty"] == pytest.approx(0.225)
+    assert reward["metadata"]["context_label"]["insufficient_penalty_weight"] == 0.25
 
 
 def _action(
