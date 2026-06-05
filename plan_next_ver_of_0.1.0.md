@@ -321,7 +321,9 @@ Context label schema:
    - Current shrinkage-smoothed result: coverage stays 1.000, reward improves to 0.602, quality to 0.773, and oracle gap to 0.070; this is the strongest full-coverage non-oracle baseline so far, but still trails `best_average` on reward/quality.
    - Pairwise calibration limitation: `pairwise_tie_v1` currently changes preference construction and diagnostics, but reward-based selectors still train on scalar reward rows; pairwise preferences affect selection only after a pairwise ranker or calibrated scalar reward path is added.
    - Cost-feature limitation: current selector cost features are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before pre-generation selection.
-   - Next evaluator change: merge context-level labels into non-default reward diagnostics, expand logged query groups and retriever diversity, then reassess whether a pairwise ranker is justified.
+   - Current full-context result: all 192 MiMo context labels have been merged and ablated; penalty `0.25` is the conservative non-default context reward candidate, while `1.00` remains diagnostic.
+   - Current audit tooling: targeted multi-judge case selection, deterministic range sharding, and MiMo/DeepSeek/Groq agreement aggregation are implemented as scripts; secondary judge labels are an audit/confidence layer, not a reward default.
+   - Next evaluator change: run targeted DeepSeek/Groq audits on high-impact MiMo context rows, expand logged query groups and retriever diversity, then reassess whether a pairwise ranker is justified.
    - Retrieval-strategy selection claims require broader logged actions with multiple retrievers such as `bm25`, `graph-bm25`, and `hybrid-rrf`. Current evidence mostly supports context-budget/action selection, not robust retrieval-strategy allocation. Web-search actions remain live stress tests only and must not be mixed with reproducible BEIR benchmark claims.
 
 5. Outputs
@@ -354,6 +356,8 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_context_labels_mimo50.md`: curated first real context-level RLAIF subset report.
    - `docs/reports/phase1d_rlaif_context_reward_candidate.md`: curated non-default reward candidate report after merging clean MiMo50 context labels.
    - `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`: curated full 192-action context-label validation, reward ablation, and multi-seed selector sweep report.
+   - `docs/reports/phase1d_rlaif_multijudge_audit_template.md`: targeted multi-judge audit template for MiMo/DeepSeek/Groq agreement, MiMo-harsh rows, and consensus-insufficient rows.
+   - `docs/reports/phase1d_retriever_diversity_run_plan.md`: retriever-diversity run plan for `bm25`, `graph-bm25`, and `hybrid-rrf` logged action coverage.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.

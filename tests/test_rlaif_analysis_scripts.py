@@ -44,6 +44,14 @@ context_reward_pipeline = _load_script(
     "run_context_reward_ablation_pipeline",
     "scripts/run_context_reward_ablation_pipeline.py",
 )
+multijudge_selector = _load_script(
+    "select_rlaif_multijudge_audit_cases",
+    "scripts/select_rlaif_multijudge_audit_cases.py",
+)
+multijudge_aggregator = _load_script(
+    "aggregate_rlaif_multijudge_audit",
+    "scripts/aggregate_rlaif_multijudge_audit.py",
+)
 
 
 def test_summarize_rlaif_labels_counts_scores_and_ragas_correlation(tmp_path: Path) -> None:
@@ -307,6 +315,161 @@ def test_context_reward_ablation_pipeline_builds_candidates_and_manifest(tmp_pat
     rendered = context_reward_pipeline.render_pipeline_markdown(summary)
     assert "RLAIF Context Reward Ablation Pipeline" in rendered
     assert "adaptive-heuristic" in rendered
+
+
+def test_select_rlaif_multijudge_audit_cases_prioritizes_delta_and_insufficiency(tmp_path: Path) -> None:
+    actions_path = tmp_path / "actions.jsonl"
+    answer_labels_path = tmp_path / "answer_labels.jsonl"
+    context_labels_path = tmp_path / "context_labels.jsonl"
+    answer_rewards_path = tmp_path / "answer_rewards.jsonl"
+    context_rewards_path = tmp_path / "context_rewards.jsonl"
+    pairwise_labels_path = tmp_path / "pairwise_labels.jsonl"
+    output_path = tmp_path / "targeted_cases_4.jsonl"
+    _write_jsonl(
+        actions_path,
+        [
+            _audit_action("a1", "q1"),
+            _audit_action("a2", "q2"),
+            _audit_action("a3", "q3"),
+            _audit_action("a4", "q4"),
+        ],
+    )
+    _write_jsonl(
+        answer_labels_path,
+        [
+            _answer_label("a1", quality=0.95),
+            _answer_label("a2", quality=0.90),
+            _answer_label("a3", quality=0.70),
+            _answer_label("a4", quality=0.60),
+        ],
+    )
+    _write_jsonl(
+        context_labels_path,
+        [
+            _context_label("a1", quality=0.30, support=0.30, sufficient=False, irrelevant=["c1", "c2", "c3", "c4", "c5"]),
+            _context_label("a2", quality=0.80, support=0.80, sufficient=True),
+            _context_label("a3", quality=0.40, support=0.40, sufficient=False),
+            _context_label("a4", quality=0.70, support=0.70, sufficient=True),
+        ],
+    )
+    _write_jsonl(
+        answer_rewards_path,
+        [
+            {"action_id": "a1", "reward": 0.80, "quality": 0.95, "evidence_support": 0.90},
+            {"action_id": "a2", "reward": 0.70, "quality": 0.90, "evidence_support": 0.80},
+            {"action_id": "a3", "reward": 0.60, "quality": 0.70, "evidence_support": 0.70},
+            {"action_id": "a4", "reward": 0.50, "quality": 0.60, "evidence_support": 0.60},
+        ],
+    )
+    _write_jsonl(
+        context_rewards_path,
+        [
+            {"action_id": "a1", "reward": 0.20, "quality": 0.55, "evidence_support": 0.50},
+            {"action_id": "a2", "reward": 0.68, "quality": 0.88, "evidence_support": 0.80},
+            {"action_id": "a3", "reward": 0.10, "quality": 0.40, "evidence_support": 0.40},
+            {"action_id": "a4", "reward": 0.49, "quality": 0.60, "evidence_support": 0.60},
+        ],
+    )
+    _write_jsonl(
+        pairwise_labels_path,
+        [
+            {
+                "action_a_id": "a2",
+                "action_b_id": "a4",
+                "chosen": "B",
+                "tie": False,
+                "ambiguous": False,
+                "invalid_json": False,
+            }
+        ],
+    )
+
+    summary = multijudge_selector.select_audit_cases(
+        actions_path=actions_path,
+        answer_labels_path=answer_labels_path,
+        context_labels_path=context_labels_path,
+        answer_only_rewards_path=answer_rewards_path,
+        context_rewards_path=context_rewards_path,
+        pairwise_labels_path=pairwise_labels_path,
+        output_path=output_path,
+        limit=3,
+        shards=2,
+    )
+
+    selected = _read_jsonl(output_path)
+    assert summary["selected_count"] == 3
+    assert selected[0]["action_id"] == "a1"
+    assert "mimo_context_insufficient" in selected[0]["audit"]["selection_reasons"]
+    assert "large_negative_context_reward_delta" in selected[0]["audit"]["selection_reasons"]
+    assert "many_irrelevant_chunks" in selected[0]["audit"]["selection_reasons"]
+    assert "pairwise_reward_judge_disagreement" in summary["selection_reason_counts"]
+    shard_1 = _read_jsonl(tmp_path / "targeted_cases_4_part1_1_2.jsonl")
+    shard_2 = _read_jsonl(tmp_path / "targeted_cases_4_part2_3_3.jsonl")
+    assert {row["action_id"] for row in shard_1}.isdisjoint({row["action_id"] for row in shard_2})
+    assert len(shard_1) + len(shard_2) == len(selected)
+
+
+def test_aggregate_rlaif_multijudge_audit_computes_agreement_and_ignores_ambiguous(tmp_path: Path) -> None:
+    actions_path = tmp_path / "targeted_cases.jsonl"
+    mimo_path = tmp_path / "mimo.jsonl"
+    deepseek_path = tmp_path / "deepseek.jsonl"
+    groq_path = tmp_path / "groq.jsonl"
+    _write_jsonl(
+        actions_path,
+        [
+            {"action_id": "a1", "query_id": "q1", "selection_reason": "mimo_context_insufficient"},
+            {"action_id": "a2", "query_id": "q2", "selection_reason": "large_negative_context_reward_delta"},
+            {"action_id": "a3", "query_id": "q3", "selection_reason": "many_irrelevant_chunks"},
+            {"action_id": "a4", "query_id": "q4", "selection_reason": "pairwise_reward_judge_disagreement"},
+        ],
+    )
+    _write_jsonl(
+        mimo_path,
+        [
+            _context_label("a1", quality=0.3, support=0.3, sufficient=False),
+            _context_label("a2", quality=0.8, support=0.8, sufficient=True),
+            _context_label("a3", quality=0.2, support=0.2, sufficient=False),
+            _context_label("a4", quality=0.5, support=0.5, sufficient=False, ambiguous=True),
+        ],
+    )
+    _write_jsonl(
+        deepseek_path,
+        [
+            _context_label("a1", quality=0.7, support=0.7, sufficient=True),
+            _context_label("a2", quality=0.7, support=0.7, sufficient=True),
+            _context_label("a3", quality=0.3, support=0.3, sufficient=False),
+            _context_label("a4", quality=0.9, support=0.9, sufficient=True, invalid_json=True),
+        ],
+    )
+    _write_jsonl(
+        groq_path,
+        [
+            _context_label("a1", quality=0.6, support=0.6, sufficient=True),
+            _context_label("a2", quality=0.7, support=0.7, sufficient=True),
+            _context_label("a3", quality=0.2, support=0.2, sufficient=False),
+        ],
+    )
+
+    summary = multijudge_aggregator.aggregate_multijudge_audit(
+        mimo_labels_path=mimo_path,
+        deepseek_label_paths=[deepseek_path],
+        groq_label_paths=[groq_path],
+        actions_path=actions_path,
+    )
+
+    assert summary["targeted_action_count"] == 4
+    assert summary["judge_counts"]["mimo"]["clean_sufficiency_count"] == 3
+    assert summary["judge_counts"]["deepseek"]["invalid_json_count"] == 1
+    assert summary["sufficiency_agreement"]["mimo_vs_deepseek"]["compared_count"] == 3
+    assert summary["sufficiency_agreement"]["mimo_vs_deepseek"]["agree_count"] == 2
+    assert summary["high_disagreement_count"] == 1
+    assert summary["mimo_harsh_count"] == 1
+    assert summary["consensus_insufficient_count"] == 1
+    assert summary["majority_vote_counts"] == {"insufficient": 1, "missing": 1, "sufficient": 2}
+    assert summary["score_correlations"]["mimo_vs_deepseek_context_quality_score"]["count"] == 3
+    rendered = multijudge_aggregator.render_markdown(summary)
+    assert "Multi-Judge Targeted Audit" in rendered
+    assert "reward-default replacement" in rendered
 
 
 def test_inspect_rlaif_action_coverage_reports_signature_sparsity(tmp_path: Path) -> None:
@@ -615,6 +778,42 @@ def _reward(action_id: str, *, quality: float, support: float, token: float, lat
     }
 
 
+def _audit_action(action_id: str, query_id: str) -> dict:
+    return {
+        "action_id": action_id,
+        "benchmark": "scifact",
+        "query_id": query_id,
+        "question": f"Question {query_id}?",
+        "answer": f"Answer {query_id}",
+        "retrieval_strategy": "bm25",
+        "context_policy": "evidence-aware",
+        "budget_chars": 4000,
+        "top_k": 5,
+        "generator_model": "mimo-v2.5-pro",
+        "retrieved": [
+            {"doc_id": "c1", "rank": 1, "score": 1.0, "text": "Evidence chunk one."},
+            {"doc_id": "c2", "rank": 2, "score": 0.5, "text": "Distractor chunk two."},
+        ],
+    }
+
+
+def _answer_label(action_id: str, *, quality: float) -> dict:
+    return {
+        "action_id": action_id,
+        "query_id": "q1",
+        "judge_provider": "mimo",
+        "judge_model": "mimo-v2.5-pro",
+        "quality_score": quality,
+        "overall_quality": quality,
+        "answer_correctness": quality,
+        "evidence_support": quality,
+        "unsupported_claim_penalty": 0.0,
+        "ambiguous": False,
+        "invalid_json": False,
+        "error": None,
+    }
+
+
 def _context_label(
     action_id: str,
     *,
@@ -622,6 +821,8 @@ def _context_label(
     support: float,
     sufficient: bool = True,
     ambiguous: bool = False,
+    invalid_json: bool = False,
+    irrelevant: list[str] | None = None,
 ) -> dict:
     return {
         "action_id": action_id,
@@ -635,9 +836,9 @@ def _context_label(
         "missing_evidence": False,
         "selected_chunk_ids": ["c1"],
         "redundant_chunk_ids": [],
-        "irrelevant_chunk_ids": [],
+        "irrelevant_chunk_ids": irrelevant or [],
         "ambiguous": ambiguous,
-        "invalid_json": False,
+        "invalid_json": invalid_json,
         "error": None,
     }
 

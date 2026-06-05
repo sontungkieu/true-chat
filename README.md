@@ -338,6 +338,53 @@ The pipeline writes a merged label file, validation summary, context-label summa
 
 The first full MiMo context-label ablation is documented in `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`. It merged all 192 action rows with 177 clean usable context labels, no missing/unknown/duplicate action ids, and no invalid JSON. Context candidates changed 140 reward rows; penalty `0.25` is the least aggressive candidate, while penalty `1.00` heavily compresses reward scale and should remain diagnostic.
 
+Select high-impact rows for a targeted multi-judge context audit:
+
+```bash
+uv run python scripts/select_rlaif_multijudge_audit_cases.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --answer-labels benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
+  --context-labels benchmark_results/rlaif/<run-name>_full_context_ablation/rlaif_context_labels_merged.jsonl \
+  --answer-only-rewards benchmark_results/rlaif/<run-name>_full_context_ablation/answer_only_reward/rlaif_rewards.jsonl \
+  --context-rewards benchmark_results/rlaif/<run-name>_full_context_ablation/context_reward_penalty_0_25/rlaif_rewards.jsonl \
+  --output benchmark_results/rlaif/multijudge_audit/targeted_cases_50.jsonl \
+  --limit 50 \
+  --shards 2
+```
+
+The selector preserves the full action row so existing labelers can consume the output, and adds audit metadata with MiMo context-label summaries, answer-label summaries, reward deltas, and selection reasons. It prioritizes MiMo-insufficient contexts, large negative context-reward deltas, high answer quality with low context support, many irrelevant chunks, selector disagreement metadata, and optional direct pairwise reward-vs-judge disagreements. Shard outputs such as `targeted_cases_50_part1_1_25.jsonl` and `targeted_cases_50_part2_26_50.jsonl` are deterministic and non-overlapping.
+
+Run a DeepSeek targeted audit shard using `DS_API_KEY` from `.secrets/.env` or the process environment:
+
+```bash
+uv run rag-bench rlaif-label-contexts \
+  --actions benchmark_results/rlaif/multijudge_audit/targeted_cases_50_part1_1_25.jsonl \
+  --output benchmark_results/rlaif/multijudge_audit/deepseek_context_part1.jsonl \
+  --judge-provider deepseek \
+  --judge-model deepseek-v4-flash \
+  --env-file .secrets/.env \
+  --api-key-var DS_API_KEY \
+  --limit 25 \
+  --resume \
+  --sleep-seconds 0.5 \
+  --max-errors 10
+```
+
+Aggregate MiMo, DeepSeek, and optional Groq context labels:
+
+```bash
+uv run python scripts/aggregate_rlaif_multijudge_audit.py \
+  --mimo-labels benchmark_results/rlaif/<run-name>_full_context_ablation/rlaif_context_labels_merged.jsonl \
+  --deepseek-labels \
+    benchmark_results/rlaif/multijudge_audit/deepseek_context_part1.jsonl \
+    benchmark_results/rlaif/multijudge_audit/deepseek_context_part2.jsonl \
+  --actions benchmark_results/rlaif/multijudge_audit/targeted_cases_50.jsonl \
+  --output-md docs/reports/phase1d_rlaif_multijudge_audit.md \
+  --output-json benchmark_results/rlaif/multijudge_audit/multijudge_audit_summary.json
+```
+
+The multi-judge aggregation reports label counts, valid/ambiguous/invalid/error counts, sufficiency agreement, numeric score correlations, majority sufficiency votes, MiMo-harsh rows, consensus-insufficient rows, and high-disagreement rows. It does not blindly average judges or replace reward defaults; disagreement is a low-confidence audit signal.
+
 Label reward-derived action pairs with a direct pairwise AI judge:
 
 ```bash
@@ -504,6 +551,18 @@ uv run python scripts/inspect_rlaif_action_coverage.py \
 ```
 
 The diagnostic compares exact action ids, exact signatures, collapsed retrieval-context families, context policies, and retrievers. Use it before adding more complex selectors; if exact signatures are sparse but collapsed families cover eval groups, prefer family-level smoothing/backoff over a larger model.
+
+Plan a retriever-diverse logged-action run before claiming retrieval-strategy allocation:
+
+```bash
+DATASET=scifact \
+OUTPUT_ROOT=benchmark_results/budgetrag/phase1d_retriever_diversity_smoke \
+MODEL=mimo-v2.5-pro \
+LIMIT=50 \
+scripts/run_retriever_diversity_budgetrag_matrix.sh
+```
+
+This scaffold only prints the intended matrix until the concrete BudgetRAG runner arguments are fixed. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with full/evidence-aware/score-density/adaptive context policies and budgets `1000`, `2000`, and `4000`. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
 
 Summarize local matrix outputs:
 
