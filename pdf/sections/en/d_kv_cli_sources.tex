@@ -1,0 +1,81 @@
+\section{Appendix D: KV Estimates, CLI Chronology, and Sources}
+
+\subsection{Full Qwen KV-Cache Estimate Table}
+
+\begin{longtable}{l r r r}
+\toprule
+Model & Layers / KV heads & Seq len & KV GiB \\
+\midrule
+Qwen2.5-0.5B & 24 / 2 & 1024 & 0.012 \\
+Qwen2.5-0.5B & 24 / 2 & 2048 & 0.023 \\
+Qwen2.5-0.5B & 24 / 2 & 4096 & 0.047 \\
+Qwen2.5-0.5B & 24 / 2 & 8192 & 0.094 \\
+Qwen2.5-0.5B & 24 / 2 & 16384 & 0.188 \\
+Qwen2.5-0.5B & 24 / 2 & 32768 & 0.375 \\
+Qwen2.5-0.5B & 24 / 2 & 131072 & 1.500 \\
+Qwen2.5-1.5B & 28 / 2 & 1024 & 0.027 \\
+Qwen2.5-1.5B & 28 / 2 & 2048 & 0.055 \\
+Qwen2.5-1.5B & 28 / 2 & 4096 & 0.109 \\
+Qwen2.5-1.5B & 28 / 2 & 8192 & 0.219 \\
+Qwen2.5-1.5B & 28 / 2 & 16384 & 0.438 \\
+Qwen2.5-1.5B & 28 / 2 & 32768 & 0.875 \\
+Qwen2.5-1.5B & 28 / 2 & 131072 & 3.500 \\
+Qwen2.5-3B & 36 / 2 & 1024 & 0.035 \\
+Qwen2.5-3B & 36 / 2 & 2048 & 0.070 \\
+Qwen2.5-3B & 36 / 2 & 4096 & 0.141 \\
+Qwen2.5-3B & 36 / 2 & 8192 & 0.281 \\
+Qwen2.5-3B & 36 / 2 & 16384 & 0.562 \\
+Qwen2.5-3B & 36 / 2 & 32768 & 1.125 \\
+Qwen2.5-3B & 36 / 2 & 131072 & 4.500 \\
+Qwen2.5-7B & 28 / 4 & 1024 & 0.055 \\
+Qwen2.5-7B & 28 / 4 & 2048 & 0.109 \\
+Qwen2.5-7B & 28 / 4 & 4096 & 0.219 \\
+Qwen2.5-7B & 28 / 4 & 8192 & 0.438 \\
+Qwen2.5-7B & 28 / 4 & 16384 & 0.875 \\
+Qwen2.5-7B & 28 / 4 & 32768 & 1.750 \\
+Qwen2.5-7B & 28 / 4 & 131072 & 7.000 \\
+Qwen2.5-14B & 48 / 8 & 1024 & 0.188 \\
+Qwen2.5-14B & 48 / 8 & 2048 & 0.375 \\
+Qwen2.5-14B & 48 / 8 & 4096 & 0.750 \\
+Qwen2.5-14B & 48 / 8 & 8192 & 1.500 \\
+Qwen2.5-14B & 48 / 8 & 16384 & 3.000 \\
+Qwen2.5-14B & 48 / 8 & 32768 & 6.000 \\
+Qwen2.5-14B & 48 / 8 & 131072 & 24.000 \\
+\bottomrule
+\end{longtable}
+
+\subsection{CLI Chronology}
+
+\begin{verbatim}
+rag-bench run / scripts/run_budgetrag_matrix.py
+scripts/summarize_budgetrag_results.py
+rag-bench rlaif-build
+rag-bench rlaif-label-answers
+rag-bench rlaif-label-contexts
+rag-bench rlaif-reward
+rag-bench rlaif-split
+rag-bench rlaif-train
+rag-bench rlaif-eval
+rag-bench rlaif-label-pairs
+scripts/summarize_rlaif_labels.py
+scripts/summarize_rlaif_context_labels.py
+scripts/validate_rlaif_context_labels.py
+scripts/run_context_reward_ablation_pipeline.py
+scripts/aggregate_rlaif_multijudge_audit.py
+\end{verbatim}
+
+\subsection{Committed Source Reports Used}
+
+\begin{itemize}[leftmargin=*]
+  \item \code{docs/reports/phase1b\_smoke\_results.md}
+  \item \code{docs/reports/phase1c\_adaptive\_smoke\_results.md}
+  \item \code{docs/reports/phase1c1\_adaptive\_validation.md}
+  \item \code{docs/reports/phase1c2\_adaptive\_threshold\_calibration.md}
+  \item \code{docs/reports/phase1d\_rlaif\_selector\_smoke.md}
+  \item \code{docs/reports/phase1d\_rlaif\_heldout\_eval.md}
+  \item \code{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}
+  \item \code{docs/reports/phase1d\_rlaif\_pairwise\_mimo50.md}
+  \item \code{docs/reports/phase1d\_rlaif\_full\_context\_reward\_ablation.md}
+  \item \code{docs/reports/phase1d\_rlaif\_multijudge\_audit.md}
+  \item \code{docs/reports/local\_qwen\_kv\_estimates.md}
+\end{itemize}

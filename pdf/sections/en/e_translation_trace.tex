@@ -1,0 +1,28 @@
+\section{Appendix E: English Revision and Vietnamese Baseline Trace}
+
+This English report is not a literal line-by-line translation of the earlier Vietnamese monolithic report. It is a reorganized submission-oriented version. The main changes are tracked below so that future readers can compare the English report with the Vietnamese baseline from commit \code{ed347ee}.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.7cm} >{\raggedright\arraybackslash}p{4.6cm} >{\raggedright\arraybackslash}p{5.2cm}}
+\toprule
+Vietnamese baseline area & English report location & Change rationale \\
+\midrule
+Narrative introduction and problem statement & Sections 1--2 & Rewritten in English with a clearer academic problem formulation and explicit offline-evaluation boundary. \\
+Related work paragraphs & Section 3 & Kept the same citation clusters, but separated RAG/RAGAS, compression, KV-cache, graph retrieval, RLAIF, and contextual bandits. \\
+Long monolithic implementation description & Sections 4--7 & Split into system overview, Phase 1A--1C, generation feedback, and RLAIF pipeline. \\
+Main result paragraphs & Section 8 & Consolidated the strongest numbers near the front: context labels, reward ablation, and multi-judge audit. \\
+Selector discussion & Section 9 and Appendix C & Kept the conclusion that learned selectors are data-limited; moved detailed sweep tables to appendix. \\
+KV-cache discussion & Section 10 and Appendix D & Kept formula and Qwen estimates; added full appendix table instead of only the compact table. \\
+Sparse original appendix & Appendices A--D & Expanded with Phase 1B/1C matrices, RLAIF build stats, answer/context labels, reward deltas, selector sweeps, pairwise audit, multi-judge audit, and full KV estimates. \\
+Claim boundaries & Sections 11--12 and Appendix E & Preserved and made explicit: no human labels, no online RL, no DPO/PPO/GRPO, no production KV pruning. \\
+\bottomrule
+\end{longtable}
+
+Tracking policy for future edits:
+
+\begin{itemize}[leftmargin=*]
+  \item Keep \code{pdf/main.tex} as a short driver only.
+  \item Put English content under \code{pdf/sections/en/}.
+  \item Add new report data to appendices first, then summarize only the strongest result in the main body.
+  \item If a Vietnamese version is needed later, create \code{pdf/sections/vi/} rather than mixing languages in the same section files.
+  \item Keep raw experiment files under ignored \code{benchmark\_results/}; commit only curated tables and reports.
+\end{itemize}

@@ -1,0 +1,7 @@
+\section{Phase 1C.3: Generation Feedback Layer}
+
+Retrieval-only metrics cannot determine whether compressed context still supports a grounded answer. Phase 1C.3 added a generation feedback layer. RAGAS answer relevancy was first joined back to BudgetRAG \code{query\_results.jsonl}; then MiMo answer labels were added for richer answer correctness, evidence support, faithfulness, and unsupported-claim penalties.
+
+The Phase 1D selector-smoke input contained 192 joined action-query rows from 64 action files. Model coverage was MiMo 96 rows, Llama 3.1 8B 48 rows, and Qwen3 32B 48 rows. Context-policy coverage was adaptive-heuristic 96, evidence-aware 48, and legacy 48. Budget coverage included 4000:48, 8000:48, 1000:36, 2000:36, 16000:12, and 32000:12.
+
+The full MiMo answer-label run produced 192 labels, 192 valid JSON rows, 0 invalid JSON rows, 25 ambiguous labels, 1 judge error, and 191 scored labels. The Pearson correlation between MiMo quality and RAGAS answer relevancy was 0.277. This low correlation supports the interpretation that RAGAS answer relevancy and MiMo answer quality measure related but not identical signals.

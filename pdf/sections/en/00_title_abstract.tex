@@ -1,0 +1,13 @@
+\title{\textbf{BudgetRAG / MemAlign-Qwen: Resource-Aware Retrieval and Context Allocation for Grounded LLM Inference}\\
+\large Internship Progress Report}
+\author{Author: Son Tung Kieu\\
+Advisor/Supervisor: to be filled\\
+Institution: to be filled\\
+\url{https://github.com/sontungkieu/true-chat}}
+\date{June 5, 2026}
+
+\maketitle
+
+\begin{abstract}
+Long-context Retrieval-Augmented Generation (RAG) improves grounding by exposing the generator to retrieved evidence, but it also increases prompt length, latency, and estimated decoder KV-cache memory. This internship project studies resource-aware retrieval and context allocation: given a query and retrieved candidates, choose a retrieval-context action that preserves grounded answer quality while reducing token, latency, and estimated KV-cache costs. The work starts from a benchmark foundation with retriever registration, benchmark CLI, and retrieval metrics; then adds BudgetRAG context policies, deterministic adaptive profiles, generation feedback, RAGAS/MiMo answer labels, RLAIF-style answer/context labeling, reward/preference construction, and offline selector baselines. The strongest current results are diagnostic rather than production claims: 192 MiMo answer labels, 192 merged MiMo context labels with 177 clean usable rows, context sufficiency rate 0.591, mean selected chunks 1.276 versus mean irrelevant chunks 3.708, and context-reward ablations that change 140 of 192 reward rows. Multi-seed held-out selector evaluation shows that shrinkage-smoothed best average is currently the strongest full-coverage non-oracle baseline, while learned selectors remain data-limited. The project does not claim human preference learning, online reinforcement learning, DPO/PPO/GRPO training, or runtime KV pruning. Future work should expand logged query groups, retrieval diversity, multi-judge audits, and local Qwen/KV profiling.
+\end{abstract}

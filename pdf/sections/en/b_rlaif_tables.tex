@@ -1,0 +1,121 @@
+\section{Appendix B: RLAIF Dataset and Label Tables}
+
+\subsection{Selector Smoke Build Summary}
+
+\begin{longtable}{l r}
+\toprule
+Metric & Count \\
+\midrule
+RAGAS source action files & 64 \\
+Completed RAGAS samples & 192 \\
+Joined action-query rows & 192 \\
+\code{rlaif\_actions.jsonl} rows & 192 \\
+\code{rlaif\_feedback.jsonl} rows & 192 \\
+\code{rlaif\_rewards.jsonl} rows & 192 \\
+\code{rlaif\_preferences.jsonl} rows & 578 \\
+Query groups & 55 \\
+Action signatures & 77 \\
+Invalid rows & 0 \\
+Context-policy preferences & 289 \\
+Retrieval-context preferences & 289 \\
+Skipped small reward delta & 694 \\
+Skipped quality guardrail failed & 2 \\
+\bottomrule
+\end{longtable}
+
+\subsection{MiMo Answer Label Summary}
+
+\begin{longtable}{l r}
+\toprule
+Metric & Value \\
+\midrule
+Label count & 192 \\
+Valid JSON & 192 \\
+Invalid JSON & 0 \\
+Ambiguous labels & 25 \\
+Judge errors & 1 \\
+Scored labels & 191 \\
+Used MiMo labels in reward & 167 \\
+Fallback to original feedback & 25 \\
+MiMo quality vs RAGAS correlation & 0.277 \\
+\bottomrule
+\end{longtable}
+
+\begin{longtable}{l r r r r r}
+\toprule
+Score & N & Mean & Std & Min & Max \\
+\midrule
+\code{overall\_quality} & 191 & 0.823 & 0.307 & 0.000 & 1.000 \\
+\code{answer\_correctness} & 191 & 0.857 & 0.313 & 0.000 & 1.000 \\
+\code{evidence\_support} & 191 & 0.825 & 0.340 & 0.000 & 1.000 \\
+\code{faithfulness} & 189 & 0.847 & 0.317 & 0.000 & 1.000 \\
+\code{unsupported\_claim\_penalty} & 191 & 0.090 & 0.280 & 0.000 & 1.000 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Full Context Label Validation}
+
+\begin{longtable}{l r r}
+\toprule
+Shard & Rows & Clean usable \\
+\midrule
+1--50 & 50 & 46 \\
+51--121 & 71 & 66 \\
+122--192 & 71 & 65 \\
+\midrule
+Total & 192 & 177 \\
+\bottomrule
+\end{longtable}
+
+\begin{longtable}{l r}
+\toprule
+Validation metric & Value \\
+\midrule
+Action count & 192 \\
+Merged labels & 192 \\
+Missing actions & 0 \\
+Unknown action ids & 0 \\
+Duplicate action ids & 0 \\
+Duplicate conflicts & 0 \\
+Clean usable labels & 177 \\
+Ambiguous labels & 15 \\
+Invalid JSON labels & 0 \\
+Dropped unknown chunk ids & 0 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Context Reward Delta Summary}
+
+\begin{longtable}{r r r r r r}
+\toprule
+Penalty & Changed & Negative & Positive & Mean all delta & Mean changed delta \\
+\midrule
+0.25 & 140 & 108 & 32 & -0.155 & -0.212 \\
+0.50 & 140 & 108 & 32 & -0.231 & -0.316 \\
+1.00 & 140 & 108 & 32 & -0.383 & -0.525 \\
+\bottomrule
+\end{longtable}
+
+\begin{longtable}{r r r r}
+\toprule
+Penalty & Sufficient false & Sufficient true & Missing sufficiency \\
+\midrule
+0.25 & 64 & 72 & 4 \\
+0.50 & 64 & 72 & 4 \\
+1.00 & 64 & 72 & 4 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Action Coverage Diagnostics}
+
+\begin{longtable}{l r r r}
+\toprule
+Level & Unique & Singleton rate & Eval group coverage \\
+\midrule
+\code{action\_id} & 192 & 1.000 & 0.000 \\
+\code{exact\_signature} & 77 & 0.260 & 0.911 \\
+\code{retrieval\_context\_family} & 16 & 0.000 & 1.000 \\
+\code{context\_policy} & 3 & 0.000 & 1.000 \\
+\code{retriever} & 1 & 0.000 & 1.000 \\
+\bottomrule
+\end{longtable}

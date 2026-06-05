@@ -1,0 +1,26 @@
+\section{Limitations}
+
+\begin{itemize}[leftmargin=*]
+  \item The labels are AI feedback, not human annotations.
+  \item The selector is offline logged-candidate evaluation, not online RL.
+  \item Current logged action coverage is still small and retriever diversity is low.
+  \item Current results support context-budget/action selection more strongly than retrieval-strategy selection.
+  \item Context reward is non-default.
+  \item Pairwise RLAIF currently audits and calibrates scalar reward; it does not train a pairwise selector yet.
+  \item No DPO, PPO, GRPO, online RL, or production runtime KV pruning is implemented.
+  \item Web-search actions, if used, are live stress tests and must not be mixed with reproducible BEIR-style benchmark claims.
+\end{itemize}
+
+\section{Future Work}
+
+The next steps are:
+
+\begin{enumerate}[leftmargin=*]
+  \item Inspect the 6 MiMo-harsh rows and consensus-insufficient examples.
+  \item Log retrieval-diversity runs with BM25, graph-BM25, and hybrid-RRF.
+  \item Increase query groups to reduce split variance.
+  \item Train context-label-aware selectors once supervision is larger.
+  \item Add a pairwise ranker after enough direct pair labels exist.
+  \item Profile local Qwen full versus compressed contexts, including prefill/decode latency and peak memory.
+  \item Later, test a runtime KV-pruning proof of concept that retains sink, recent, and evidence tokens.
+\end{enumerate}

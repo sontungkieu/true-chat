@@ -1,0 +1,23 @@
+\section{Phase 1D: RLAIF Reward and Preference Pipeline}
+
+Phase 1D converts BudgetRAG logs into normalized RLAIF-style datasets:
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{9.8cm}}
+\toprule
+Command & Role \\
+\midrule
+\code{rlaif-build} & Convert BudgetRAG rows into normalized actions and feedback. \\
+\code{rlaif-label-answers} & Label answer correctness, support, faithfulness, and unsupported claims. \\
+\code{rlaif-label-contexts} & Label context sufficiency, useful chunks, redundant chunks, irrelevant chunks, and missing evidence. \\
+\code{rlaif-reward} & Build scalar rewards and pairwise preferences with quality guardrails. \\
+\code{rlaif-split} & Split by \code{benchmark + query\_id} to avoid row-level leakage. \\
+\code{rlaif-train/eval} & Train and evaluate offline selector baselines. \\
+\code{rlaif-label-pairs} & Directly judge action pairs for reward calibration audits. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The reward builder preserves provenance and missing reasons. Missing, ambiguous, or invalid labels do not become score zero. Preferences are generated within comparable query groups, with guardrails that reject efficiency-only wins when answer quality drops too much.
+
+RLAIF in this report means AI-feedback labeling for reward/preference construction. It is not full RLHF and it is not human preference learning.

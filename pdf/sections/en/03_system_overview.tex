@@ -1,0 +1,25 @@
+\section{System Overview}
+
+The project pipeline is:
+
+\begin{center}
+\begin{tabular}{>{\raggedright\arraybackslash}p{13.2cm}}
+\toprule
+\code{Query} $\rightarrow$ retriever / graph / hybrid retrieval $\rightarrow$ BudgetRAG context policy $\rightarrow$ generator $\rightarrow$ answer/context feedback $\rightarrow$ reward/preference rows $\rightarrow$ offline selector evaluation \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The main implementation components are:
+
+\begin{itemize}[leftmargin=*]
+  \item \code{rag-bench}: benchmark, BudgetRAG, and RLAIF CLI.
+  \item Retriever registry: BM25 plus scaffolded graph/hybrid strategies.
+  \item Context policies: \code{legacy}, \code{char-budget}, \code{per-doc-budget}, \code{score-density}, \code{sentence-trim}, \code{evidence-aware}, and \code{adaptive-heuristic}.
+  \item Adaptive profiles: conservative, balanced, and aggressive.
+  \item RLAIF artifacts: \code{rlaif\_actions.jsonl}, \code{rlaif\_feedback.jsonl}, \code{rlaif\_rewards.jsonl}, and \code{rlaif\_preferences.jsonl}.
+  \item Labelers: \code{rlaif-label-answers}, \code{rlaif-label-contexts}, and \code{rlaif-label-pairs}.
+  \item Selectors: fixed, cheapest, best average, family-smoothed, shrinkage-smoothed, linear reward model, smoothed linear selector, and oracle logged.
+\end{itemize}
+
+The design keeps raw experiment outputs under ignored \code{benchmark\_results/}; committed reports are curated summaries. This prevents raw judge outputs, downloaded Kaggle working directories, or secrets from becoming part of the repository history.

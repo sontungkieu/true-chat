@@ -1,0 +1,48 @@
+\section{Appendix A: Phase 1B--1C Tables}
+
+\subsection{Phase 1B Smoke Matrix}
+
+\begin{longtable}{l r r r r r}
+\toprule
+Policy / budget & Queries & Kept chars & Compression & Token savings & KV savings \\
+\midrule
+char-budget 1000 & 10 & 999.7 & 0.2161 & 961.0 & 900.9 \\
+char-budget 2000 & 10 & 2000.0 & 0.4324 & 711.0 & 666.6 \\
+char-budget 4000 & 10 & 3906.0 & 0.8380 & 234.2 & 219.6 \\
+evidence-aware 1000 & 10 & 999.7 & 0.2162 & 961.0 & 900.9 \\
+evidence-aware 2000 & 10 & 2000.0 & 0.4324 & 711.0 & 666.6 \\
+evidence-aware 4000 & 10 & 3999.0 & 0.8647 & 234.3 & 219.7 \\
+legacy 1000 & 10 & 1002.0 & 0.2167 & 960.4 & 900.4 \\
+legacy 2000 & 10 & 2005.0 & 0.4336 & 709.6 & 665.2 \\
+legacy 4000 & 10 & 3914.0 & 0.8396 & 232.0 & 217.5 \\
+score-density 1000 & 10 & 999.7 & 0.2162 & 961.0 & 900.9 \\
+score-density 2000 & 10 & 2000.0 & 0.4324 & 711.0 & 666.6 \\
+score-density 4000 & 10 & 3906.0 & 0.8380 & 234.2 & 219.6 \\
+\bottomrule
+\end{longtable}
+
+\subsection{Phase 1C.2 Adaptive Profile Matrix}
+
+\begin{longtable}{l r r r r r}
+\toprule
+Profile / budget & Queries & Kept chars & Compression & Token savings & KV savings \\
+\midrule
+aggressive 1000 & 50 & 999.8 & 0.1248 & 1829 & 1715 \\
+aggressive 2000 & 50 & 1360 & 0.1665 & 1739 & 1630 \\
+aggressive 4000 & 50 & 2080 & 0.2500 & 1559 & 1462 \\
+balanced 1000 & 50 & 2260 & 0.2816 & 1514 & 1419 \\
+balanced 2000 & 50 & 2840 & 0.3540 & 1369 & 1283 \\
+balanced 4000 & 50 & 4000 & 0.4991 & 1079 & 1012 \\
+conservative 1000 & 50 & 4000 & 0.4991 & 1079 & 1012 \\
+conservative 2000 & 50 & 4000 & 0.4991 & 1079 & 1012 \\
+conservative 4000 & 50 & 4000 & 0.4991 & 1079 & 1012 \\
+evidence-aware 1000 & 50 & 999.8 & 0.1248 & 1829 & 1715 \\
+evidence-aware 2000 & 50 & 2000 & 0.2495 & 1579 & 1480 \\
+evidence-aware 4000 & 50 & 4000 & 0.4991 & 1079 & 1012 \\
+legacy 1000 & 50 & 1002 & 0.1250 & 1829 & 1714 \\
+legacy 2000 & 50 & 2006 & 0.2503 & 1577 & 1479 \\
+legacy 4000 & 50 & 4014 & 0.5009 & 1075 & 1008 \\
+\bottomrule
+\end{longtable}
+
+Balanced-profile diagnostics at matrix budget 1000: normalized score gap min 0.0071, mean 0.2012, max 0.5288; normalized score entropy min 0.9401, mean 0.9861, max 0.9999; score confidence min 0.00000037, mean 0.0043, max 0.0236.

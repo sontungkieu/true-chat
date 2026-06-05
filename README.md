@@ -387,7 +387,7 @@ The multi-judge aggregation reports label counts, valid/ambiguous/invalid/error 
 
 The first targeted multi-judge audit is documented in `docs/reports/phase1d_rlaif_multijudge_audit.md`. It covers 60 high-impact rows with MiMo, DeepSeek v4 Flash, and Groq Qwen3 32B labels. The main signal is `51/60` consensus-insufficient rows and `6/60` MiMo-harsh/high-disagreement rows; this supports using multi-judge labels as an audit/confidence layer, not a reward default.
 
-The internship report has been rewritten in `pdf/main.tex` and rebuilt as `pdf/main.pdf` under the title `BudgetRAG / MemAlign-Qwen: Resource-Aware Retrieval and Context Allocation for Grounded LLM Inference`. It summarizes the full Phase 1A-1D story from benchmark foundation through BudgetRAG policies, adaptive profiles, RLAIF answer/context labels, reward/preference construction, offline selector baselines, multi-judge audit, and Qwen KV-cache motivation.
+The internship report has been rewritten in English and rebuilt as `pdf/main.pdf` under the title `BudgetRAG / MemAlign-Qwen: Resource-Aware Retrieval and Context Allocation for Grounded LLM Inference`. `pdf/main.tex` is now a short driver that imports modular files from `pdf/sections/en/`, including expanded appendices for Phase 1B/1C tables, RLAIF build/label/reward data, selector sweeps, pairwise/multi-judge audits, full Qwen KV estimates, and an English-vs-Vietnamese revision trace.
 
 Label reward-derived action pairs with a direct pairwise AI judge:
 

@@ -1,0 +1,17 @@
+\section{Related Work}
+
+\subsection{RAG and RAG Evaluation}
+
+RAG introduced a practical way to combine retrieval with neural generation for knowledge-intensive tasks \cite{lewis2020rag}. BEIR showed that retrieval quality varies across heterogeneous domains and that no single retriever should be treated as universally best \cite{thakur2021beir}. RAGAS adds automated RAG evaluation signals such as answer relevance and faithfulness \cite{es2023ragas}. In this project, BEIR-style metrics motivate retrieval benchmarking, while RAGAS is used as an initial proxy before richer MiMo answer labels are introduced.
+
+\subsection{Prompt and Context Compression}
+
+LLMLingua, LongLLMLingua, and Selective Context study prompt/context compression for efficient LLM inference \cite{jiang2023llmlingua,jiang2023longllmlingua,li2023selectivecontext}. BudgetRAG differs in formulation: context compression is not a standalone preprocessing step, but part of a retrieval-context action evaluated under answer quality, context sufficiency, token cost, latency, and estimated KV cost.
+
+\subsection{KV-Cache Compression and Pruning}
+
+H2O, StreamingLLM, KIVI, SnapKV, and PyramidKV reduce runtime memory or attention cost through cache selection, quantization, or pruning \cite{zhang2023h2o,xiao2023streamingllm,liu2024kivi,li2024snapkv,cai2024pyramidkv}. BudgetRAG currently operates before inference by selecting a smaller or cleaner context. Runtime KV pruning is future work; context-level RLAIF labels may later provide evidence-token masks.
+
+\subsection{Graph Retrieval, RLAIF, and Contextual Bandits}
+
+GraphRAG highlights graph-based retrieval for local-to-global query-focused summarization \cite{edge2024graphrag}. Hybrid retrieval and Reciprocal Rank Fusion (RRF) are relevant for combining retrieval strategies \cite{cormack2009rrf}. RLAIF and preference learning use AI feedback to construct reward or preference signals \cite{bai2022constitutional}; DPO is a later preference-optimization method, not implemented here \cite{rafailov2023dpo}. Because the BudgetRAG action is a one-step query-time decision, offline contextual bandit framing is more appropriate than PPO/GRPO in the current data-limited phase \cite{li2010contextualbandit}.

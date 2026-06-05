@@ -1,0 +1,25 @@
+\section{KV-Cache Motivation}
+
+The analytical KV-cache estimate used in the project is:
+
+\[
+\text{KV bytes} \approx 2 \times L \times H_{kv} \times D_{head} \times S \times B \times \text{bytes per value}.
+\]
+
+For GQA/MQA models, $H_{kv}$ should be the number of key-value heads, not the number of attention heads. The estimates exclude model weights, activations, allocator overhead, paged-attention block overhead, and runtime workspaces.
+
+\begin{center}
+\begin{tabular}{l r r r}
+\toprule
+Model & KV GiB @ 4K & KV GiB @ 32K & KV GiB @ 128K \\
+\midrule
+Qwen2.5-0.5B & 0.047 & 0.375 & 1.500 \\
+Qwen2.5-1.5B & 0.109 & 0.875 & 3.500 \\
+Qwen2.5-3B & 0.141 & 1.125 & 4.500 \\
+Qwen2.5-7B & 0.219 & 1.750 & 7.000 \\
+Qwen2.5-14B & 0.750 & 6.000 & 24.000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+BudgetRAG is the pre-inference step: reduce or improve context before the model runs. Future MemAlign-Qwen work can compare full versus compressed context on local Qwen models, then test runtime KV retention using sink, recent, and evidence tokens.

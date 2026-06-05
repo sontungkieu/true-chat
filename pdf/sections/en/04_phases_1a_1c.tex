@@ -1,0 +1,19 @@
+\section{Phase 1A: Benchmark Foundation}
+
+Phase 1A created the benchmark foundation: a retriever registry, benchmark CLI, retrieval metrics, and traceable output records. The metric layer includes hit@k, MRR, nDCG, latency, and context size/cost fields. This phase made later BudgetRAG experiments reproducible: fixed policies, adaptive profiles, and RLAIF builders all consume the same output format.
+
+The current report does not invent Phase 1A numbers beyond the available records. Quantitative reporting starts from Phase 1B/1C, where committed reports contain concrete matrix outputs.
+
+\section{Phase 1B: BudgetRAG Fixed Context Policies}
+
+Phase 1B introduced fixed context policies. \code{legacy} preserves the older behavior, \code{char-budget} clips total characters, \code{per-doc-budget} avoids one long document dominating the prompt, \code{score-density} favors high score per length, \code{sentence-trim} avoids cutting inside sentences, and \code{evidence-aware} keeps lexical/query-aware evidence spans. Importantly, \code{evidence-aware} is not an answer-aware entailment verifier.
+
+The Phase 1B smoke run used 10 SciFact queries, BM25, top-k 3, skipped generation, and a Qwen2.5-14B KV profile. The 1000-character variants kept about 1000 characters with compression around 0.216 and analytical KV savings around 900 units in the report. Quality columns are blank because generation was skipped.
+
+\section{Phase 1C: Adaptive Profiles}
+
+Phase 1C replaced a purely fixed context budget with a deterministic adaptive heuristic. The selector uses retrieval diagnostics such as score gap, normalized entropy, confidence, and long-document dominance.
+
+Phase 1C.1 expanded validation to 50 SciFact BM25 queries. The heuristic selected \code{evidence-aware} for 48 queries and \code{per-doc-budget} for 2, but still selected budget 4000 for all 50 queries. This showed stable metadata but an overly conservative policy.
+
+Phase 1C.2 added conservative, balanced, and aggressive profiles. Balanced and aggressive profiles created more diverse budget choices. For example, with matrix budget 1000, conservative kept 4000 characters for all 50 queries, balanced averaged 2260 kept characters, and aggressive averaged 999.8 kept characters. This was still a deterministic heuristic baseline, not a learned selector.

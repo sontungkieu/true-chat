@@ -1,0 +1,33 @@
+\section{Offline Selector / Bandit-Style Baselines}
+
+The selector baselines choose among logged candidates only. They do not replace the runtime adaptive heuristic. The main policies are:
+
+\begin{itemize}[leftmargin=*]
+  \item \code{fixed}: choose one frequent signature; low coverage.
+  \item \code{cheapest}: choose the lowest resource-cost action.
+  \item \code{best\_average}: choose the exact action signature with highest train mean reward.
+  \item \code{family\_smoothed\_best\_average}: back off from exact signature to retrieval-context family to context policy.
+  \item \code{shrinkage\_smoothed\_best\_average}: shrink exact/family/context means toward broader means.
+  \item \code{linear\_reward\_model}: ridge/linear offline selector over non-leaking action and cost features.
+  \item \code{smoothed\_linear\_selector}: add train-only aggregate means/counts to the linear selector.
+  \item \code{oracle\_logged}: logged-candidate upper bound, not deployable.
+\end{itemize}
+
+The six-seed answer-only sweep showed that \code{best\_average} has the highest non-oracle reward when it covers a group, but coverage is 0.911. \code{shrinkage\_smoothed\_best\_average} is the strongest full-coverage non-oracle selector so far: reward 0.602, quality 0.773, oracle gap 0.070. The learned linear selectors are functional but not yet robustly stronger than simple smoothed baselines.
+
+\begin{center}
+\begin{tabular}{l r r r r}
+\toprule
+Policy & Coverage & Reward & Quality & Oracle gap \\
+\midrule
+cheapest & 1.000 & 0.577 & 0.770 & 0.094 \\
+best average & 0.911 & 0.618 & 0.794 & 0.080 \\
+shrinkage smoothed & 1.000 & 0.602 & 0.773 & 0.070 \\
+linear reward model & 1.000 & 0.586 & 0.774 & 0.086 \\
+smoothed linear & 1.000 & 0.595 & 0.767 & 0.076 \\
+oracle logged & 1.000 & 0.671 & 0.834 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The current bottleneck is data and action coverage, not missing algorithmic complexity.

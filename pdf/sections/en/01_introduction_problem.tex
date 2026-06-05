@@ -1,0 +1,25 @@
+\section{Introduction}
+
+Retrieval-Augmented Generation (RAG) combines external retrieval with language-model generation so that answers can be grounded in retrieved evidence rather than only in parametric memory \cite{lewis2020rag}. The practical baseline is often simple: retrieve the top-k documents and place most of their content into the prompt. That baseline is easy to implement, but it is not resource-aware. Retrieved context can contain irrelevant chunks, longer prompts increase latency and cost, and long sequence lengths increase decoder KV-cache memory for local LLM inference.
+
+BudgetRAG / MemAlign-Qwen addresses this trade-off. The core question is: for a given query and a set of retrieved candidates, which retrieval strategy, context policy, and context budget should be selected to maximize grounded answer quality while controlling token count, latency, and estimated KV-cache footprint?
+
+The MemAlign-Qwen motivation is local and privacy-constrained inference. In later phases, private documents should be processed by trusted local models rather than remote APIs. In the current phase, BudgetRAG reduces context before inference and uses RLAIF-style context labels as future evidence for local Qwen profiling and possible KV evidence masks. The current report is careful about the boundary: the system is an offline research pipeline, not a deployed production policy.
+
+\section{Problem Formulation}
+
+For a query $q$ and a candidate set $C$ returned by one or more retrievers, the system chooses an action:
+
+\[
+a = (\text{retrieval strategy}, \text{fusion strategy}, \text{context policy}, \text{budget}, \text{adaptive profile}, \text{generator model}).
+\]
+
+The objective is an offline reward that trades off answer quality and evidence support against resource costs:
+
+\[
+R = w_q Q + w_s S - w_t T - w_l L - w_k K - P_{\text{unsupported}} - P_{\text{error}}.
+\]
+
+Here $Q$ is answer quality/correctness, $S$ is evidence or context support, $T$ is normalized token cost, $L$ is normalized latency, $K$ is normalized estimated KV-cache cost, and the penalty terms capture unsupported claims and failed/invalid generations or labels.
+
+The state includes query features, retrieval diagnostics, action metadata, and cost estimates. The evaluation is \textbf{offline logged-candidate evaluation}: a selector can only choose among actions that were already logged for a query. It is not online RL, and selector artifacts explicitly keep \code{runtime\_default\_replacement=false}.
