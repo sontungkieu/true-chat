@@ -4,6 +4,30 @@
 
 Implement RLAIF for BudgetRAG on branch `internship` without breaking the Phase 1B/1C context-budgeting baseline.
 
+## Current Framing And Guardrails
+
+Current RLAIF/BudgetRAG infrastructure is strong enough to support end-to-end offline experiments:
+
+```text
+RLAIF labels -> reward/preference -> held-out eval -> selector baselines -> diagnostics
+```
+
+The current result bottlenecks are still data and coverage, not algorithmic sophistication:
+
+- context labels are not full yet;
+- logged query/action data is still small;
+- retriever diversity is low;
+- exact action signatures remain sparse.
+
+Therefore the next bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm. Do not add DPO, PPO, GRPO, runtime KV pruning, or a complex reward model in this phase. Current results should be framed as evidence that the infrastructure works, while learned selectors remain data-limited.
+
+Do not overclaim:
+
+- This is RLAIF-style AI feedback, not human preference learning.
+- The selector is offline logged-candidate evaluation, not online RL.
+- Pairwise RLAIF currently audits and calibrates scalar rewards; it does not train the selector unless a pairwise ranker is implemented later.
+- Context reward remains a non-default candidate until full-label ablation and multi-seed evaluation support it.
+
 The work is split into two connected phases:
 
 - **Phase 1C.3: answer/context feedback layer.** Produce reliable per-action answer feedback and context-evidence feedback from gold metrics, RAGAS/MiMo judges, and existing BudgetRAG matrix outputs.
@@ -108,7 +132,7 @@ uv run python scripts/summarize_rlaif_labels.py \
    - MiMo50 penalty-weight ablation: insufficient penalty `0.25/0.50/1.00` keeps 36 changed rows but changes mean changed-only reward delta from `-0.397` to `-0.558` to `-0.880`, confirming that weight `1.0` is aggressive.
    - Added `scripts/validate_rlaif_context_labels.py` to validate and dedupe parallel context-label shards before reward construction.
    - Added `scripts/run_context_reward_ablation_pipeline.py` to orchestrate full-label postprocess: validate/merge, summarize, rebuild answer-only baseline, rebuild context reward candidates, compare reward deltas, and optionally run multi-seed selector sweeps.
-   - Next implementation change: label the remaining 142 action rows, rerun reward-delta ablations, then run multi-seed held-out selector evaluation with full context-label coverage.
+   - Next implementation change: finish the remaining 142 action rows without rerunning existing MiMo labels, merge existing labels 1-50 with shards 51-121 and 122-192, validate/dedupe, rerun reward-delta ablations, then run multi-seed held-out selector evaluation with full context-label coverage.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
@@ -126,6 +150,7 @@ uv run python scripts/summarize_rlaif_labels.py \
    - Pairwise-calibrated diagnostics are implemented in `scripts/diagnose_rlaif_pairwise_calibration.py`.
    - Initial diagnostic result with candidate thresholds `quality=0.10` and `support=0.20`: 38 small quality/support delta pairs, 35 cheaper-wins-when-tied, and 5 scalar-over-quality disagreements, all in `query_id=128`.
    - Opt-in `pairwise_tie_v1` reward calibration is implemented for preference construction. Default remains `none`; scalar reward rows are unchanged. Initial calibrated candidate creates 1270 preferences, including 900 `pairwise_tie_v1_efficiency` preferences, and is documented in `docs/reports/phase1d_rlaif_pairwise_calibrated_reward_candidate.md`.
+   - Multi-judge audit should wait until full MiMo context reward ablation is available. Use DeepSeek/Groq only on targeted subsets first: MiMo context-insufficient rows, strong reward deltas, selector disagreement cases, and pairwise reward-vs-judge disagreement cases. This is an audit step, not the main blocking path.
 
 ```bash
 uv run rag-bench rlaif-label-pairs \
@@ -292,7 +317,8 @@ Context label schema:
    - Current shrinkage-smoothed result: coverage stays 1.000, reward improves to 0.602, quality to 0.773, and oracle gap to 0.070; this is the strongest full-coverage non-oracle baseline so far, but still trails `best_average` on reward/quality.
    - Pairwise calibration limitation: `pairwise_tie_v1` currently changes preference construction and diagnostics, but reward-based selectors still train on scalar reward rows; pairwise preferences affect selection only after a pairwise ranker or calibrated scalar reward path is added.
    - Cost-feature limitation: current selector cost features are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before pre-generation selection.
-   - Next evaluator change: merge context-level labels into non-default reward diagnostics, expand logged query groups and retriever diversity, then add a pairwise ranker.
+   - Next evaluator change: merge context-level labels into non-default reward diagnostics, expand logged query groups and retriever diversity, then reassess whether a pairwise ranker is justified.
+   - Retrieval-strategy selection claims require broader logged actions with multiple retrievers such as `bm25`, `graph-bm25`, and `hybrid-rrf`. Current evidence mostly supports context-budget/action selection, not robust retrieval-strategy allocation. Web-search actions remain live stress tests only and must not be mixed with reproducible BEIR benchmark claims.
 
 5. Outputs
    - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and `rlaif-label-contexts` write the implemented files below; a 50-action real context-label subset and non-default context reward candidate are complete, while a full 192-action context-label run remains pending.
