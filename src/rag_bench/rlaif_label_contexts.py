@@ -12,6 +12,7 @@ from rag_bench.io import write_json
 from rag_bench.rlaif_label_answers import (
     AnswerJudgeClient,
     DEFAULT_MAX_COMPLETION_TOKENS,
+    DEFAULT_MIMO_JUDGE_MODEL,
     _build_judge_client,
     _completed_action_ids,
     _generation_metadata,
@@ -42,7 +43,7 @@ class RlaifContextLabelConfig:
     actions_path: Path
     output_path: Path
     judge_provider: str = "mimo"
-    judge_model: str = "mimo-v2.5-pro"
+    judge_model: str = DEFAULT_MIMO_JUDGE_MODEL
     dry_run: bool = False
     resume: bool = False
     limit: int | None = None

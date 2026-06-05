@@ -378,13 +378,13 @@ def test_rag_chat_service_can_switch_to_qwen_model() -> None:
 def test_model_routed_chat_client_routes_mimo_models() -> None:
     groq = FakeLLM(alias="groq-a")
     mimo = FakeLLM(alias="mimo")
-    router = ModelRoutedChatClient(default_client=groq, routes={"mimo-v2.5-pro": mimo})
+    router = ModelRoutedChatClient(default_client=groq, routes={"mimo-v2.5": mimo})
 
-    result = router.generate([{"role": "user", "content": "hello"}], model="mimo-v2.5-pro")
+    result = router.generate([{"role": "user", "content": "hello"}], model="mimo-v2.5")
     fallback = router.generate([{"role": "user", "content": "hello"}], model="qwen/qwen3-32b")
 
     assert result.key_alias == "mimo"
-    assert mimo.model == "mimo-v2.5-pro"
+    assert mimo.model == "mimo-v2.5"
     assert fallback.key_alias == "groq-a"
     assert groq.model == "qwen/qwen3-32b"
 
@@ -403,7 +403,7 @@ def test_available_models_include_mimo_only_when_enabled() -> None:
         llm=FakeLLM(),
     )
 
-    assert "mimo-v2.5-pro" in service.available_generation_models()
+    assert "mimo-v2.5" in service.available_generation_models()
 
 
 def test_rag_chat_service_resolves_retriever_alias() -> None:

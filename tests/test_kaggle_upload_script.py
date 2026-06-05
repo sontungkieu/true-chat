@@ -107,7 +107,7 @@ def test_build_notebook_can_attach_dictionary_and_mimo() -> None:
         dictionary_required=True,
         available_retrievers="bm25,dictionary-graph",
         enable_mimo=True,
-        mimo_models="mimo-v2.5-pro,mimo-v2.5",
+        mimo_models="mimo-v2.5",
     )
     source = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
     cell_ids = [cell["id"] for cell in notebook["cells"]]

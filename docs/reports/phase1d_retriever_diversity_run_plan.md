@@ -42,6 +42,8 @@ Budgets:
 Models:
 
 - Existing Groq/MiMo generator setup if available.
+- Future MiMo jobs should use standard `mimo-v2.5`; `mimo-v2.5-pro`
+  remains historical provenance only.
 - Keep model dimension explicit in the action id and summary tables.
 
 This gives a compact first matrix:
@@ -116,11 +118,40 @@ If web search is logged, report it separately:
 live stress test, timestamped, non-reproducible
 ```
 
-## Scaffold Command
+## Runner Command
 
-The script `scripts/run_retriever_diversity_budgetrag_matrix.sh` is a command
-template. It is not executed automatically and should be edited for the concrete
-runner arguments once the target dataset and generator account are fixed.
+The script `scripts/run_retriever_diversity_budgetrag_matrix.sh` now resolves
+and runs the compact retriever-diverse matrix. It defaults to retrieval-only
+mode so logged action coverage can be expanded without spending generator or
+judge budget:
+
+```bash
+DATASET=scifact \
+OUTPUT_ROOT=benchmark_results/budgetrag/phase1d_retriever_diversity_smoke \
+LIMIT=50 \
+scripts/run_retriever_diversity_budgetrag_matrix.sh
+```
+
+Use `DRY_RUN=1` to print the resolved command. Generation must be enabled
+explicitly:
+
+```bash
+SKIP_GENERATION=0 \
+MODELS=mimo_v25 \
+MIMO_ENV_FILE=.secrets/.env \
+LIMIT=50 \
+scripts/run_retriever_diversity_budgetrag_matrix.sh
+```
+
+Once context labels exist, inspect policy-level evidence quality with:
+
+```bash
+uv run --frozen python scripts/analyze_context_policy_evidence_quality.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
+  --out-csv benchmark_results/rlaif/<run-name>/context_policy_evidence_quality.csv \
+  --out-md benchmark_results/rlaif/<run-name>/context_policy_evidence_quality.md
+```
 
 ## Guardrails
 

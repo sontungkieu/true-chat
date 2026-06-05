@@ -181,7 +181,7 @@ def _action(
         "adaptive_profile": None,
         "selected_context_policy": context_policy,
         "selected_budget_chars": 2000,
-        "generator_model": "mimo-v2.5-pro",
+        "generator_model": "mimo-v2.5",
         "token_usage": {"total_tokens": total_tokens},
         "latency": {"total_latency_s": latency_s},
         "kv_estimate": {"after_mb": kv_mb},

@@ -52,6 +52,10 @@ multijudge_aggregator = _load_script(
     "aggregate_rlaif_multijudge_audit",
     "scripts/aggregate_rlaif_multijudge_audit.py",
 )
+context_policy_evidence = _load_script(
+    "analyze_context_policy_evidence_quality",
+    "scripts/analyze_context_policy_evidence_quality.py",
+)
 
 
 def test_summarize_rlaif_labels_counts_scores_and_ragas_correlation(tmp_path: Path) -> None:
@@ -63,7 +67,7 @@ def test_summarize_rlaif_labels_counts_scores_and_ragas_correlation(tmp_path: Pa
             {
                 "action_id": "a1",
                 "judge_provider": "mimo",
-                "judge_model": "mimo-v2.5-pro",
+                "judge_model": "mimo-v2.5",
                 "quality_score": 0.9,
                 "overall_quality": 0.9,
                 "evidence_support": 0.8,
@@ -74,7 +78,7 @@ def test_summarize_rlaif_labels_counts_scores_and_ragas_correlation(tmp_path: Pa
             {
                 "action_id": "a2",
                 "judge_provider": "mimo",
-                "judge_model": "mimo-v2.5-pro",
+                "judge_model": "mimo-v2.5",
                 "quality_score": None,
                 "overall_quality": None,
                 "ambiguous": True,
@@ -522,6 +526,109 @@ def test_inspect_rlaif_action_coverage_reports_signature_sparsity(tmp_path: Path
     assert "retrieval_context_family" in rendered
 
 
+def test_analyze_context_policy_evidence_quality_groups_clean_labels(tmp_path: Path) -> None:
+    actions_path = tmp_path / "actions.jsonl"
+    labels_path = tmp_path / "context_labels.jsonl"
+    out_csv = tmp_path / "evidence_quality.csv"
+    out_md = tmp_path / "evidence_quality.md"
+    _write_jsonl(
+        actions_path,
+        [
+            _evidence_action(
+                "a1",
+                retrieval_strategy="bm25",
+                context_policy="legacy",
+                selected_context_policy="legacy",
+                kept_chars=1000,
+                token_cost=250,
+                kv_savings=12.0,
+            ),
+            _evidence_action(
+                "a2",
+                retrieval_strategy="graph-bm25",
+                context_policy="evidence-aware",
+                selected_context_policy="evidence-aware",
+                kept_chars=700,
+                token_cost=175,
+                kv_savings=20.0,
+            ),
+            _evidence_action(
+                "a3",
+                retrieval_strategy="bm25",
+                context_policy="evidence-aware",
+                selected_context_policy="score-density",
+                kept_chars=500,
+                token_cost=125,
+                kv_savings=24.0,
+            ),
+        ],
+    )
+    _write_jsonl(
+        labels_path,
+        [
+            _context_label(
+                "a1",
+                quality=0.80,
+                support=0.90,
+                sufficient=True,
+                irrelevant=["c2"],
+                available=["c1", "c2"],
+            ),
+            _context_label(
+                "a2",
+                quality=0.40,
+                support=0.50,
+                sufficient=False,
+                ambiguous=True,
+                available=["c1", "c2", "c3"],
+            ),
+            _context_label(
+                "a3",
+                quality=0.30,
+                support=0.20,
+                sufficient=False,
+                irrelevant=["c2", "c3"],
+                available=["c1", "c2", "c3"],
+            ),
+            _context_label("unknown", quality=1.0, support=1.0),
+        ],
+    )
+
+    rows = context_policy_evidence.analyze(
+        actions={row["action_id"]: row for row in _read_jsonl(actions_path)},
+        labels=_read_jsonl(labels_path),
+        groups=[("context_policy",), ("retrieval_strategy",), ("retrieval_strategy", "selected_context_policy")],
+    )
+    rows_by_key = {(row["group_by"], row["group"]): row for row in rows}
+
+    assert rows_by_key[("context_policy", "legacy")]["sufficiency_rate"] == 1.0
+    assert rows_by_key[("context_policy", "legacy")]["selected_chunk_recall_proxy"] == 0.5
+    assert rows_by_key[("context_policy", "evidence-aware")]["sufficiency_rate"] == 0.0
+    assert ("retrieval_strategy", "graph-bm25") not in rows_by_key
+    assert rows_by_key[("retrieval_strategy", "bm25")]["clean_rows"] == 2
+    assert rows_by_key[("retrieval_strategy,selected_context_policy", "bm25 / score-density")]["avg_token_cost"] == 125.0
+
+    context_policy_evidence.main(
+        [
+            "--actions",
+            str(actions_path),
+            "--context-labels",
+            str(labels_path),
+            "--out-csv",
+            str(out_csv),
+            "--out-md",
+            str(out_md),
+            "--group-by",
+            "context_policy;retrieval_strategy",
+        ]
+    )
+    csv_text = out_csv.read_text(encoding="utf-8")
+    md_text = out_md.read_text(encoding="utf-8")
+    assert "context_policy,legacy" in csv_text
+    assert "Context Policy Evidence Quality" in md_text
+    assert "Ambiguous/invalid/error labels are excluded" in md_text
+
+
 def test_qwen_kv_estimate_formula_and_table() -> None:
     spec = kv_estimates.ModelSpec(
         model_id="tiny",
@@ -553,7 +660,7 @@ def test_summarize_rlaif_context_labels_counts_chunks_scores_and_dropped_ids(tmp
             {
                 "action_id": "a1",
                 "judge_provider": "mimo",
-                "judge_model": "mimo-v2.5-pro",
+                "judge_model": "mimo-v2.5",
                 "judge_version": "rlaif-context-judge-v1",
                 "sufficient": True,
                 "missing_evidence": False,
@@ -575,7 +682,7 @@ def test_summarize_rlaif_context_labels_counts_chunks_scores_and_dropped_ids(tmp
             {
                 "action_id": "a2",
                 "judge_provider": "mimo",
-                "judge_model": "mimo-v2.5-pro",
+                "judge_model": "mimo-v2.5",
                 "sufficient": False,
                 "missing_evidence": True,
                 "selected_chunk_ids": [],
@@ -615,7 +722,7 @@ def test_summarize_rlaif_pairwise_labels_counts_agreement_and_confidence(tmp_pat
             {
                 "preference_id": "p1",
                 "judge_provider": "mimo",
-                "judge_model": "mimo-v2.5-pro",
+                "judge_model": "mimo-v2.5",
                 "judge_version": "rlaif-pairwise-judge-v1",
                 "chosen": "A",
                 "tie": False,
@@ -631,7 +738,7 @@ def test_summarize_rlaif_pairwise_labels_counts_agreement_and_confidence(tmp_pat
             {
                 "preference_id": "p2",
                 "judge_provider": "mimo",
-                "judge_model": "mimo-v2.5-pro",
+                "judge_model": "mimo-v2.5",
                 "chosen": "B",
                 "tie": False,
                 "ambiguous": False,
@@ -789,7 +896,7 @@ def _audit_action(action_id: str, query_id: str) -> dict:
         "context_policy": "evidence-aware",
         "budget_chars": 4000,
         "top_k": 5,
-        "generator_model": "mimo-v2.5-pro",
+        "generator_model": "mimo-v2.5",
         "retrieved": [
             {"doc_id": "c1", "rank": 1, "score": 1.0, "text": "Evidence chunk one."},
             {"doc_id": "c2", "rank": 2, "score": 0.5, "text": "Distractor chunk two."},
@@ -802,7 +909,7 @@ def _answer_label(action_id: str, *, quality: float) -> dict:
         "action_id": action_id,
         "query_id": "q1",
         "judge_provider": "mimo",
-        "judge_model": "mimo-v2.5-pro",
+        "judge_model": "mimo-v2.5",
         "quality_score": quality,
         "overall_quality": quality,
         "answer_correctness": quality,
@@ -823,12 +930,13 @@ def _context_label(
     ambiguous: bool = False,
     invalid_json: bool = False,
     irrelevant: list[str] | None = None,
+    available: list[str] | None = None,
 ) -> dict:
     return {
         "action_id": action_id,
         "query_id": "q1",
         "judge_provider": "mimo",
-        "judge_model": "mimo-v2.5-pro",
+        "judge_model": "mimo-v2.5",
         "context_quality_score": quality,
         "evidence_support_score": support,
         "minimality_score": 0.8,
@@ -837,9 +945,38 @@ def _context_label(
         "selected_chunk_ids": ["c1"],
         "redundant_chunk_ids": [],
         "irrelevant_chunk_ids": irrelevant or [],
+        "available_chunk_ids": available or ["c1"],
         "ambiguous": ambiguous,
         "invalid_json": invalid_json,
         "error": None,
+    }
+
+
+def _evidence_action(
+    action_id: str,
+    *,
+    retrieval_strategy: str,
+    context_policy: str,
+    selected_context_policy: str,
+    kept_chars: int,
+    token_cost: int,
+    kv_savings: float,
+) -> dict:
+    return {
+        "action_id": action_id,
+        "retrieval_strategy": retrieval_strategy,
+        "context_policy": context_policy,
+        "selected_context_policy": selected_context_policy,
+        "context_metrics": {
+            "kept_context_chars": kept_chars,
+            "kept_context_est_tokens": token_cost,
+        },
+        "token_usage": {
+            "estimated_prompt_tokens_after_budget": token_cost,
+        },
+        "kv_estimate": {
+            "savings_mb": kv_savings,
+        },
     }
 
 
@@ -857,7 +994,7 @@ def _pipeline_action(action_id: str, *, context_policy: str, total_tokens: int) 
         "adaptive_profile": None,
         "selected_context_policy": context_policy,
         "selected_budget_chars": 2000,
-        "generator_model": "mimo-v2.5-pro",
+        "generator_model": "mimo-v2.5",
         "token_usage": {"total_tokens": total_tokens},
         "latency": {"total_latency_s": total_tokens / 100.0},
         "kv_estimate": {"after_mb": float(total_tokens) / 10.0},
@@ -904,7 +1041,7 @@ def _sweep_reward(
         "adaptive_profile": None,
         "selected_context_policy": context_policy,
         "selected_budget_chars": 1000 if context_policy == "cheap" else 4000,
-        "generator_model": "mimo_v25_pro",
+        "generator_model": "mimo_v25",
     }
     return {
         "action_id": f"action-{query_id}-{context_policy}",
@@ -919,7 +1056,7 @@ def _sweep_reward(
                 "benchmark": "scifact",
                 "query_id": query_id,
                 "top_k": 10,
-                "generator_model": "mimo_v25_pro",
+                "generator_model": "mimo_v25",
             },
             "action_signature": signature,
         },
@@ -944,7 +1081,7 @@ def _coverage_reward(
                 "benchmark": "scifact",
                 "query_id": query_id,
                 "top_k": 10,
-                "generator_model": "mimo_v25_pro",
+                "generator_model": "mimo_v25",
             },
             "action_signature_id": signature_id,
             "action_signature": {
@@ -956,7 +1093,7 @@ def _coverage_reward(
                 "adaptive_profile": None,
                 "selected_context_policy": context_policy,
                 "selected_budget_chars": budget_chars,
-                "generator_model": "mimo_v25_pro",
+                "generator_model": "mimo_v25",
             },
         },
     }

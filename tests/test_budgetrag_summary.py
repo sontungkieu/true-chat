@@ -130,18 +130,18 @@ def test_summary_includes_generation_model_diagnostics(tmp_path: Path) -> None:
     metrics = _metrics(["bm25"])
     metrics["experiment"]["skip_generation"] = False
     metrics["experiment"]["generation_provider"] = "mimo"
-    metrics["experiment"]["generation_model"] = "mimo-v2.5-pro"
+    metrics["experiment"]["generation_model"] = "mimo-v2.5"
     metrics["experiment"]["generation_model_role"] = "long-context-upper-bound"
     aggregate = metrics["aggregates"][0]
     aggregate["experiment"]["skip_generation"] = False
     aggregate["experiment"]["generation_provider"] = "mimo"
-    aggregate["experiment"]["generation_model"] = "mimo-v2.5-pro"
+    aggregate["experiment"]["generation_model"] = "mimo-v2.5"
     aggregate["experiment"]["generation_model_role"] = "long-context-upper-bound"
     aggregate["generation"] = {
         "generation_count": 2,
         "error_count": 1,
         "provider": "mimo",
-        "model": "mimo-v2.5-pro",
+        "model": "mimo-v2.5",
         "model_role": "long-context-upper-bound",
         "avg_answer_latency_s": 1.5,
         "avg_estimated_prompt_tokens": 512,
@@ -155,7 +155,7 @@ def test_summary_includes_generation_model_diagnostics(tmp_path: Path) -> None:
     rows = summary_script.summarize_metrics_file(metrics_path)
 
     assert rows[0]["generation_provider"] == "mimo"
-    assert rows[0]["generation_model"] == "mimo-v2.5-pro"
+    assert rows[0]["generation_model"] == "mimo-v2.5"
     assert rows[0]["generation_model_role"] == "long-context-upper-bound"
     assert rows[0]["avg_generation_latency_s"] == 1.5
     assert rows[0]["avg_estimated_prompt_tokens"] == 512

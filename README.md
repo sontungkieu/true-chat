@@ -190,7 +190,7 @@ Private dictionary graph builds use a reproducible script instead of one-off ter
 ```bash
 uv run --frozen python scripts/build_dictionary_graph.py \
   --provider mimo \
-  --model mimo-v2.5-pro \
+  --model mimo-v2.5 \
   --letters A,B,C,D,F \
   --run-name pb_dictionary_abcdf_prod_graph \
   --batch-size 6 \
@@ -222,7 +222,7 @@ Useful production modes:
 ```bash
 # Rebuild exports, report, visualization, GraphML, and SQLite from existing raw batches.
 uv run --frozen python scripts/build_dictionary_graph.py \
-  --provider mimo --model mimo-v2.5-pro --letters A,B,C,D,F \
+  --provider mimo --model mimo-v2.5 --letters A,B,C,D,F \
   --run-name pb_dictionary_abcdf_prod_graph --export-only
 
 # Validate an existing run and fail if coverage/invalid-edge thresholds are not met.
@@ -233,7 +233,7 @@ uv run --frozen python scripts/validate_dictionary_graph.py \
 
 # Ignore valid cached raw batches and call the provider again.
 uv run --frozen python scripts/build_dictionary_graph.py \
-  --provider mimo --model mimo-v2.5-pro --letters A,B,C,D,F \
+  --provider mimo --model mimo-v2.5 --letters A,B,C,D,F \
   --run-name pb_dictionary_abcdf_prod_graph --force-reextract
 ```
 
@@ -244,7 +244,7 @@ To build a unified dictionary from the base files plus the 2021 supplement, use 
 ```bash
 uv run --frozen python scripts/build_dictionary_graph.py \
   --provider mimo \
-  --model mimo-v2.5-pro \
+  --model mimo-v2.5 \
   --source-set "base=data/semi_private/File Từ điển PB_2021|A,B,C,D,Đ,F,G,H,K,L,M,N,O,P,Q,R,S,T,U,V,X,Y" \
   --source-set "supp2021=data/semi_private/File Từ điển PB_2021/01. Mục từ Bổ sung 2021|B,C,H,K,L,M,N,O,P,R,S,T,V,Đ" \
   --run-name pb_dictionary_base_supp2021_prod_graph \
@@ -268,7 +268,7 @@ uv run --frozen python scripts/build_dictionary_graph.py \
 
 Long graph builds print plain progress lines to stderr, for example `batch 17/53`, `entries 136/418`, percent complete, elapsed time, and ETA. JSON event lines remain on stdout for debugging or automation. Use `--no-progress` to suppress the human-readable progress output.
 
-MiMo V2.5 is usable for this extraction path, but it spends many completion tokens on hidden reasoning. In smoke tests, `mimo-v2.5-pro` with `--batch-size 8` and `--max-completion-tokens 8192` produced valid JSON without local fallback on the first 8 A-entries. Smaller token caps often return empty `message.content`, so the pipeline treats those as repairable failures rather than parsing `reasoning_content`.
+MiMo V2.5 is usable for this extraction path, but it spends many completion tokens on hidden reasoning. Earlier Pro smoke tests with `--batch-size 8` and `--max-completion-tokens 8192` produced valid JSON without local fallback on the first 8 A-entries; future runs should use standard `mimo-v2.5` unless a task explicitly needs historical comparability. Smaller token caps often return empty `message.content`, so the pipeline treats those as repairable failures rather than parsing `reasoning_content`.
 
 ## Groq Keys
 
@@ -431,7 +431,7 @@ uv run rag-bench rlaif-label-answers \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_answer_labels_mimo.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --resume \
   --json-retries 1 \
   --max-completion-tokens 4096
@@ -446,7 +446,7 @@ uv run rag-bench rlaif-label-contexts \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --resume \
   --json-retries 1 \
   --max-completion-tokens 4096
@@ -553,7 +553,7 @@ uv run rag-bench rlaif-label-pairs \
   --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --limit 50 \
   --resume \
   --sleep-seconds 0.5
@@ -716,12 +716,31 @@ Plan a retriever-diverse logged-action run before claiming retrieval-strategy al
 ```bash
 DATASET=scifact \
 OUTPUT_ROOT=benchmark_results/budgetrag/phase1d_retriever_diversity_smoke \
-MODEL=mimo-v2.5-pro \
 LIMIT=50 \
 scripts/run_retriever_diversity_budgetrag_matrix.sh
 ```
 
-This scaffold only prints the intended matrix until the concrete BudgetRAG runner arguments are fixed. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with full/evidence-aware/score-density/adaptive context policies and budgets `1000`, `2000`, and `4000`. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
+The runner defaults to retrieval-only mode (`SKIP_GENERATION=1`) so it can safely collect broader logged action coverage before spending judge/generator budget. Set `DRY_RUN=1` to print the resolved command without running it. To run generation, opt in explicitly:
+
+```bash
+SKIP_GENERATION=0 \
+MODELS=mimo_v25 \
+MIMO_ENV_FILE=.secrets/.env \
+LIMIT=50 \
+scripts/run_retriever_diversity_budgetrag_matrix.sh
+```
+
+Future MiMo jobs default to standard `mimo-v2.5`; `mimo-v2.5-pro` is kept only for historical provenance and disabled in the default model matrix. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with full/evidence-aware/score-density/adaptive context policies and budgets `1000`, `2000`, and `4000`. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
+
+After context labels exist for the resulting actions, inspect evidence quality by retriever and policy:
+
+```bash
+uv run python scripts/analyze_context_policy_evidence_quality.py \
+  --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
+  --context-labels benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
+  --out-csv benchmark_results/rlaif/<run-name>/context_policy_evidence_quality.csv \
+  --out-md benchmark_results/rlaif/<run-name>/context_policy_evidence_quality.md
+```
 
 Summarize local matrix outputs:
 
@@ -736,7 +755,7 @@ uv run python scripts/run_budgetrag_generation_matrix.py \
   --bench scifact \
   --limit 20 \
   --retrievers bm25 \
-  --models groq_llama8b,groq_qwen32b,mimo_v25_pro \
+  --models groq_llama8b,groq_qwen32b,mimo_v25 \
   --context-policies legacy,evidence-aware,adaptive-heuristic \
   --context-budgets 1000,2000,4000,8000 \
   --adaptive-profiles balanced,aggressive \
@@ -819,14 +838,14 @@ Expose MiMo chat models in the same OpenAI-compatible chat UI by putting `MIMO_A
 uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 \
   --model qwen/qwen3-32b \
   --enable-mimo \
-  --mimo-models mimo-v2.5-pro,mimo-v2.5 \
+  --mimo-models mimo-v2.5 \
   --enable-dictionary \
   --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph \
   --dictionary-artifact runs/pb_dictionary_base_supp2021_prod_graph \
   --dictionary-required
 ```
 
-When a request selects `mimo-v2.5-pro` or `mimo-v2.5`, the proxy routes that chat completion to the MiMo OpenAI-compatible base URL (`https://token-plan-sgp.xiaomimimo.com/v1`) using the `mimo` alias in metadata. Groq models continue to use `.secrets/groq_key.env` with round-robin scheduling.
+When a request selects `mimo-v2.5`, the proxy routes that chat completion to the MiMo OpenAI-compatible base URL (`https://token-plan-sgp.xiaomimimo.com/v1`) using the `mimo` alias in metadata. Groq models continue to use `.secrets/groq_key.env` with round-robin scheduling.
 
 Vector UI options require vector extras and a slower startup:
 
@@ -978,7 +997,7 @@ For BudgetRAG HotpotQA generation/RAGAS, prefer Kaggle instead of local matrix r
 uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py
 ```
 
-The upload script creates a private Kaggle notebook with internet enabled and CPU execution by default. It injects local MiMo env data from `.secrets/.env` whenever MiMo generation or RAGAS judging is enabled, and Groq mode injects one local `.secrets/groq_key.env` alias for generation. RAGAS judging is MiMo-backed even when generation uses Groq; use `--ragas-model mimo-v2.5-pro` for that path. The script polls `kaggle kernels status`, downloads completed outputs into `benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle/<timestamp>/`, and treats `--no-wait` uploads as successful after the initial status check.
+The upload script creates a private Kaggle notebook with internet enabled and CPU execution by default. It injects local MiMo env data from `.secrets/.env` whenever MiMo generation or RAGAS judging is enabled, and Groq mode injects one local `.secrets/groq_key.env` alias for generation. RAGAS judging is MiMo-backed even when generation uses Groq; use `--ragas-model mimo-v2.5` for that path. The script polls `kaggle kernels status`, downloads completed outputs into `benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle/<timestamp>/`, and treats `--no-wait` uploads as successful after the initial status check.
 Because the notebook clones GitHub and verifies the expected commit, commit and push local code before a real upload. Use `--no-push --allow-dirty --keep-staging-dir /tmp/hotpotqa-kaggle-dryrun` to inspect the generated notebook without uploading.
 
 Run a smaller Kaggle smoke first when validating the notebook path:
@@ -1004,7 +1023,7 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
   --max-action-rows 2 \
   --key-tpm 6000 \
   --key-rpm 20 \
-  --ragas-model mimo-v2.5-pro \
+  --ragas-model mimo-v2.5 \
   --ragas-samples-per-action 1 \
   --no-wait
 ```
@@ -1017,11 +1036,11 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
   --account kieutung \
   --repo-ref hotpotqa-kaggle-run \
   --provider mimo \
-  --model mimo-v2.5-pro \
+  --model mimo-v2.5 \
   --model-role long-context-upper-bound \
   --context-policies legacy,evidence-aware \
   --context-budgets 4000,8000,16000,32000 \
-  --ragas-model mimo-v2.5-pro \
+  --ragas-model mimo-v2.5 \
   --ragas-samples-per-action 5 \
   --no-wait
 
@@ -1030,12 +1049,12 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
   --account hoanganpham123 \
   --repo-ref hotpotqa-kaggle-run \
   --provider mimo \
-  --model mimo-v2.5-pro \
+  --model mimo-v2.5 \
   --model-role long-context-upper-bound \
   --context-policies adaptive-heuristic \
   --adaptive-profiles balanced \
   --context-budgets 4000,8000,16000,32000 \
-  --ragas-model mimo-v2.5-pro \
+  --ragas-model mimo-v2.5 \
   --ragas-samples-per-action 5 \
   --no-wait
 ```
@@ -1047,7 +1066,7 @@ uv run --frozen --extra vector --extra ragas python scripts/run_hotpotqa_cached_
   --limit 50 \
   --top-k 10 \
   --provider mimo \
-  --ragas-model mimo-v2.5-pro \
+  --ragas-model mimo-v2.5 \
   --ragas-samples-per-action 5
 ```
 

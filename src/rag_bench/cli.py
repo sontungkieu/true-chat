@@ -23,6 +23,7 @@ from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.rlaif_build import RlaifBuildConfig, build_rlaif_dataset
 from rag_bench.rlaif_label_answers import (
     DEFAULT_MAX_COMPLETION_TOKENS as DEFAULT_RLAIF_LABEL_MAX_COMPLETION_TOKENS,
+    DEFAULT_MIMO_JUDGE_MODEL,
     RlaifAnswerLabelConfig,
     label_rlaif_answers,
 )
@@ -419,7 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("mimo", "groq", "deepseek"),
         default="mimo",
     )
-    rlaif_label_answers_parser.add_argument("--judge-model", default="mimo-v2.5-pro")
+    rlaif_label_answers_parser.add_argument("--judge-model", default=DEFAULT_MIMO_JUDGE_MODEL)
     rlaif_label_answers_parser.add_argument("--dry-run", action="store_true")
     rlaif_label_answers_parser.add_argument("--resume", action="store_true")
     rlaif_label_answers_parser.add_argument("--limit", type=int, default=None)
@@ -458,7 +459,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("mimo", "groq", "deepseek"),
         default="mimo",
     )
-    rlaif_label_contexts_parser.add_argument("--judge-model", default="mimo-v2.5-pro")
+    rlaif_label_contexts_parser.add_argument("--judge-model", default=DEFAULT_MIMO_JUDGE_MODEL)
     rlaif_label_contexts_parser.add_argument("--dry-run", action="store_true")
     rlaif_label_contexts_parser.add_argument("--resume", action="store_true")
     rlaif_label_contexts_parser.add_argument("--limit", type=int, default=None)
@@ -499,7 +500,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("mimo", "groq", "deepseek"),
         default="mimo",
     )
-    rlaif_label_pairs_parser.add_argument("--judge-model", default="mimo-v2.5-pro")
+    rlaif_label_pairs_parser.add_argument("--judge-model", default=DEFAULT_MIMO_JUDGE_MODEL)
     rlaif_label_pairs_parser.add_argument("--dry-run", action="store_true")
     rlaif_label_pairs_parser.add_argument("--resume", action="store_true")
     rlaif_label_pairs_parser.add_argument("--limit", type=int, default=None)

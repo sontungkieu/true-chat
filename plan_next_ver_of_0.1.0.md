@@ -14,10 +14,15 @@ RLAIF labels -> reward/preference -> held-out eval -> selector baselines -> diag
 
 The current result bottlenecks are still data and coverage, not algorithmic sophistication:
 
-- context labels are not full yet;
+- full MiMo context labels exist for the first 192-action Phase 1D dataset, but they are still small and AI-generated;
 - logged query/action data is still small;
 - retriever diversity is low;
 - exact action signatures remain sparse.
+
+Future MiMo 2.5 runs should use standard `mimo-v2.5`, not `mimo-v2.5-pro`,
+because the Pro endpoint did not show enough quality difference to justify the
+extra cost. Existing reports may still name `mimo-v2.5-pro` when describing
+historical runs; do not rewrite historical provenance.
 
 Therefore the next bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm. Do not add DPO, PPO, GRPO, runtime KV pruning, or a complex reward model in this phase. Current results should be framed as evidence that the infrastructure works, while learned selectors remain data-limited.
 
@@ -42,8 +47,8 @@ The work is split into two connected phases:
 | Phase 1C | Implemented | Deterministic `adaptive-heuristic` selector. |
 | Phase 1C.1 | Implemented | Larger retrieval-only validation for adaptive behavior. |
 | Phase 1C.2 | Implemented | Calibrated adaptive profiles and normalized retrieval diagnostics. |
-| Phase 1C.3 | Next required foundation | Generation/judge feedback plus context-evidence labels so actions can be compared by quality, sufficiency, and efficiency. |
-| Phase 1D | Main target | RLAIF data builder and offline retrieval-context allocation policy. |
+| Phase 1C.3 | Implemented first-pass | Generation/judge feedback plus context-evidence labels so actions can be compared by quality, sufficiency, and efficiency. |
+| Phase 1D | Implemented first-pass, still data-limited | RLAIF data builder and offline retrieval-context allocation policy. |
 
 ## Why Phase 1C.3 Must Come Before Phase 1D
 
@@ -74,7 +79,7 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
   "context_policy": "evidence-aware",
   "budget_chars": 2000,
   "adaptive_profile": null,
-  "generator_model": "mimo-v2.5-pro"
+  "generator_model": "mimo-v2.5"
 }
 ```
 
@@ -100,7 +105,7 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
 uv run rag-bench rlaif-label-answers \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --output benchmark_results/rlaif/<run-name>/rlaif_answer_labels.jsonl \
   --limit 50 \
   --resume
@@ -117,7 +122,7 @@ uv run python scripts/summarize_rlaif_labels.py \
 ```
 
 4. Add context-level RLAIF feedback
-   - Status: schema baseline and `rlaif-label-contexts` CLI implemented; first real MiMo subset completed on 50 action rows and documented in `docs/reports/phase1d_rlaif_context_labels_mimo50.md`.
+   - Status: schema baseline and `rlaif-label-contexts` CLI implemented; full 192-row first-pass MiMo context labels have been merged, validated, ablated, and documented in `docs/reports/phase1d_rlaif_full_context_reward_ablation.md`.
    - Judge candidate retrieved/context chunks before generation.
    - Identify selected evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and sufficiency.
    - The labeling path supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, `--judge-model`, JSON repair, progress logging, and incremental writes.
@@ -163,7 +168,7 @@ uv run rag-bench rlaif-label-pairs \
   --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --limit 50 \
   --resume \
   --sleep-seconds 0.5
@@ -173,7 +178,7 @@ uv run rag-bench rlaif-label-pairs \
 uv run rag-bench rlaif-label-contexts \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
   --limit 50 \
   --resume
@@ -199,7 +204,7 @@ Context label schema:
   "evidence_support_score": 0.9,
   "context_quality_score": 0.85,
   "judge_provider": "mimo",
-  "judge_model": "mimo-v2.5-pro",
+  "judge_model": "mimo-v2.5",
   "provenance": "ai_judge"
 }
 ```
@@ -413,7 +418,7 @@ Answer labeling:
 uv run rag-bench rlaif-label-answers \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --output benchmark_results/rlaif/<run-name>/rlaif_answer_labels.jsonl \
   --resume
 ```
@@ -424,7 +429,7 @@ Context labeling:
 uv run rag-bench rlaif-label-contexts \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels.jsonl \
   --resume
 
@@ -443,7 +448,7 @@ uv run rag-bench rlaif-label-pairs \
   --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --limit 50 \
   --resume \
   --sleep-seconds 0.5

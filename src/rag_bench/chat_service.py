@@ -31,7 +31,7 @@ DEFAULT_PROXY_MODEL_ID = "rag-scifact-bm25"
 DEFAULT_CHAT_MODEL = "qwen/qwen3-32b"
 DEFAULT_CHAT_MODELS = (DEFAULT_CHAT_MODEL, "llama-3.1-8b-instant")
 DEFAULT_MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
-DEFAULT_MIMO_MODELS = ("mimo-v2.5-pro", "mimo-v2.5")
+DEFAULT_MIMO_MODELS = ("mimo-v2.5",)
 DEFAULT_CHAT_RETRIEVERS = (
     "bm25",
     "tfidf",
@@ -1065,7 +1065,7 @@ def _build_llm(config: ChatProxyConfig, keys: list[ApiKey]) -> ChatGenerationCli
     mimo_key = load_env_api_key(config.mimo_env_file, config.mimo_api_key_var, alias="mimo")
     mimo_client = RoundRobinGroqClient(
         keys=[mimo_key],
-        model=config.mimo_models[0] if config.mimo_models else "mimo-v2.5-pro",
+        model=config.mimo_models[0] if config.mimo_models else "mimo-v2.5",
         max_retries=config.max_retries,
         key_tokens_per_minute=config.mimo_key_tokens_per_minute,
         key_requests_per_minute=config.mimo_key_requests_per_minute,

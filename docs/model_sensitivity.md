@@ -8,8 +8,7 @@ BudgetRAG Phase 1C.3 adds generation-mode validation across model roles instead 
 | --- | --- | --- | --- |
 | `groq_llama8b` | `groq` | `llama-3.1-8b-instant` | fast-small-baseline |
 | `groq_qwen32b` | `groq` | `qwen/qwen3-32b` | stronger-baseline |
-| `mimo_v25_pro` | `mimo` | `mimo-v2.5-pro` | long-context-upper-bound |
-| `mimo_v25` | `mimo` | `mimo-v2.5` | long-context-fallback |
+| `mimo_v25` | `mimo` | `mimo-v2.5` | long-context-upper-bound |
 
 The source config is `configs/budgetrag_models.json`.
 
@@ -22,7 +21,7 @@ uv run python scripts/run_budgetrag_generation_matrix.py \
   --bench scifact \
   --limit 20 \
   --retrievers bm25 \
-  --models groq_llama8b,groq_qwen32b,mimo_v25_pro \
+  --models groq_llama8b,groq_qwen32b,mimo_v25 \
   --context-policies legacy,evidence-aware,adaptive-heuristic \
   --context-budgets 1000,2000,4000,8000 \
   --adaptive-profiles balanced,aggressive \

@@ -227,7 +227,7 @@ def _action(action_id: str, *, answer: str, total_tokens: int) -> dict:
         "adaptive_profile": None,
         "selected_context_policy": "legacy",
         "selected_budget_chars": 2000,
-        "generator_model": "mimo-v2.5-pro",
+        "generator_model": "mimo-v2.5",
         "answer": answer,
         "retrieved": [
             {

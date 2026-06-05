@@ -15,8 +15,8 @@
     "mimo_v25_pro": {
       "provider": "mimo",
       "model": "mimo-v2.5-pro",
-      "role": "long-context-upper-bound",
-      "enabled": true,
+      "role": "legacy-pro-disabled",
+      "enabled": false,
       "base_url": "https://token-plan-sgp.xiaomimimo.com/v1",
       "base_url_env": "MIMO_BASE_URL",
       "api_key_env": "MIMO_API_KEY"
@@ -24,8 +24,8 @@
     "mimo_v25": {
       "provider": "mimo",
       "model": "mimo-v2.5",
-      "role": "long-context-fallback",
-      "enabled": false,
+      "role": "long-context-upper-bound",
+      "enabled": true,
       "base_url": "https://token-plan-sgp.xiaomimimo.com/v1",
       "base_url_env": "MIMO_BASE_URL",
       "api_key_env": "MIMO_API_KEY"

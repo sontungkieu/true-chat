@@ -18,6 +18,7 @@ from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
 LABEL_SCHEMA_VERSION = "rlaif-answer-label-v1"
 PROMPT_VERSION = "rlaif-answer-judge-v1"
 DEFAULT_MAX_COMPLETION_TOKENS = 4096
+DEFAULT_MIMO_JUDGE_MODEL = "mimo-v2.5"
 SCORE_FIELDS = (
     "answer_correctness",
     "evidence_support",
@@ -46,7 +47,7 @@ class RlaifAnswerLabelConfig:
     actions_path: Path
     output_path: Path
     judge_provider: str = "mimo"
-    judge_model: str = "mimo-v2.5-pro"
+    judge_model: str = DEFAULT_MIMO_JUDGE_MODEL
     dry_run: bool = False
     resume: bool = False
     limit: int | None = None

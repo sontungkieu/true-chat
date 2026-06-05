@@ -240,7 +240,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bench", default="scifact")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--retrievers", default="bm25")
-    parser.add_argument("--models", default="groq_llama8b,groq_qwen32b,mimo_v25_pro")
+    parser.add_argument("--models", default="groq_llama8b,groq_qwen32b,mimo_v25")
     parser.add_argument("--model-config", type=Path, default=DEFAULT_MODEL_CONFIG_PATH)
     parser.add_argument("--context-policies", default="legacy,evidence-aware,adaptive-heuristic")
     parser.add_argument("--context-budgets", default="1000,2000,4000")

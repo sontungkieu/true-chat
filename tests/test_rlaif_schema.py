@@ -21,7 +21,7 @@ def test_retrieval_context_action_id_is_deterministic_and_excludes_source_run() 
         top_k=5,
         context_policy="evidence-aware",
         budget_chars=2000,
-        generator_model="mimo-v2.5-pro",
+        generator_model="mimo-v2.5",
         source_run_id="run-a",
     )
     second = RetrievalContextAction(
@@ -32,7 +32,7 @@ def test_retrieval_context_action_id_is_deterministic_and_excludes_source_run() 
         top_k=5,
         context_policy="evidence-aware",
         budget_chars=2000,
-        generator_model="mimo-v2.5-pro",
+        generator_model="mimo-v2.5",
         source_run_id="run-b",
     )
     different_retriever = RetrievalContextAction(
@@ -43,7 +43,7 @@ def test_retrieval_context_action_id_is_deterministic_and_excludes_source_run() 
         top_k=5,
         context_policy="evidence-aware",
         budget_chars=2000,
-        generator_model="mimo-v2.5-pro",
+        generator_model="mimo-v2.5",
         source_run_id="run-a",
     )
 
@@ -66,7 +66,7 @@ def test_action_from_budgetrag_row_captures_retrieval_context_dimensions() -> No
             "context_policy": "adaptive-heuristic",
             "context_budget_chars": 4000,
             "adaptive_profile": "balanced",
-            "generation_model": "mimo-v2.5-pro",
+            "generation_model": "mimo-v2.5",
         },
         "context_budget": {
             "requested_policy": "adaptive-heuristic",
@@ -91,7 +91,7 @@ def test_action_from_budgetrag_row_captures_retrieval_context_dimensions() -> No
     assert action.adaptive_profile == "balanced"
     assert action.selected_context_policy == "evidence-aware"
     assert action.selected_budget_chars == 2000
-    assert action.generator_model == "mimo-v2.5-pro"
+    assert action.generator_model == "mimo-v2.5"
     assert action.metadata["dataset_id"] == "beir/scifact/test"
 
 
@@ -104,7 +104,7 @@ def test_retrieval_context_action_allows_full_context_without_budget() -> None:
         top_k=5,
         context_policy="legacy",
         budget_chars=None,
-        generator_model="mimo-v2.5-pro",
+        generator_model="mimo-v2.5",
     )
 
     assert action.budget_chars is None
@@ -119,7 +119,7 @@ def test_retrieval_context_action_allows_full_context_without_budget() -> None:
             top_k=5,
             context_policy="legacy",
             budget_chars=0,
-            generator_model="mimo-v2.5-pro",
+            generator_model="mimo-v2.5",
         )
 
 
@@ -158,7 +158,7 @@ def test_context_feedback_validates_chunk_labels_and_scores() -> None:
         evidence_support_score=0.9,
         context_quality_score=0.85,
         judge_provider="mimo",
-        judge_model="mimo-v2.5-pro",
+        judge_model="mimo-v2.5",
     )
 
     assert feedback.selected_chunk_ids == ("doc-1", "doc-3")

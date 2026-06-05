@@ -24,7 +24,7 @@ uv run --frozen rag-bench rlaif-label-pairs \
   --preferences benchmark_results/rlaif/<run-name>/rlaif_preferences.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_pairwise_labels_mimo.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --limit 50 \
   --resume \
   --sleep-seconds 0.5

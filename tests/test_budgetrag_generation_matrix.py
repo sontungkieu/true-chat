@@ -38,7 +38,7 @@ def test_generation_matrix_dry_run_records_models_and_skips_missing_mimo(tmp_pat
             "--retrievers",
             "bm25",
             "--models",
-            "groq_llama8b,mimo_v25_pro",
+            "groq_llama8b,mimo_v25",
             "--context-policies",
             "legacy,evidence-aware,adaptive-heuristic",
             "--context-budgets",
@@ -67,7 +67,7 @@ def test_generation_matrix_dry_run_records_models_and_skips_missing_mimo(tmp_pat
     assert "--generation-model-role fast-small-baseline" in captured.out
     assert "--rate-limit-scope per-key" in captured.out
     assert "--adaptive-profile balanced" in captured.out
-    assert "mimo_v25_pro" in captured.out
+    assert "mimo_v25" in captured.out
     assert "MIMO_API_KEY-not-configured" in captured.out
     assert "gsk_secret" not in captured.out
     assert not output_dir.exists()
@@ -81,7 +81,7 @@ def test_generation_matrix_manifest_includes_mimo_when_env_file_is_present(tmp_p
     args = generation_matrix._build_parser().parse_args(
         [
             "--models",
-            "mimo_v25_pro",
+            "mimo_v25",
             "--context-policies",
             "adaptive-heuristic",
             "--context-budgets",
@@ -95,7 +95,7 @@ def test_generation_matrix_manifest_includes_mimo_when_env_file_is_present(tmp_p
         ]
     )
     configs = generation_matrix.load_generation_model_configs(args.model_config)
-    selected, skipped = generation_matrix.select_generation_model_configs(configs, ["mimo_v25_pro"])
+    selected, skipped = generation_matrix.select_generation_model_configs(configs, ["mimo_v25"])
     available, unavailable = generation_matrix._filter_available_models(selected, args)
 
     jobs = generation_matrix.build_generation_matrix_jobs(

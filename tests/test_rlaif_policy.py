@@ -402,7 +402,7 @@ def _reward(
         "adaptive_profile": None,
         "selected_context_policy": context_policy,
         "selected_budget_chars": 4000 if context_policy != "legacy" else None,
-        "generator_model": "mimo_v25_pro",
+        "generator_model": "mimo_v25",
     }
     signature_id = stable_record_id("rlaif-action-signature-v1", signature, length=12)
     return {
@@ -419,7 +419,7 @@ def _reward(
                 "benchmark": "scifact",
                 "query_id": query_id,
                 "top_k": 10,
-                "generator_model": "mimo_v25_pro",
+                "generator_model": "mimo_v25",
             },
             "action_signature": signature,
             "action_signature_id": signature_id,

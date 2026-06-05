@@ -113,7 +113,7 @@ def test_kaggle_eval_can_embed_single_groq_key_without_raw_secret(tmp_path: Path
         model_role="stronger-baseline",
         key_tpm=6000,
         key_rpm=20,
-        ragas_model="mimo-v2.5-pro",
+        ragas_model="mimo-v2.5",
         ragas_samples_per_action=1,
         mimo_secret_name="MIMO_API_KEY",
         mimo_env_b64=mimo_env_b64,
@@ -134,7 +134,7 @@ def test_kaggle_eval_can_embed_single_groq_key_without_raw_secret(tmp_path: Path
     assert "balanced" in notebook_text
     assert "qwen/qwen3-32b" in notebook_text
     assert "--ragas-model" in notebook_text
-    assert "mimo-v2.5-pro" in notebook_text
+    assert "mimo-v2.5" in notebook_text
     assert "--groq-key-alias" in notebook_text
     assert "primary" in notebook_text
     assert "groq-secret" not in notebook_text

@@ -208,7 +208,7 @@ def test_run_benchmark_records_mimo_generation_metadata_with_mocked_llm(tmp_path
         limit=1,
         output_dir=tmp_path / "runs",
         groq_keys_path=tmp_path / "missing-groq.env",
-        model="mimo-v2.5-pro",
+        model="mimo-v2.5",
         generation_provider="mimo",
         generation_model_role="long-context-upper-bound",
         mimo_env_file=mimo_env,

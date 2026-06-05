@@ -16,6 +16,7 @@ Selector policies & Offline selector baselines. & policy artifact and eval summa
 Pairwise audit & Direct pairwise judge audit. & pairwise-label JSONL. \\
 Context ablation runner & Full postprocess pipeline for context labels. & validation, reward deltas, selector sweeps. \\
 Multi-judge aggregator & Aggregate MiMo/DeepSeek/Groq audit labels. & multi-judge report and summary JSON. \\
+Evidence-quality analyzer & Summarize context-label evidence quality by retriever and context policy. & policy-level evidence diagnostics. \\
 KV estimator & Analytical Qwen KV-cache estimates. & KV estimate report. \\
 Model-bench workflow & Benchmark local or existing vLLM endpoints and record serving and hardware metadata. & model-bench manifests, metrics, and summaries. \\
 \bottomrule
@@ -23,4 +24,4 @@ Model-bench workflow & Benchmark local or existing vLLM endpoints and record ser
 
 The corresponding source files are under \code{src/rag\_bench/} for modules and \code{scripts/} for standalone analysis scripts.
 
-The code-level test suite covers schema validation, builders, reward/preference logic, labeler hardening, split behavior, selector policies, analysis scripts, model-bench helpers, and secret handling. The merged internship branch currently verifies with 266 passing tests.
+The code-level test suite covers schema validation, builders, reward/preference logic, labeler hardening, split behavior, selector policies, analysis scripts, model-bench helpers, and secret handling. The merged internship branch currently verifies with 267 passing tests.

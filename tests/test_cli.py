@@ -355,7 +355,7 @@ def test_cli_rlaif_label_answers_smoke_with_mocked_labeler(monkeypatch, tmp_path
             "stop_reason": None,
             "dry_run": True,
             "judge_provider": "mimo",
-            "judge_model": "mimo-v2.5-pro",
+            "judge_model": "mimo-v2.5",
         }
 
     monkeypatch.setattr(cli, "label_rlaif_answers", fake_label_rlaif_answers)
@@ -370,7 +370,7 @@ def test_cli_rlaif_label_answers_smoke_with_mocked_labeler(monkeypatch, tmp_path
             "--judge-provider",
             "mimo",
             "--judge-model",
-            "mimo-v2.5-pro",
+            "mimo-v2.5",
             "--dry-run",
             "--resume",
             "--limit",
@@ -437,7 +437,7 @@ def test_cli_rlaif_label_contexts_smoke_with_mocked_labeler(monkeypatch, tmp_pat
             "stop_reason": None,
             "dry_run": True,
             "judge_provider": "mimo",
-            "judge_model": "mimo-v2.5-pro",
+            "judge_model": "mimo-v2.5",
         }
 
     monkeypatch.setattr(cli, "label_rlaif_contexts", fake_label_rlaif_contexts)
@@ -452,7 +452,7 @@ def test_cli_rlaif_label_contexts_smoke_with_mocked_labeler(monkeypatch, tmp_pat
             "--judge-provider",
             "mimo",
             "--judge-model",
-            "mimo-v2.5-pro",
+            "mimo-v2.5",
             "--dry-run",
             "--resume",
             "--limit",
@@ -522,7 +522,7 @@ def test_cli_rlaif_label_pairs_smoke_with_mocked_labeler(monkeypatch, tmp_path: 
             "stop_reason": None,
             "dry_run": True,
             "judge_provider": "mimo",
-            "judge_model": "mimo-v2.5-pro",
+            "judge_model": "mimo-v2.5",
         }
 
     monkeypatch.setattr(cli, "label_rlaif_pairs", fake_label_rlaif_pairs)
@@ -541,7 +541,7 @@ def test_cli_rlaif_label_pairs_smoke_with_mocked_labeler(monkeypatch, tmp_path: 
             "--judge-provider",
             "mimo",
             "--judge-model",
-            "mimo-v2.5-pro",
+            "mimo-v2.5",
             "--dry-run",
             "--resume",
             "--limit",
@@ -735,7 +735,7 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "--mimo-base-url",
             "https://token-plan-sgp.xiaomimimo.com/v1",
             "--mimo-models",
-            "mimo-v2.5-pro,mimo-v2.5",
+            "mimo-v2.5",
             "--mimo-key-tpm",
             "0",
             "--mimo-key-rpm",
@@ -776,10 +776,10 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.mimo_env_file == Path(".secrets/.env")
     assert seen["config"].chat.mimo_api_key_var == "MIMO_API_KEY"
     assert seen["config"].chat.mimo_base_url == "https://token-plan-sgp.xiaomimimo.com/v1"
-    assert seen["config"].chat.mimo_models == ("mimo-v2.5-pro", "mimo-v2.5")
+    assert seen["config"].chat.mimo_models == ("mimo-v2.5",)
     assert seen["config"].chat.mimo_key_tokens_per_minute == 0
     assert seen["config"].chat.mimo_key_requests_per_minute == 0
-    assert "mimo-v2.5-pro" in seen["config"].chat.available_models
+    assert "mimo-v2.5" in seen["config"].chat.available_models
     assert seen["config"].chat.available_models[0] == "qwen/qwen3-32b"
     assert seen["config"].chat.key_tokens_per_minute == 5000
     assert seen["config"].chat.key_requests_per_minute == 20

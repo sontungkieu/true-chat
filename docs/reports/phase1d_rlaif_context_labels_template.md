@@ -6,7 +6,7 @@ This report template should be filled after a real `rlaif-label-contexts` run.
 
 - Labels file: `benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl`
 - Summary file: `benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo_summary.md`
-- Judge provider/model: `mimo` / `mimo-v2.5-pro`
+- Judge provider/model: `mimo` / `mimo-v2.5`
 - Prompt version: `rlaif-context-judge-v1`
 - Source actions: `benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl`
 
@@ -17,7 +17,7 @@ uv run --frozen rag-bench rlaif-label-contexts \
   --actions benchmark_results/rlaif/<run-name>/rlaif_actions.jsonl \
   --output benchmark_results/rlaif/<run-name>/rlaif_context_labels_mimo.jsonl \
   --judge-provider mimo \
-  --judge-model mimo-v2.5-pro \
+  --judge-model mimo-v2.5 \
   --resume \
   --json-retries 1 \
   --max-completion-tokens 4096

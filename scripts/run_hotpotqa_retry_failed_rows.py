@@ -247,7 +247,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
     parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
     parser.add_argument("--run-ragas", action="store_true")
-    parser.add_argument("--ragas-model", default="mimo-v2.5-pro")
+    parser.add_argument("--ragas-model", default="mimo-v2.5")
     parser.add_argument("--ragas-samples-per-action", type=int, default=1)
     parser.add_argument("--ragas-seed", type=int, default=20260529)
     parser.add_argument("--no-resume", action="store_true")

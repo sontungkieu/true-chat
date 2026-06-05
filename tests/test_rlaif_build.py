@@ -115,7 +115,7 @@ def test_answer_feedback_uses_ragas_then_ai_judge_when_gold_is_absent() -> None:
         query_id="q2",
         exact_match=None,
         token_f1=None,
-        mimo_judge={"score": 0.9, "judge_provider": "mimo", "judge_model": "mimo-v2.5-pro"},
+        mimo_judge={"score": 0.9, "judge_provider": "mimo", "judge_model": "mimo-v2.5"},
     )
     deepseek_row = _query_result_row(
         run_id="run-c",
@@ -148,7 +148,7 @@ def test_answer_feedback_uses_ragas_then_ai_judge_when_gold_is_absent() -> None:
     assert mimo_feedback.provenance == "ai_judge"
     assert mimo_feedback.quality_score == 0.9
     assert mimo_feedback.judge_provider == "mimo"
-    assert mimo_feedback.judge_model == "mimo-v2.5-pro"
+    assert mimo_feedback.judge_model == "mimo-v2.5"
     assert deepseek_feedback.provenance == "ai_judge"
     assert deepseek_feedback.judge_provider == "deepseek"
     assert deepseek_feedback.judge_model == "deepseek-r1"
@@ -212,7 +212,7 @@ def _query_result_row(
     answer: str = "Alpha is supported.",
     benchmark: str = "scifact",
     context_policy: str = "evidence-aware",
-    generation_model: str = "mimo-v2.5-pro",
+    generation_model: str = "mimo-v2.5",
     exact_match: float | None = 0.0,
     token_f1: float | None = 0.5,
     generation_skipped: bool = False,
