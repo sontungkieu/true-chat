@@ -6,6 +6,19 @@ BudgetRAG / MemAlign-Qwen addresses this trade-off. The core question is: for a 
 
 The MemAlign-Qwen motivation is local and privacy-constrained inference. In later phases, private documents should be processed by trusted local models rather than remote APIs. In the current phase, BudgetRAG reduces context before inference and uses RLAIF-style context labels as future evidence for local Qwen profiling and possible KV evidence masks. The current report is careful about the boundary: the system is an offline research pipeline, not a deployed production policy.
 
+\subsection{Contributions}
+
+This internship produced six concrete contributions:
+
+\begin{enumerate}[leftmargin=*]
+  \item A reproducible RAG/BudgetRAG benchmark pipeline with fixed context policies, adaptive profiles, traceable action rows, and curated reports.
+  \item An RLAIF-style feedback layer that records answer-level labels, context-level sufficiency labels, and direct pairwise judge audits.
+  \item A reward/preference construction pipeline with explicit quality, evidence-support, token, latency, KV, unsupported-claim, and error components.
+  \item Held-out offline selector baselines that compare cheapest, average, smoothed, learned linear, and oracle-logged policies without replacing the runtime heuristic.
+  \item Full MiMo context-label evidence showing that retrieved contexts often contain only a small number of useful chunks and several irrelevant chunks.
+  \item Analytical Qwen KV-cache estimates and a deployment-oriented vLLM model-benchmark workflow to connect BudgetRAG with future local inference experiments.
+\end{enumerate}
+
 \section{Problem Formulation}
 
 For a query $q$ and a candidate set $C$ returned by one or more retrievers, the system chooses an action:

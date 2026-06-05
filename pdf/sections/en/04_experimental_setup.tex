@@ -25,6 +25,8 @@ Targeted multi-judge audit rows & 60 \\
 
 The action log is not yet broad enough to support strong retrieval-strategy allocation claims. Most completed results use BM25. Planned retriever-diversity runs add BM25, graph-BM25, and hybrid-RRF as separate logged action families.
 
+A small sampled HotpotQA Kaggle evaluation is included later as supplementary multi-hop stress evidence. It is not part of the main Phase 1D selector training/evaluation set, and it is not reported as a full HotpotQA benchmark claim.
+
 \subsection{Models and Judges}
 
 The generation/action matrix includes MiMo, Llama 3.1 8B, and Qwen3 32B rows. RAGAS answer relevancy provides the initial proxy label. MiMo provides full answer-level and context-level labels. DeepSeek v4 Flash and Groq Qwen3 32B provide secondary labels in a targeted context audit.

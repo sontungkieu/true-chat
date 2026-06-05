@@ -1,5 +1,23 @@
 \section{Main Results}
 
+\subsection{Headline Findings}
+
+\begin{center}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{7.6cm} >{\raggedright\arraybackslash}p{5.6cm}}
+\toprule
+Finding & Evidence in this report \\
+\midrule
+Full context-level RLAIF labeling is now available. & 192/192 MiMo context labels were merged; 177 were clean usable labels. \\
+Retrieved contexts contain substantial noise. & Mean selected chunks 1.276 versus mean irrelevant chunks 3.708. \\
+Context labels changed reward/preference construction. & Context penalty 0.25 changed 140/192 reward rows and increased preferences from 722 to 952. \\
+Context sufficiency is a real bottleneck. & Sufficiency rate 0.591, with 76 insufficient contexts among the scored labels. \\
+The strongest full-coverage non-oracle selector is smoothed, not purely learned. & Shrinkage-smoothed selector: reward 0.602, quality 0.773, coverage 1.000 in the six-seed sweep. \\
+Multi-judge audit supports the insufficiency signal. & 51/60 targeted rows were consensus-insufficient; 6 rows were high-disagreement/MiMo-harsh cases. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
 \subsection{Full MiMo Context Labels}
 
 The first full context-label pass merged 192 action rows with no missing, unknown, duplicate, or conflicting action ids. It produced 177 clean usable labels, 15 ambiguous labels, 0 invalid JSON labels, and 1 error. The sufficiency rate was 0.591, with 110 sufficient contexts and 76 insufficient contexts.
@@ -30,7 +48,8 @@ The main qualitative signal is that the judge often identifies only one or two u
 Context labels materially changed reward/preference construction. The answer-only baseline created 722 preferences. Context penalty 0.25 created 952 preferences and changed 140 reward rows; 108 changes were negative and 32 were positive. Stronger penalties were more aggressive and compressed the reward scale.
 
 \begin{center}
-\begin{tabular}{l r r r r}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{4.4cm} r r r r}
 \toprule
 Setting & Preferences & Changed rows & Negative deltas & Mean changed delta \\
 \midrule
@@ -46,4 +65,4 @@ Penalty 0.25 is the conservative non-default candidate. Penalty 1.00 remains dia
 
 \subsection{Multi-Judge Targeted Audit}
 
-The targeted multi-judge audit used MiMo as the primary context judge, DeepSeek v4 Flash as a full 192-row secondary audit filtered to the target subset, and Groq Qwen3 32B for 60 targeted rows. The strongest signal was 51/60 consensus-insufficient rows and 6 MiMo-harsh/high-disagreement rows. MiMo was not globally too harsh on this subset, but the disagreement rows should be inspected before increasing context penalties.
+The targeted multi-judge audit compares MiMo labels with secondary DeepSeek and Groq labels on 60 high-impact rows. DeepSeek v4 Flash labels were available for the full 192-row context-label set and were then filtered to the same targeted subset. Groq Qwen3 32B was run directly on the 60 targeted rows. The strongest signal was 51/60 consensus-insufficient rows and 6 MiMo-harsh/high-disagreement rows. MiMo was not globally too harsh on this subset, but the disagreement rows should be inspected before increasing context penalties.

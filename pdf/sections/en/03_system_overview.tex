@@ -22,4 +22,14 @@ The main implementation components are:
   \item Selectors: fixed, cheapest, best average, family-smoothed, shrinkage-smoothed, linear reward model, smoothed linear selector, and oracle logged.
 \end{itemize}
 
+\subsection{Method Summary}
+
+The method can be read as three connected stages.
+
+\textbf{BudgetRAG context allocation.} A query first produces candidate evidence through a registered retriever. A context action then decides how much evidence to keep and how to trim it. The action may preserve the legacy full-context behavior, impose character budgets, distribute budget per document, prefer high score-density chunks, trim at sentence boundaries, or use deterministic adaptive profiles.
+
+\textbf{RLAIF feedback and reward construction.} After generation, answer-level and context-level judges label the logged row. Answer labels estimate correctness, support, unsupported claims, and refusal behavior. Context labels estimate whether the retrieved context is sufficient, which chunks are useful, and which chunks are redundant or irrelevant. These labels are converted into scalar rewards and pairwise preferences with guardrails so missing or ambiguous feedback is not treated as zero quality.
+
+\textbf{Offline selector evaluation.} Selector policies are trained or summarized only on the logged train split and are evaluated on held-out query groups. The selector can choose only among candidate actions already logged for that query, which makes the experiment an offline logged-candidate study rather than an online RL deployment.
+
 The design keeps raw experiment outputs under ignored \code{benchmark\_results/}; committed reports are curated summaries. This prevents raw judge outputs, downloaded Kaggle working directories, or secrets from becoming part of the repository history.

@@ -15,3 +15,21 @@ H2O, StreamingLLM, KIVI, SnapKV, and PyramidKV reduce runtime memory or attentio
 \subsection{Graph Retrieval, RLAIF, and Contextual Bandits}
 
 GraphRAG highlights graph-based retrieval for local-to-global query-focused summarization \cite{edge2024graphrag}. Hybrid retrieval and Reciprocal Rank Fusion (RRF) are relevant for combining retrieval strategies \cite{cormack2009rrf}. RLAIF and preference learning use AI feedback to construct reward or preference signals \cite{bai2022constitutional}; DPO is a later preference-optimization method, not implemented here \cite{rafailov2023dpo}. Because the BudgetRAG action is a one-step query-time decision, offline contextual bandit framing is more appropriate than PPO/GRPO in the current data-limited phase \cite{li2010contextualbandit}.
+
+\subsection{Positioning of This Work}
+
+\begin{center}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.1cm} >{\raggedright\arraybackslash}p{3.2cm} >{\raggedright\arraybackslash}p{3.1cm} >{\raggedright\arraybackslash}p{3.8cm}}
+\toprule
+Research line & What it solves & Remaining gap & BudgetRAG position \\
+\midrule
+RAG evaluation & Measures retrieval and answer quality. & Does not choose a resource-aware context action. & Uses retrieval and answer metrics as logged feedback. \\
+Prompt compression & Shortens prompts before generation. & Often treats compression separately from retrieval policy. & Makes compression a retrieval-context action. \\
+KV-cache methods & Reduce runtime cache memory or attention cost. & Usually operate inside model inference. & Works before inference; KV pruning remains future work. \\
+Graph/hybrid retrieval & Improves evidence discovery and fusion. & Needs action-level allocation evidence. & Treats retriever choice as part of future action coverage. \\
+RLAIF/preference learning & Builds AI-feedback rewards/preferences. & General alignment methods do not target RAG context budgets. & Uses AI feedback for answer and context supervision. \\
+Contextual bandits & Learn one-step action selection. & Require enough logged action coverage. & Evaluates offline selectors over logged candidates only. \\
+\bottomrule
+\end{tabular}
+\end{center}

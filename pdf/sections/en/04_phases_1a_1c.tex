@@ -2,7 +2,22 @@
 
 Phase 1A created the benchmark foundation: a retriever registry, benchmark CLI, retrieval metrics, and traceable output records. The metric layer includes hit@k, MRR, nDCG, latency, and context size/cost fields. This phase made later BudgetRAG experiments reproducible: fixed policies, adaptive profiles, and RLAIF builders all consume the same output format.
 
-The current report does not invent Phase 1A numbers beyond the available records. Quantitative reporting starts from Phase 1B/1C, where committed reports contain concrete matrix outputs.
+Phase 1A established the reproducible benchmarking infrastructure. Quantitative reporting starts from Phase 1B/1C, where committed reports contain concrete matrix outputs.
+
+\begin{center}
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{1.4cm} >{\raggedright\arraybackslash}p{3.1cm} >{\raggedright\arraybackslash}p{4.7cm} >{\raggedright\arraybackslash}p{4.4cm}}
+\toprule
+Phase & Goal & What was implemented & Main finding \\
+\midrule
+1A & Reproducible RAG benchmarking & Retriever registry, benchmark CLI, retrieval metrics, traceable records. & Later phases could reuse one output schema. \\
+1B & Fixed context budgeting & Legacy, character, per-document, score-density, sentence-trim, and evidence-aware policies. & Compression/KV savings could be measured separately from answer quality. \\
+1C & Deterministic adaptation & Adaptive heuristic plus conservative, balanced, and aggressive profiles. & Conservative settings were stable but too cautious; profiles increased action diversity. \\
+1C.3 & Generation feedback & Multi-model generation rows, MiMo long-context runs, HotpotQA sampled Kaggle path. & Answer labels were needed; retrieval-only metrics were insufficient. \\
+1D & RLAIF selector & Answer/context/pairwise labels, rewards/preferences, held-out selector baselines. & Context-level labels materially changed rewards and exposed evidence insufficiency. \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \section{Phase 1B: BudgetRAG Fixed Context Policies}
 
