@@ -323,6 +323,7 @@ Context label schema:
    - Cost-feature limitation: current selector cost features are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before pre-generation selection.
    - Current full-context result: all 192 MiMo context labels have been merged and ablated; penalty `0.25` is the conservative non-default context reward candidate, while `1.00` remains diagnostic.
    - Current audit result: the first targeted multi-judge audit is complete on 60 high-impact rows, with MiMo/DeepSeek/Groq labels, 51 consensus-insufficient rows, 6 MiMo-harsh/high-disagreement rows, and no invalid JSON or judge errors in the secondary judge outputs.
+   - Current HotpotQA result: the Kaggle-first sampled evaluation path has been merged, including cached BM25 retrieval, MiMo/Groq generation support, policy sharding, retry tooling for failed Groq rows, and a curated report in `docs/reports/phase1c3_hotpotqa_kaggle_eval.md`. The report treats clean MiMo sampled shards as usable HotpotQA evidence and keeps quota-contaminated Groq rows separate.
    - Current reporting result: `feature/rlaif-retrieval-context-v0` has been merged into `internship`, and the internship report is now an English modular LaTeX report. `pdf/main.tex` is a short driver, `pdf/sections/en/` contains section files plus expanded appendices, and `pdf/main.pdf` covers Phase 1A through Phase 1D with added experimental setup, qualitative error analysis, threats to validity, planned HotpotQA/retriever-diversity evaluations, and an implementation map. The internal English/Vietnamese translation trace is no longer included in the submission PDF.
    - Next evaluator change: inspect the 6 MiMo-harsh rows and 51 consensus-insufficient rows as calibration examples, then expand logged query groups and retriever diversity before reassessing whether a pairwise ranker is justified.
    - Retrieval-strategy selection claims require broader logged actions with multiple retrievers such as `bm25`, `graph-bm25`, and `hybrid-rrf`. Current evidence mostly supports context-budget/action selection, not robust retrieval-strategy allocation. Web-search actions remain live stress tests only and must not be mixed with reproducible BEIR benchmark claims.
@@ -341,6 +342,13 @@ Context label schema:
    - `rlaif_action_coverage.md`: action signature sparsity and split coverage diagnostics.
    - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
    - `rlaif_context_labels_mimo50_summary.md`: context-label sufficiency, evidence support, minimality, and chunk-selection summary.
+   - `configs/budgetrag_models.json`: generation model roles for fast Groq baseline, stronger Groq baseline, and MiMo long-context upper-bound rows.
+   - `scripts/run_budgetrag_generation_matrix.py`: resumable generation matrix runner for Phase 1C.3 model/action coverage.
+   - `scripts/run_hotpotqa_cached_budgetrag_eval.py`: cached HotpotQA evaluation entry point for Kaggle runs.
+   - `scripts/run_hotpotqa_retry_failed_rows.py`: retry-only HotpotQA failed-row runner that reuses downloaded outputs and cached retrieval.
+   - `docs/reports/phase1c3_multi_model_generation.md`: curated Phase 1C.3 multi-model generation report.
+   - `docs/reports/phase1c3_mimo_long_context.md`: curated MiMo long-context report.
+   - `docs/reports/phase1c3_hotpotqa_kaggle_eval.md`: curated sampled HotpotQA Kaggle report.
    - `rlaif_reward_summary.md` with `--context-labels`: non-default context reward candidate summary with clean/fallback context-label merge counts.
    - `reward_delta_summary.md`: reward-delta distribution comparing answer-only and context-label candidates.
    - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
@@ -547,7 +555,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
 
 - No PPO, DPO, or model weight fine-tuning in the first RLAIF commit.
 - No runtime replacement of `adaptive-heuristic` before offline evaluation.
-- No HotpotQA full benchmark in this phase.
+- HotpotQA remains sampled/Kaggle-first in this phase; clean MiMo sampled shards may be reported, but quota-contaminated Groq rows must stay separated from benchmark claims.
 - No Kaggle deployment unless explicitly requested after local smoke passes.
 - Web-search actions are live stress-test actions and should not be mixed with reproducible BEIR benchmark claims.
 - No private document/model flow in this phase; private/trusted-model gating remains separate work.

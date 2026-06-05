@@ -188,6 +188,8 @@ Phase 1C.2 adds calibrated adaptive profiles (`conservative`, `balanced`, `aggre
 
 Phase 1C.3 starts the RLAIF retrieval-context data layer. It adds schema records for normalized retrieval-context actions, answer feedback, context feedback, scalar rewards, and pairwise preferences. Action ids include the benchmark query, retrieval strategy, fusion strategy, top-k, context policy, optional budget, adaptive profile, selected context action, and generator model, but exclude the source run id so repeated matrix runs produce stable ids. Full-context or legacy rows without an explicit context budget use `budget_chars=null` as a stable action dimension. The `rlaif-build` command converts existing BudgetRAG `query_results.jsonl` files into normalized `rlaif_actions.jsonl`, `rlaif_feedback.jsonl`, and `rlaif_feedback_summary.md` outputs. The `rlaif-label-answers` and `rlaif-label-contexts` commands create optional offline AI-judge labels with resume and null-score guardrails. The `rlaif-reward` command turns those normalized files into scalar rewards and pairwise preferences with quality guardrails. The `rlaif-split`, `rlaif-train`, and `rlaif-eval` commands create query-level held-out splits and evaluate offline selector baselines from logged reward rows. This is still offline data plumbing: it does not replace `adaptive-heuristic` or change runtime retrieval behavior.
 
+Phase 1C.3 adds multi-model generation validation across a fast Groq baseline, a stronger Groq baseline, and MiMo as a token-rich/long-context upper-bound. MiMo results are model-sensitivity evidence, not resource-constrained deployment behavior.
+
 Retrieval-only BudgetRAG smoke run:
 
 ```bash
@@ -574,6 +576,27 @@ Summarize local matrix outputs:
 uv run python scripts/summarize_budgetrag_results.py benchmark_results/budgetrag
 ```
 
+Multi-model generation matrix:
+
+```bash
+uv run python scripts/run_budgetrag_generation_matrix.py \
+  --bench scifact \
+  --limit 20 \
+  --retrievers bm25 \
+  --models groq_llama8b,groq_qwen32b,mimo_v25_pro \
+  --context-policies legacy,evidence-aware,adaptive-heuristic \
+  --context-budgets 1000,2000,4000,8000 \
+  --adaptive-profiles balanced,aggressive \
+  --top-k 5 \
+  --max-completion-tokens 256 \
+  --kv-profile qwen2.5-14b \
+  --run-name phase1c3_scifact_generation \
+  --job-timeout-s 3600 \
+  --continue-on-error
+```
+
+The generation matrix helper resumes safely by default: if a job directory already contains completed `metrics.json`, it is skipped on the next run. Use `--rerun-existing` to force recomputation. `--job-timeout-s` is optional and bounds each child `rag-bench run`; the default `0` disables per-job timeouts.
+
 Use `--kv-profile generic-small` or `--kv-profile qwen2.5-14b` to choose the analytical KV profile, and `--disable-kv-estimate` when those fields are not needed. If `--context-budget-chars` is omitted, the runner uses `--max-context-chars` as the BudgetRAG budget. When both are provided, `--context-budget-chars` controls the context policy and `--max-context-chars` remains a prompt safety ceiling.
 
 Estimate local Qwen KV-cache memory without loading weights:
@@ -768,6 +791,106 @@ HotpotQA is much larger and must be enabled explicitly:
 uv run --frozen rag-bench run --bench hotpotqa --allow-large-bench --retrievers bm25,graph-bm25 --top-k 5 --limit 20 --skip-generation
 ```
 
+For BudgetRAG HotpotQA generation/RAGAS, prefer Kaggle instead of local matrix runs. The cached runner builds BM25 once, writes `retrieval_cache.jsonl`, replays context-policy action rows, and joins HotpotQA gold answers from `hotpotqa/hotpot_qa` for EM/token-F1. The default upload remains MiMo-only and can run post-hoc RAGAS samples:
+
+```bash
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py
+```
+
+The upload script creates a private Kaggle notebook with internet enabled and CPU execution by default. It injects local MiMo env data from `.secrets/.env` whenever MiMo generation or RAGAS judging is enabled, and Groq mode injects one local `.secrets/groq_key.env` alias for generation. RAGAS judging is MiMo-backed even when generation uses Groq; use `--ragas-model mimo-v2.5-pro` for that path. The script polls `kaggle kernels status`, downloads completed outputs into `benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle/<timestamp>/`, and treats `--no-wait` uploads as successful after the initial status check.
+Because the notebook clones GitHub and verifies the expected commit, commit and push local code before a real upload. Use `--no-push --allow-dirty --keep-staging-dir /tmp/hotpotqa-kaggle-dryrun` to inspect the generated notebook without uploading.
+
+Run a smaller Kaggle smoke first when validating the notebook path:
+
+```bash
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --limit 5 \
+  --max-action-rows 2 \
+  --ragas-samples-per-action 1
+```
+
+Run a Groq Qwen3-32B HotpotQA smoke with one embedded key:
+
+```bash
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --repo-ref hotpotqa-kaggle-run \
+  --provider groq \
+  --model qwen/qwen3-32b \
+  --model-role stronger-baseline \
+  --embed-groq-key \
+  --groq-key-alias primary \
+  --limit 5 \
+  --max-action-rows 2 \
+  --key-tpm 6000 \
+  --key-rpm 20 \
+  --ragas-model mimo-v2.5-pro \
+  --ragas-samples-per-action 1 \
+  --no-wait
+```
+
+To shard MiMo HotpotQA action rows across multiple Kaggle accounts, pass explicit policy/profile groups. For example:
+
+```bash
+# Fixed-policy rows: 8 actions.
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --account kieutung \
+  --repo-ref hotpotqa-kaggle-run \
+  --provider mimo \
+  --model mimo-v2.5-pro \
+  --model-role long-context-upper-bound \
+  --context-policies legacy,evidence-aware \
+  --context-budgets 4000,8000,16000,32000 \
+  --ragas-model mimo-v2.5-pro \
+  --ragas-samples-per-action 5 \
+  --no-wait
+
+# Adaptive balanced rows: 4 actions.
+uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
+  --account hoanganpham123 \
+  --repo-ref hotpotqa-kaggle-run \
+  --provider mimo \
+  --model mimo-v2.5-pro \
+  --model-role long-context-upper-bound \
+  --context-policies adaptive-heuristic \
+  --adaptive-profiles balanced \
+  --context-budgets 4000,8000,16000,32000 \
+  --ragas-model mimo-v2.5-pro \
+  --ragas-samples-per-action 5 \
+  --no-wait
+```
+
+The Kaggle notebook calls:
+
+```bash
+uv run --frozen --extra vector --extra ragas python scripts/run_hotpotqa_cached_budgetrag_eval.py \
+  --limit 50 \
+  --top-k 10 \
+  --provider mimo \
+  --ragas-model mimo-v2.5-pro \
+  --ragas-samples-per-action 5
+```
+
+Expected artifacts are `retrieval_cache.jsonl`, `query_results.jsonl`, `metrics.json`, `hotpotqa_summary.csv`, `hotpotqa_summary.md`, and `ragas_per_sample.csv`.
+
+If a HotpotQA run is quota-contaminated, retry only failed rows from the downloaded artifact instead of rebuilding BM25:
+
+```bash
+uv run --frozen python scripts/run_hotpotqa_retry_failed_rows.py \
+  --original-run-dir benchmark_results/budgetrag/phase1c3_hotpotqa_kaggle_downloads_20260603/codemaivanngu__hp-groq-qwen32b-full-r16-0603/20260603_hotpotqa_groq_qwen32b_full_ragas16 \
+  --output-dir benchmark_results/budgetrag/phase1c3_hotpotqa_retry_20260603 \
+  --run-name groq_qwen32b_retry_failed_429 \
+  --provider groq \
+  --model qwen/qwen3-32b \
+  --model-role stronger-baseline \
+  --groq-keys-path .secrets/groq_key.env \
+  --groq-key-alias primary \
+  --key-tpm 5000 \
+  --key-rpm 3
+```
+
+The retry script reads the original `query_results.jsonl`, reruns only rows matching `--failed-status-code` (default `429`), merges successful original rows with retried rows, and writes a fresh `query_results.jsonl`, `retry_rows.jsonl`, `metrics.json`, and summary table. It does not rebuild HotpotQA BM25. RAGAS is skipped by default; add `--run-ragas` after generation is clean enough to judge.
+Retry runs write `retry_rows.partial.jsonl` and `retry_progress.json` while they are running. Reusing the same `--run-name` resumes from the partial retry rows by default; pass `--no-resume` to rerun the selected failed rows from scratch.
+
 Optional RAGAS mode:
 
 ```bash
@@ -865,6 +988,8 @@ Generation and operations metrics:
 - Exact match and token F1 when reference answers exist. BEIR retrieval datasets generally provide qrels, not answer strings, so these are usually `null`.
 
 Optional RAGAS mode attempts faithfulness, response relevancy, context precision, and context recall using the installed RAGAS version. Because BEIR qrels do not always include natural-language reference answers, some RAGAS metrics may be unavailable or return evaluator errors; those are recorded in `metrics.json`.
+
+The HotpotQA Kaggle cached eval is separate from `rag-bench run --ragas`: it uses BEIR qrels for retrieval, joins natural-language answers from `hotpotqa/hotpot_qa` for EM/token-F1, and sends deterministic post-hoc samples to MiMo-backed RAGAS.
 
 ## Development
 

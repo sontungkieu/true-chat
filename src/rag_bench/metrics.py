@@ -75,12 +75,21 @@ def aggregate_generation(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "completion_tokens",
         "total_tokens",
         "output_tokens_per_s",
+        "estimated_prompt_tokens",
+        "estimated_completion_tokens",
+        "answer_length_chars",
+        "answer_length_est_tokens",
         "exact_match",
         "token_f1",
     ]
+    first_generation = next((row.get("generation") for row in rows if isinstance(row.get("generation"), dict)), {})
     output: dict[str, Any] = {
         "generation_count": len(rows),
         "error_count": sum(1 for row in rows if row.get("error")),
+        "provider": first_generation.get("provider"),
+        "model": first_generation.get("model"),
+        "model_role": first_generation.get("model_role"),
+        "max_completion_tokens": first_generation.get("max_completion_tokens"),
     }
     for key in numeric_keys:
         values = [row[key] for row in rows if row.get(key) is not None]

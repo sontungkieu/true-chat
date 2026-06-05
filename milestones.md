@@ -73,6 +73,11 @@ Status: started on `feature/rlaif-retrieval-context-v0`.
 - Label minimal evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and context sufficiency.
 - Produce auditable feedback artifacts that can be reused by Phase 1D RLAIF.
 - Do not treat missing answer feedback as zero accuracy.
+- Add multi-model generation validation across Groq Llama 8B, Groq Qwen 32B, and MiMo as a token-rich/long-context upper-bound.
+- Add `configs/budgetrag_models.json`, `src/rag_bench/generation_models.py`, and `scripts/run_budgetrag_generation_matrix.py` to run resumable generation matrices with provider/model metadata.
+- Add a Kaggle-first HotpotQA sampled evaluation path with cached BM25 retrieval, MiMo/Groq generation support, policy/profile sharding, reference joins for EM/token-F1, and MiMo-backed RAGAS samples.
+- Add HotpotQA failed-row retry tooling so quota-contaminated Groq runs can be resumed without rebuilding BM25.
+- Document Phase 1C.3 generation and HotpotQA results in `docs/reports/phase1c3_multi_model_generation.md`, `docs/reports/phase1c3_mimo_long_context.md`, and `docs/reports/phase1c3_hotpotqa_kaggle_eval.md`.
 
 ## BudgetRAG Phase 1D
 

@@ -85,7 +85,7 @@ def test_summary_main_writes_csv_and_markdown(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert "bm25" in out_csv.read_text(encoding="utf-8")
-    assert "| retriever | policy | profile | budget |" in out_md.read_text(encoding="utf-8")
+    assert "| model | retriever | policy | profile | budget |" in out_md.read_text(encoding="utf-8")
 
 
 def test_summary_includes_adaptive_budget_columns(tmp_path: Path) -> None:
@@ -124,6 +124,43 @@ def test_summary_includes_adaptive_budget_columns(tmp_path: Path) -> None:
     assert rows[0]["adaptive_selected_policy_counts"] == {"score-density": 2}
     assert rows[0]["avg_adaptive_score_gap"] == 1.25
     assert rows[0]["avg_adaptive_normalized_score_gap"] == 0.25
+
+
+def test_summary_includes_generation_model_diagnostics(tmp_path: Path) -> None:
+    metrics = _metrics(["bm25"])
+    metrics["experiment"]["skip_generation"] = False
+    metrics["experiment"]["generation_provider"] = "mimo"
+    metrics["experiment"]["generation_model"] = "mimo-v2.5-pro"
+    metrics["experiment"]["generation_model_role"] = "long-context-upper-bound"
+    aggregate = metrics["aggregates"][0]
+    aggregate["experiment"]["skip_generation"] = False
+    aggregate["experiment"]["generation_provider"] = "mimo"
+    aggregate["experiment"]["generation_model"] = "mimo-v2.5-pro"
+    aggregate["experiment"]["generation_model_role"] = "long-context-upper-bound"
+    aggregate["generation"] = {
+        "generation_count": 2,
+        "error_count": 1,
+        "provider": "mimo",
+        "model": "mimo-v2.5-pro",
+        "model_role": "long-context-upper-bound",
+        "avg_answer_latency_s": 1.5,
+        "avg_estimated_prompt_tokens": 512,
+        "avg_estimated_completion_tokens": 64,
+        "avg_answer_length_chars": 240,
+        "avg_token_f1": 0.25,
+    }
+    metrics_path = tmp_path / "metrics.json"
+    metrics_path.write_text(json.dumps(metrics, ensure_ascii=False), encoding="utf-8")
+
+    rows = summary_script.summarize_metrics_file(metrics_path)
+
+    assert rows[0]["generation_provider"] == "mimo"
+    assert rows[0]["generation_model"] == "mimo-v2.5-pro"
+    assert rows[0]["generation_model_role"] == "long-context-upper-bound"
+    assert rows[0]["avg_generation_latency_s"] == 1.5
+    assert rows[0]["avg_estimated_prompt_tokens"] == 512
+    assert rows[0]["answer_length_avg"] == 240
+    assert rows[0]["error_count"] == 1
 
 
 def test_matrix_dry_run_prints_commands_without_creating_output(tmp_path: Path, capsys) -> None:

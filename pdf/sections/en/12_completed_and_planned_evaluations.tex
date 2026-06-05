@@ -1,0 +1,30 @@
+\section{Completed and Planned Evaluations}
+
+\subsection{HotpotQA Sampled Kaggle Evaluation}
+
+HotpotQA is now included as a sampled Kaggle evaluation, not a full benchmark claim. It is valuable because multi-hop QA stresses evidence sufficiency more directly than simple claim verification. The implementation uses cached BM25 retrieval so the 5.23M-document BEIR HotpotQA corpus is indexed once per notebook instead of once per action row.
+
+The clean MiMo sampled runs provide the usable HotpotQA evidence in this report:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Full 16-action sampled matrix:} 800/800 MiMo generations succeeded on 50 sampled queries, with 80 MiMo-backed RAGAS samples. Cached BM25 retrieval gives mean recall@10 0.610 and nDCG@10 0.583. The best token-F1 row is \code{adaptive-heuristic\_\_balanced\_\_16000} at 0.097, while the best RAGAS answer-relevancy row is \code{adaptive-heuristic\_\_aggressive\_\_4000} at 0.871.
+  \item \textbf{Evidence-aware budget curve:} 300/300 generations succeeded for 1k through 32k budgets, with 30 RAGAS samples. Evidence-aware context saturates after 8k in this sample; 8k is the most defensible trade-off row because it improves answer relevancy without retaining more context at 16k/32k.
+  \item \textbf{Low-budget curve:} legacy and adaptive rows over 500--3000 characters completed 750/750 generations, with 75 RAGAS samples. This run tests whether the adaptive policy remains usable under aggressive context limits.
+\end{itemize}
+
+Exact match is 0.000 across the main sampled matrix, so token-F1 and judge metrics are the relevant answer-quality signals for this stage. The Groq Qwen3-32B HotpotQA run is kept as a diagnostic because provider rate limits caused 417/800 generation errors; it must not be mixed with the clean MiMo summary.
+
+\subsection{Retriever Diversity}
+
+Current evidence mostly supports context-budget/action selection. To claim retrieval-context allocation, logged actions must include multiple retrieval strategies:
+
+\begin{itemize}[leftmargin=*]
+  \item BM25 baseline;
+  \item graph-BM25 / dictionary graph where applicable;
+  \item hybrid-RRF;
+  \item optional web-search as live stress test only, not mixed with reproducible BEIR claims.
+\end{itemize}
+
+\subsection{Larger Logged Query Groups}
+
+The action coverage diagnostics show exact-signature sparsity. More query groups and broader logged action families are needed before a learned selector can robustly beat strong smoothed baselines.

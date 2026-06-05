@@ -48,6 +48,16 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
             "3200",
             "--adaptive-profile",
             "balanced",
+            "--generation-provider",
+            "mimo",
+            "--generation-model-role",
+            "long-context-upper-bound",
+            "--mimo-env-file",
+            str(tmp_path / ".env"),
+            "--mimo-api-key-var",
+            "MIMO_TEST_KEY",
+            "--mimo-base-url",
+            "https://mimo.example/v1",
         ]
     )
 
@@ -73,6 +83,11 @@ def test_cli_run_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -
     assert seen["config"].adaptive_medium_budget == 1600
     assert seen["config"].adaptive_large_budget == 3200
     assert seen["config"].adaptive_profile == "balanced"
+    assert seen["config"].generation_provider == "mimo"
+    assert seen["config"].generation_model_role == "long-context-upper-bound"
+    assert seen["config"].mimo_env_file == tmp_path / ".env"
+    assert seen["config"].mimo_api_key_var == "MIMO_TEST_KEY"
+    assert seen["config"].mimo_base_url == "https://mimo.example/v1"
 
 
 def test_cli_run_rejects_invalid_context_budget(capsys) -> None:

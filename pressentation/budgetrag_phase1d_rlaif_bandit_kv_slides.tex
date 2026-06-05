@@ -1,0 +1,942 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{mathptmx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+
+\usefonttheme{serif}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{blocks}[default]
+\setbeameroption{hide notes}
+\setbeamersize{text margin left=0.78cm,text margin right=0.78cm}
+
+\definecolor{Ink}{HTML}{171717}
+\definecolor{Muted}{HTML}{5F6668}
+\definecolor{Paper}{HTML}{FBFAF6}
+\definecolor{Accent}{HTML}{0F6F66}
+\definecolor{AccentDark}{HTML}{0A4A45}
+\definecolor{Warm}{HTML}{B4532A}
+\definecolor{Soft}{HTML}{E7EEE9}
+\definecolor{Line}{HTML}{D8D4C8}
+\definecolor{Panel}{HTML}{FFFFFF}
+
+\setbeamercolor{normal text}{fg=Ink,bg=Paper}
+\setbeamercolor{frametitle}{fg=Ink,bg=Paper}
+\setbeamercolor{structure}{fg=Accent}
+\setbeamercolor{alerted text}{fg=Warm}
+\setbeamerfont{frametitle}{series=\bfseries,size=\large}
+\setbeamerfont{title}{series=\bfseries,size=\huge}
+\setbeamerfont{subtitle}{size=\large}
+
+\setbeamertemplate{itemize item}{\color{Accent}\scriptsize$\blacktriangleright$}
+\setbeamertemplate{itemize subitem}{\color{Warm}\tiny$\bullet$}
+\setbeamertemplate{frametitle}{%
+  \vspace{0.30cm}%
+  \insertframetitle\par%
+  \vspace{0.08cm}%
+  {\color{Accent}\rule{0.18\paperwidth}{0.8pt}}%
+  \vspace{0.16cm}%
+}
+\setbeamertemplate{footline}{%
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=.78\paperwidth,ht=2.7ex,dp=1.0ex,leftskip=.78cm]{normal text}%
+      {\scriptsize\color{Muted} BudgetRAG Phase 1D}
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.22\paperwidth,ht=2.7ex,dp=1.0ex,rightskip=.78cm]{normal text}%
+      {\scriptsize\color{Muted}\hfill \insertframenumber/\inserttotalframenumber}
+    \end{beamercolorbox}%
+  }%
+}
+
+\newcommand{\code}[1]{\texttt{\footnotesize #1}}
+\newcommand{\smallcode}[1]{\texttt{\scriptsize #1}}
+\newcommand{\minihead}[1]{{\bfseries\color{AccentDark}#1}}
+\newcommand{\tagline}[1]{\vspace{0.25em}{\footnotesize\color{Muted}#1}}
+\newcommand{\takeaway}[1]{%
+  \vspace{0.46em}
+  \noindent\colorbox{Soft}{%
+    \parbox{\dimexpr\linewidth-2\fboxsep}{\color{Ink}\strut #1\strut}%
+  }%
+}
+\newenvironment{tightitemize}{\begin{itemize}\setlength{\itemsep}{0.22em}\setlength{\parskip}{0pt}}{\end{itemize}}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \vspace{0.40cm}
+  {\color{Accent}\rule{0.30\paperwidth}{1.1pt}}\par
+  \vspace{0.74cm}
+  {\usebeamerfont{title} BudgetRAG / MemAlign-Qwen\par}
+  \vspace{0.24cm}
+  {\usebeamerfont{subtitle}\color{Muted}
+    RLAIF-guided retrieval, offline bandit, and local Qwen/KV roadmap\par}
+
+  \vfill
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.62\textwidth}
+      \large
+      Học chính sách chọn retrieval và cấp phát ngữ cảnh cho grounded LLM inference dưới ngân sách token, latency và KV-cache ước lượng.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \raggedleft
+      \footnotesize\color{Muted}
+      Phase 1D research deck\\
+      cập nhật từ kết quả đã chạy
+    \end{column}
+  \end{columns}
+  \note{Mở bằng trọng tâm nghiên cứu, sau đó nói rằng deck này đã thêm số liệu từ các run đã chạy.}
+\end{frame}
+
+\begin{frame}{Câu hỏi nghiên cứu}
+  \small
+  \begin{center}
+    \normalsize
+    Khi cùng một query có nhiều cách truy xuất và nhiều mức nén context,\\[0.45em]
+    \textbf{chọn hành động nào để câu trả lời vẫn grounded với chi phí thấp hơn?}
+  \end{center}
+
+  \vfill
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.31\textwidth}
+      \minihead{Quyết định}\\
+      \color{Muted}Retriever, fusion và context policy cùng thuộc action space.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Ngân sách}\\
+      \color{Muted}Token, latency và KV-cache là cost trực tiếp, không chỉ là log phụ.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Ranh giới claim}\\
+      \color{Muted}Policy học offline từ logged outcomes; PPO/GRPO, human preference learning và production KV pruning nằm ngoài phase này.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Chiến lược Phase 1D}
+  \small
+  \begin{center}
+  \begin{tikzpicture}[
+    node distance=0.26cm,
+    box/.style={draw=Line, fill=Panel, rounded corners=2pt, minimum height=0.88cm,
+      text width=1.63cm, align=center, font=\scriptsize},
+    arr/.style={-{Latex[length=2.0mm]}, thick, color=AccentDark}
+  ]
+    \node[box] (ret) {retrieval\\candidates};
+    \node[box, right=of ret] (act) {action\\selection};
+    \node[box, right=of act] (ctx) {budgeted\\context};
+    \node[box, right=of ctx] (gen) {generation};
+    \node[box, right=of gen] (fb) {RLAIF\\feedback};
+    \node[box, right=of fb] (bandit) {offline\\bandit};
+    \draw[arr] (ret) -- (act);
+    \draw[arr] (act) -- (ctx);
+    \draw[arr] (ctx) -- (gen);
+    \draw[arr] (gen) -- (fb);
+    \draw[arr] (fb) -- (bandit);
+  \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.34cm}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.31\textwidth}
+      \minihead{State}\\
+      \color{Muted}Query features, retrieval score gap/entropy, document length statistics, retriever/model metadata.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Action}\\
+      \color{Muted}retrieval strategy + fusion + context policy + budget/adaptive profile.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Objective}\\
+      \color{Muted}Tối đa grounded quality sau khi trừ token, latency, estimated KV và lỗi generation.
+    \end{column}
+  \end{columns}
+  \takeaway{\small Các slide kế tiếp định nghĩa action, reward và thuật toán trước; phần data chỉ dùng để kiểm tra trade-off của strategy này.}
+\end{frame}
+
+\begin{frame}{RLAIF nằm ở nhiều điểm của pipeline}
+  \small
+  \begin{center}
+  \begin{tikzpicture}[
+    node distance=0.30cm,
+    flowbox/.style={draw=Line, fill=Panel, rounded corners=2pt, minimum height=0.82cm,
+      text width=1.74cm, align=center, font=\scriptsize},
+    judge/.style={draw=Accent, fill=Soft, rounded corners=2pt, minimum height=0.68cm,
+      text width=1.68cm, align=center, font=\scriptsize\bfseries\color{AccentDark}},
+    arr/.style={-{Latex[length=2.0mm]}, thick, color=AccentDark},
+    link/.style={-{Latex[length=1.7mm]}, thick, color=Accent}
+  ]
+    \node[flowbox] (ret) {retrieval\\candidates};
+    \node[flowbox, right=of ret] (ctx) {context\\policy};
+    \node[flowbox, right=of ctx] (gen) {generation};
+    \node[flowbox, right=of gen] (rew) {reward\\builder};
+    \node[flowbox, right=of rew] (pol) {offline\\bandit};
+
+    \node[judge, below=0.52cm of ret] (cj) {context\\judge};
+    \node[judge, below=0.52cm of gen] (aj) {answer\\judge};
+    \node[judge, below=0.52cm of rew] (rj) {reward\\signal};
+    \node[judge, above=0.52cm of pol] (dj) {future\\DPO/KV};
+
+    \draw[arr] (ret) -- (ctx);
+    \draw[arr] (ctx) -- (gen);
+    \draw[arr] (gen) -- (rew);
+    \draw[arr] (rew) -- (pol);
+    \draw[link] (ret) -- (cj);
+    \draw[link] (cj) -- (ctx);
+    \draw[link] (gen) -- (aj);
+    \draw[link] (aj) -- (rew);
+    \draw[link] (rj) -- (rew);
+    \draw[link] (pol) -- (dj);
+  \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.28cm}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.48\textwidth}
+      \minihead{Định nghĩa dùng trong deck}\\
+      \color{Muted}RLAIF là AI feedback dùng làm nhãn chất lượng/preference. Judge chỉ nhìn question, retrieved context và answer; không browse và không dùng external knowledge.
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \minihead{Tác dụng với bandit}\\
+      \color{Muted}Retrieval-only metrics không biết answer có được support hay không. RLAIF thêm groundedness, unsupported-claim và evidence sufficiency vào reward.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{RLAIF biến thành reward/preference như thế nào?}
+  \scriptsize
+  \begin{center}
+  \begin{tikzpicture}[
+    node distance=0.34cm,
+    box/.style={draw=Line, fill=Panel, rounded corners=2pt, minimum height=0.74cm,
+      text width=1.92cm, align=center, font=\scriptsize},
+    signal/.style={draw=Accent, fill=Soft, rounded corners=2pt, minimum height=0.66cm,
+      text width=2.08cm, align=center, font=\scriptsize\bfseries\color{AccentDark}},
+    arr/.style={-{Latex[length=1.8mm]}, thick, color=AccentDark}
+  ]
+    \node[box] (log) {logged\\outcome};
+    \node[box, right=of log] (judge) {context/answer\\judge JSON};
+    \node[box, right=of judge] (valid) {validate +\\join metrics};
+    \node[signal, right=of valid, yshift=0.36cm] (reward) {scalar\\reward};
+    \node[signal, right=of valid, yshift=-0.36cm] (pref) {preference\\pair};
+    \draw[arr] (log) -- (judge);
+    \draw[arr] (judge) -- (valid);
+    \draw[arr] (valid) -- (reward);
+    \draw[arr] (valid) -- (pref);
+  \end{tikzpicture}
+  \end{center}
+
+  \vspace{0.18cm}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.31\textwidth}
+      \minihead{1. Judge label}\\
+      \color{Muted}Context judge trả về sufficiency, selected evidence, missing evidence, minimality, support và context quality. Answer judge trả về correctness, evidence support, unsupported penalty, refusal/citation/conciseness và overall quality.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{2. Reward scalar}\\
+      \color{Muted}Reward builder validate score \([0,1]\), join với token/latency/KV/error metrics, normalize cost theo run, rồi tính \(R\). Ghi \smallcode{reward\_mode}: proxy, \smallcode{rlaif\_answer}, hoặc \smallcode{rlaif\_context\_answer}.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{3. Preference pair}\\
+      \color{Muted}Chỉ so sánh trong cùng query. Chosen là answer/context có RLAIF score hoặc reward cao hơn margin; rejected là missing evidence, unsupported claim, hoặc cùng support nhưng cost tệ hơn. Ties bị loại.
+    \end{column}
+  \end{columns}
+  \takeaway{\scriptsize Bandit dùng scalar reward; DPO/ranking smoke dùng preference pairs. Cả hai đều bắt nguồn từ AI labels có cấu trúc, không phải human preference claim.}
+\end{frame}
+
+\begin{frame}{Context policy và action space}
+  \scriptsize
+  \renewcommand{\arraystretch}{1.12}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.70\textwidth}}
+    \toprule
+    Term & Định nghĩa trong project \\
+    \midrule
+    \code{legacy/full} & Giữ rank order và nối block context; \code{full} nghĩa là không đặt action budget riêng, chỉ chịu ceiling prompt/top-k đang có. \\
+    \code{char-budget} & Lấp một global character budget theo rank order; trim block cuối nếu vượt budget. \\
+    \code{per-doc-budget} & Cắt từng document trước rồi mới lấp global budget để tránh một document dài chiếm toàn bộ context. \\
+    \code{score-density} & Ưu tiên \code{retrieval\_score / estimated\_tokens}; fallback \code{1 / estimated\_tokens} nếu thiếu score. \\
+    \code{sentence-trim} & Giữ rank order nhưng trim tại ranh giới câu đơn giản khi có thể. \\
+    \code{evidence-aware} & Tên CLI tương thích cũ; implementation hiện tại là \code{lexical-query-aware}: tách span, chấm bằng query overlap + retrieval score + title overlap. \\
+    \code{adaptive-heuristic} & Selector theo luật chọn fixed policy + budget dựa trên score gap, entropy và document length; đây là baseline trước bandit, chưa phải RL. \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.28cm}
+  \footnotesize
+  \minihead{Profiles:}
+  \textbf{conservative} ưu tiên budget lớn khi retrieval không chắc;
+  \textbf{balanced} tách ngân sách theo score gap/entropy;
+  \textbf{aggressive} stress-test budget nhỏ hơn.
+\end{frame}
+
+\begin{frame}{Reward: tính cụ thể từng thành phần}
+  \footnotesize
+  \[
+    R = w_q Q_{answer} + w_s S_{evident}
+    - w_t C_{tok} - w_l C_{lat}
+    - w_k C_{kv} - w_e P_{error} - w_u P_{unsupported}
+  \]
+
+  \vspace{-0.1cm}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.50\textwidth}
+      \minihead{Quality/support từ RLAIF}\\[-0.1cm]
+      \begin{tightitemize}
+        \item \(Q_{answer}\): \smallcode{overall\_quality} của answer judge; nếu thiếu thì dùng proxy reward và ghi rõ.
+        \item \(S_{evident}\): trung bình các tín hiệu \smallcode{evidence\_support} và \smallcode{context\_quality\_score}.
+        \item \(P_{unsupported}\): \smallcode{unsupported\_claim\_penalty} trong \([0,1]\).
+        \item \(P_{error}\): 1 nếu generation/API/parsing lỗi, ngược lại 0.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.47\textwidth}
+      \minihead{Cost chuẩn hóa trong run}\\[-0.1cm]
+      \begin{tightitemize}
+        \item \(C_{tok}\): normalize \smallcode{prompt\_tokens} hoặc \smallcode{kept\_est\_tokens}.
+        \item \(C_{lat}\): normalize \smallcode{answer\_latency\_s}.
+        \item \(C_{kv}\): normalize \smallcode{estimated\_kv\_cache\_mb\_after}.
+        \item \(norm(x)=\frac{x-\min(x)}{\max(x)-\min(x)+\epsilon}\), theo dataset/model/run.
+      \end{tightitemize}
+    \end{column}
+  \end{columns}
+  \takeaway{\scriptsize Default weights: \(w_q=1.0,w_s=0.2,w_t=0.2,w_l=0.2,w_k=0.1,w_e=1.0,w_u=1.0\). Tất cả nên là tham số CLI.}
+\end{frame}
+
+\begin{frame}{Bandit là gì trong project này?}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.32\textwidth}
+      \minihead{Bandit thường}\\
+      \color{Muted}Mỗi lượt chỉ chọn một ``arm'' và nhận reward. Không có trajectory nhiều bước, không backprop qua môi trường, nên không gọi là full RL.
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \minihead{Contextual bandit}\\
+      \color{Muted}Trước khi chọn arm, policy nhìn state \(s\): query length, score gap, entropy, doc length, retriever/model metadata.
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \minihead{Offline bandit}\\
+      \color{Muted}Không explore online. Policy học/evaluate từ logged outcomes đã chạy; nếu action thiếu coverage thì phải báo limitation.
+    \end{column}
+  \end{columns}
+
+  \vspace{0.34cm}
+  \scriptsize
+  \renewcommand{\arraystretch}{1.16}
+  \begin{tabular}{>{\bfseries}p{0.18\textwidth}p{0.72\textwidth}}
+    \toprule
+    Thành phần & Mapping trong BudgetRAG Phase 1D \\
+    \midrule
+    State \(s\) & Query/retrieval features trước generation: score gap, score entropy, top-k stats, estimated tokens. \\
+    Action \(a\) & Retrieval strategy + fusion + context policy + budget/adaptive profile. \\
+    Reward \(r\) & RLAIF grounded quality trừ token, latency, estimated KV, generation error và unsupported claims. \\
+    Policy \(\pi(a|s)\) & Hàm chọn action cho query mới; Phase 1D so sánh baseline trước rồi mới dùng learned policy. \\
+    \bottomrule
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Offline contextual bandit: thuật toán}
+  \small
+  \begin{center}
+    \normalsize
+    Với mỗi query, policy chọn một action. Reward đến từ logged outcome; không tương tác online với người dùng.
+  \end{center}
+
+  \vspace{0.28cm}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.31\textwidth}
+      \minihead{Input row}\\
+      \color{Muted}query id, state features, action id, outcome metrics, optional RLAIF labels.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Policies}\\
+      \color{Muted}So sánh fixed/cheapest/best-average/oracle upper bound với epsilon-greedy replay, UCB/LinUCB và linear reward model.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Evaluation}\\
+      \color{Muted}split train/test theo \code{query\_id}; report reward, quality, token, latency, KV, error rate và action distribution.
+    \end{column}
+  \end{columns}
+
+  \vspace{0.34cm}
+  \footnotesize
+  \begin{tabular}{>{\bfseries}p{0.18\textwidth}p{0.72\textwidth}}
+    1. Observe & tính state \(s\) trước generation từ query và retrieval candidates. \\
+    2. Choose & chọn \(a=(retriever, fusion, context\ policy, budget, profile)\). \\
+    3. Score & build reward từ RLAIF/cost/error. \\
+    4. Learn & update policy offline; nếu action chưa quan sát đủ thì report limitation. \\
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Bandit strategies sẽ đánh giá}
+  \scriptsize
+  \renewcommand{\arraystretch}{1.16}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.25\textwidth}>{\raggedright\arraybackslash}p{0.64\textwidth}}
+    \toprule
+    Strategy & Vai trò trong đánh giá offline \\
+    \midrule
+    \code{FixedActionPolicy} & Control: luôn chọn một action như \smallcode{bm25\_evidence\_4000}; dùng để biết policy học có hơn baseline cố định không. \\
+    \code{CheapestActionPolicy} & Lower-cost baseline: chọn action có token/latency/KV cost thấp nhất; thường tiết kiệm mạnh nhưng dễ mất evidence. \\
+    \code{BestAverageActionPolicy} & Non-contextual baseline: chọn action có mean reward train cao nhất; bỏ qua query-specific state. \\
+    \code{OracleLoggedPolicy} & Upper bound chỉ để phân tích: chọn action tốt nhất trong logged data cho từng query; không deploy vì đã nhìn outcome. \\
+    \code{EpsilonGreedyReplay} & Replay baseline: khai thác action tốt nhất nhưng giữ \(\epsilon\) xác suất explore khi log có coverage; dùng để đo trade-off exploration/exploitation offline. \\
+    \code{UCB/LinUCB} & Chọn reward estimate + uncertainty; LinUCB dùng feature vector của state nên phù hợp khi query khó cần action khác query dễ. \\
+    \code{LinearRewardModel} & Fit model dự đoán reward cho \((s,a)\), rồi chọn action có predicted reward cao nhất; phải report risk nếu extrapolate sang action ít log. \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.22cm}
+  \footnotesize\color{Muted}
+  Kết quả chính cần báo: mean reward, quality proxy/RLAIF score, token cost, latency, estimated KV, error rate và selected action distribution.
+\end{frame}
+
+\begin{frame}{Triển khai RLAIF và bandit trong repo}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.48\textwidth}
+      \minihead{RLAIF path}\\
+      \tagline{theo Phase 1D plan}
+      \begin{tightitemize}
+        \item \smallcode{rlaif\_schema.py}: validate context/answer judge JSON.
+        \item \smallcode{label\_contexts\_with\_rlaif.py}: chọn evidence tối thiểu, sufficiency, minimality.
+        \item \smallcode{label\_answers\_with\_rlaif.py}: correctness, support, hallucination/refusal/citation.
+        \item thiếu credential thì bỏ qua có log rõ ràng; không in secret.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \minihead{Bandit path}\\
+      \tagline{logged data trước, policy sau}
+      \begin{tightitemize}
+        \item \smallcode{build\_budgetrag\_logged\_dataset.py}: gom state/action/outcome.
+        \item \smallcode{build\_budgetrag\_rewards.py}: normalize cost và merge RLAIF labels.
+        \item \smallcode{retrieval\_context\_actions.py}: định nghĩa action set.
+        \item \smallcode{train/evaluate\_budget\_bandit.py}: baselines, replay, UCB, linear reward model.
+      \end{tightitemize}
+    \end{column}
+  \end{columns}
+  \takeaway{\small Đây là contextual bandit/RL-lite. Không gọi là full RL nếu chưa có trajectory nhiều bước hoặc online policy improvement.}
+\end{frame}
+
+\begin{frame}{Kết quả thực nghiệm: retrieval benchmark}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.56\textwidth}
+      \scriptsize
+      \renewcommand{\arraystretch}{1.13}
+      \begin{tabular}{p{0.21\textwidth}p{0.21\textwidth}r r r}
+        \toprule
+        Dataset & Retriever & hit@3 & nDCG@3 & latency/q \\
+        \midrule
+        SciFact & BM25 & 0.82 & 0.7619 & 0.021s \\
+        SciFact & hybrid-RRF & \textbf{0.86} & 0.7988 & 0.031s \\
+        SciFact & vector-rerank & 0.84 & \textbf{0.8011} & 0.028s \\
+        NFCorpus & BM25 & 0.56 & 0.3151 & 0.008s \\
+        NFCorpus & vector & \textbf{0.68} & 0.3796 & 0.015s \\
+        NFCorpus & hybrid-RRF & 0.66 & \textbf{0.3874} & 0.019s \\
+        \bottomrule
+      \end{tabular}\par
+      \vspace{0.30cm}
+      \minihead{Đọc kết quả}\\
+      \footnotesize Hybrid/vector hữu ích trên semantic datasets; BM25 vẫn là baseline mạnh với latency thấp.
+    \end{column}
+    \begin{column}{0.39\textwidth}
+      \minihead{hit@3 theo retriever}\\[-0.1cm]
+      \begin{tikzpicture}[x=3.2cm,y=0.38cm]
+        \footnotesize
+        \node[left] at (0,5) {Sci BM25}; \fill[Accent] (0,4.82) rectangle (0.82,5.18); \node[right] at (0.82,5) {0.82};
+        \node[left] at (0,4) {Sci RRF}; \fill[Warm] (0,3.82) rectangle (0.86,4.18); \node[right] at (0.86,4) {0.86};
+        \node[left] at (0,3) {Sci rerank}; \fill[AccentDark] (0,2.82) rectangle (0.84,3.18); \node[right] at (0.84,3) {0.84};
+        \node[left] at (0,1.7) {NFC BM25}; \fill[Accent] (0,1.52) rectangle (0.56,1.88); \node[right] at (0.56,1.7) {0.56};
+        \node[left] at (0,0.7) {NFC vector}; \fill[Warm] (0,0.52) rectangle (0.68,0.88); \node[right] at (0.68,0.7) {0.68};
+        \node[left] at (0,-0.3) {NFC RRF}; \fill[AccentDark] (0,-0.48) rectangle (0.66,-0.12); \node[right] at (0.66,-0.3) {0.66};
+        \draw[Line] (0,-0.85) -- (1,-0.85);
+      \end{tikzpicture}\par
+      \vspace{0.14cm}
+      \footnotesize\color{Muted}
+      LLM query rewrite/multi-query tăng latency khoảng 1.4--2.4s/query và chưa vượt BM25 trên SciFact.
+    \end{column}
+  \end{columns}
+  \note{Số liệu lấy từ benchmark_results/retrieval_strategy_bench_2026-05-12.md.}
+\end{frame}
+
+\begin{frame}{Acc / quality hiện có}
+  \scriptsize
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.51\textwidth}
+      \minihead{Retrieval accuracy proxy}\\[-0.08cm]
+      \renewcommand{\arraystretch}{1.12}
+      \setlength{\tabcolsep}{3.4pt}
+      \begin{tabular}{l l r r r}
+        \toprule
+        Dataset & Strategy & hit@3 & nDCG@3 & lat/q \\
+        \midrule
+        SciFact & BM25 & 0.82 & 0.7619 & 0.021s \\
+        SciFact & hybrid-RRF & \textbf{0.86} & 0.7988 & 0.031s \\
+        SciFact & vector-rerank & 0.84 & \textbf{0.8011} & 0.028s \\
+        NFCorpus & BM25 & 0.56 & 0.3151 & 0.008s \\
+        NFCorpus & vector & \textbf{0.68} & 0.3796 & 0.015s \\
+        NFCorpus & hybrid-RRF & 0.66 & \textbf{0.3874} & 0.019s \\
+        \bottomrule
+      \end{tabular}\par
+      \vspace{0.18cm}
+      \footnotesize\color{Muted}
+      Đây là acc của retriever, không phải acc của final generated answer.
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \minihead{Answer quality smoke, RAGAS \(n=5\)}\\[-0.08cm]
+      \renewcommand{\arraystretch}{1.12}
+      \setlength{\tabcolsep}{3.2pt}
+      \begin{tabular}{l r r r}
+        \toprule
+        Strategy & relev. & faith. & ctx rec. \\
+        \midrule
+        BM25 & 0.5106 & 0.5810 & 0.20 \\
+        hybrid-RRF & 0.5154 & 0.5133 & 0.00 \\
+        vector-rerank & \textbf{0.6992} & \textbf{0.6276} & 0.00 \\
+        \bottomrule
+      \end{tabular}\par
+      \vspace{0.20cm}
+      \footnotesize\color{Muted}
+      RAGAS ở đây là smoke sample retrieval-level; full action matrix ở các slide sau đã bổ sung \smallcode{R rel} bằng RAGAS \(n=3\) stratified.
+    \end{column}
+  \end{columns}
+  \takeaway{\scriptsize Một strategy ``tốt'' phải thắng theo acc/quality hoặc giữ quality trong ngưỡng chấp nhận được, đồng thời giảm token, latency, KV hoặc error.}
+  \note{Nguồn: benchmark_results/retrieval_strategy_bench_2026-05-12.md.}
+\end{frame}
+
+\begin{frame}{BudgetRAG all actions: Llama8B full}
+  \tiny
+  \setlength{\tabcolsep}{2.6pt}
+  \renewcommand{\arraystretch}{1.06}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.18\textwidth}r r r r r r r}
+    \toprule
+    Action & q & retr & R rel & err & kept tok & KV MB & lat \\
+    \midrule
+    legacy 1k & 50 & .84/.762 & .274 & 0 & 250.4 & 1714 & 4.9s \\
+    legacy 2k & 50 & .84/.762 & .630 & 0 & 501.7 & 1479 & 8.4s \\
+    legacy 4k & 50 & .84/.762 & .617 & 0 & 1003.9 & 1008 & 15.6s \\
+    legacy 8k & 50 & .84/.762 & .605 & 0 & 1881.1 & 186 & 27.7s \\
+    evidence 1k & 50 & .84/.762 & .316 & 0 & 250.0 & 1715 & 6.2s \\
+    evidence 2k & 50 & .84/.762 & .628 & 0 & 500.0 & 1480 & 8.5s \\
+    evidence 4k & 50 & .84/.762 & .613 & 0 & 1000.0 & 1012 & 14.4s \\
+    evidence 8k & 50 & .84/.762 & .535 & 0 & 1999.9 & 189 & 28.8s \\
+    adapt-bal 1k & 50 & .84/.762 & .522 & 0 & 565.0 & 1419 & 11.0s \\
+    adapt-bal 2k & 50 & .84/.762 & .628 & 0 & 710.0 & 1283 & 12.1s \\
+    adapt-bal 4k & 50 & .84/.762 & .950 & 25 & 1000.0 & 1012 & 33.8s \\
+    adapt-bal 8k & 50 & .84/.762 & .581 & 0 & 1580.0 & 536 & 22.9s \\
+    adapt-aggr 1k & 50 & .84/.762 & .266 & 0 & 250.0 & 1715 & 6.2s \\
+    adapt-aggr 2k & 50 & .84/.762 & .617 & 0 & 340.0 & 1630 & 7.4s \\
+    adapt-aggr 4k & 50 & .84/.762 & .634 & 34 & 520.0 & 1462 & 25.3s \\
+    adapt-aggr 8k & 50 & .84/.762 & .318 & 2 & 843.0 & 1181 & 14.5s \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.16cm}
+  \takeaway{\scriptsize \smallcode{R rel}=mean RAGAS answer relevancy trên 3 cached answers/action row; sampling spread, không lọc noncommittal. Đây là answer-quality proxy, chưa phải label accuracy.}
+\end{frame}
+
+\begin{frame}{BudgetRAG all actions: Qwen3-32B full}
+  \tiny
+  \setlength{\tabcolsep}{2.6pt}
+  \renewcommand{\arraystretch}{1.06}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.18\textwidth}r r r r r r r}
+    \toprule
+    Action & q & retr & R rel & err & kept tok & KV MB & lat \\
+    \midrule
+    legacy 1k & 50 & .84/.762 & .000 & 0 & 250.4 & 1714 & 6.1s \\
+    legacy 2k & 50 & .84/.762 & .318 & 0 & 501.7 & 1479 & 8.4s \\
+    legacy 4k & 50 & .84/.762 & .312 & 0 & 1003.9 & 1008 & 14.5s \\
+    legacy 8k & 50 & .84/.762 & .630 & 0 & 1881.1 & 186 & 27.8s \\
+    evidence 1k & 50 & .84/.762 & .312 & 1 & 250.0 & 1715 & 6.3s \\
+    evidence 2k & 50 & .84/.762 & .638 & 1 & 500.0 & 1480 & 8.6s \\
+    evidence 4k & 50 & .84/.762 & .630 & 0 & 1000.0 & 1012 & 14.5s \\
+    evidence 8k & 50 & .84/.762 & .630 & 0 & 1999.9 & 189 & 28.8s \\
+    adapt-bal 1k & 50 & .84/.762 & .324 & 1 & 565.0 & 1419 & 9.8s \\
+    adapt-bal 2k & 50 & .84/.762 & .318 & 0 & 710.0 & 1283 & 11.0s \\
+    adapt-bal 4k & 50 & .84/.762 & .630 & 0 & 1000.0 & 1012 & 14.6s \\
+    adapt-bal 8k & 50 & .84/.762 & .303 & 28 & 1580.0 & 536 & 54.1s \\
+    adapt-aggr 1k & 50 & .84/.762 & .312 & 1 & 250.0 & 1715 & 6.1s \\
+    adapt-aggr 2k & 50 & .84/.762 & .312 & 1 & 340.0 & 1630 & 7.3s \\
+    adapt-aggr 4k & 50 & .84/.762 & .318 & 0 & 520.0 & 1462 & 9.7s \\
+    adapt-aggr 8k & 50 & .84/.762 & .282 & 34 & 843.0 & 1181 & 36.2s \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.16cm}
+  \takeaway{\scriptsize \smallcode{R rel}=mean RAGAS answer relevancy \(n=3\). Qwen legacy 1k vẫn thấp vì 3 valid spread samples đều bị MiMo judge coi là không liên quan/noncommittal.}
+\end{frame}
+
+\begin{frame}{BudgetRAG all actions: MiMo full}
+  \tiny
+  \setlength{\tabcolsep}{2.6pt}
+  \renewcommand{\arraystretch}{1.06}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.18\textwidth}r r r r r r r}
+    \toprule
+    Action & q & retr & R rel & err & kept tok & KV MB & lat \\
+    \midrule
+    legacy 1k & 50 & .84/.762 & .310 & 0 & 250.4 & 1714 & 7.9s \\
+    legacy 2k & 50 & .84/.762 & .564 & 0 & 501.7 & 1479 & 8.0s \\
+    legacy 4k & 50 & .84/.762 & .920 & 0 & 1003.9 & 1008 & 8.2s \\
+    legacy 8k & 50 & .84/.762 & .814 & 0 & 1881.1 & 186 & 8.5s \\
+    evidence 1k & 50 & .84/.762 & .294 & 0 & 250.0 & 1715 & 8.1s \\
+    evidence 2k & 50 & .84/.762 & .315 & 0 & 500.0 & 1480 & 8.3s \\
+    evidence 4k & 50 & .84/.762 & .553 & 0 & 1000.0 & 1012 & 8.5s \\
+    evidence 8k & 50 & .84/.762 & .104 & 0 & 1999.9 & 189 & 8.7s \\
+    adapt-bal 1k & 50 & .84/.762 & .576 & 0 & 565.0 & 1419 & 8.7s \\
+    adapt-bal 2k & 50 & .84/.762 & .939 & 0 & 710.0 & 1283 & 9.2s \\
+    adapt-bal 4k & 50 & .84/.762 & .565 & 0 & 1000.0 & 1012 & 9.5s \\
+    adapt-bal 8k & 50 & .84/.762 & .897 & 0 & 1580.0 & 536 & 9.7s \\
+    adapt-aggr 1k & 50 & .84/.762 & .327 & 0 & 250.0 & 1715 & 8.9s \\
+    adapt-aggr 2k & 50 & .84/.762 & .931 & 0 & 340.0 & 1630 & 9.2s \\
+    adapt-aggr 4k & 50 & .84/.762 & .570 & 0 & 520.0 & 1462 & 9.6s \\
+    adapt-aggr 8k & 50 & .84/.762 & .907 & 0 & 843.0 & 1181 & 9.7s \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.16cm}
+  \takeaway{\scriptsize \smallcode{R rel}=mean RAGAS answer relevancy trên 3 cached answers/action row; sampling spread, không lọc noncommittal. Đây là answer-quality proxy, chưa phải label accuracy.}
+\end{frame}
+
+\begin{frame}{BudgetRAG all actions: MiMo long context}
+  \tiny
+  \setlength{\tabcolsep}{2.6pt}
+  \renewcommand{\arraystretch}{1.06}
+  \begin{tabular}{>{\raggedright\arraybackslash}p{0.18\textwidth}r r r r r r r}
+    \toprule
+    Action & q & retr & R rel & err & kept tok & KV MB & lat \\
+    \midrule
+    legacy 4k & 30 & .90/.742 & .000 & 0 & 1003.9 & 2845 & 11.3s \\
+    legacy 8k & 30 & .90/.742 & .272 & 0 & 2008.4 & 1903 & 11.1s \\
+    legacy 16k & 30 & .90/.742 & .499 & 0 & 3766.4 & 255 & 12.3s \\
+    legacy 32k & 30 & .90/.742 & .543 & 0 & 4038.2 & 0 & 12.5s \\
+    evidence 4k & 30 & .90/.742 & .273 & 0 & 1000.0 & 2848 & 11.5s \\
+    evidence 8k & 30 & .90/.742 & .580 & 0 & 2000.0 & 1911 & 11.3s \\
+    evidence 16k & 30 & .90/.742 & .610 & 0 & 3999.9 & 260 & 12.9s \\
+    evidence 32k & 30 & .90/.742 & .910 & 0 & 6529.2 & 0 & 12.3s \\
+    adapt-bal 4k & 30 & .90/.742 & .318 & 0 & 1000.0 & 2848 & 11.2s \\
+    adapt-bal 8k & 30 & .90/.742 & .291 & 0 & 1466.6 & 2411 & 11.3s \\
+    adapt-bal 16k & 30 & .90/.742 & .314 & 0 & 2399.9 & 1668 & 10.8s \\
+    adapt-bal 32k & 30 & .90/.742 & .317 & 0 & 3448.7 & 1583 & 10.9s \\
+    adapt-aggr 4k & 30 & .90/.742 & .266 & 0 & 550.0 & 3270 & 10.0s \\
+    adapt-aggr 8k & 30 & .90/.742 & .309 & 0 & 950.0 & 2895 & 10.5s \\
+    adapt-aggr 16k & 30 & .90/.742 & .270 & 0 & 1630.1 & 2297 & 10.2s \\
+    adapt-aggr 32k & 30 & .90/.742 & .221 & 0 & 2577.0 & 2242 & 10.6s \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.16cm}
+  \takeaway{\scriptsize \smallcode{R rel}=mean RAGAS answer relevancy trên 3 cached answers/action row; sampling spread, không lọc noncommittal. Đây là answer-quality proxy, chưa phải label accuracy.}
+\end{frame}
+
+\begin{frame}{RAGAS protocol: đã fix sampling}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.47\textwidth}
+      \minihead{Dataset fields}\\[-0.08cm]
+      \begin{tightitemize}
+        \item \smallcode{user\_input}: SciFact claim/query.
+        \item \smallcode{response}: cached generated answer của action.
+        \item \smallcode{retrieved\_contexts}: giữ để trace và chạy faithfulness riêng nếu cần.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.47\textwidth}
+      \minihead{Metric + sampling}\\[-0.08cm]
+      \begin{tightitemize}
+        \item Slide dùng \smallcode{answer\_relevancy}; không giả lập reference cho correctness.
+        \item Mỗi action row có 3 valid cached answers, chọn spread deterministic.
+        \item Không lọc câu noncommittal; timeout được thay bằng candidate tiếp theo.
+      \end{tightitemize}
+    \end{column}
+  \end{columns}
+  \takeaway{\small Artifact mới đạt 64/64 rows với \(n=3\). Muốn answer correctness thật cần thêm gold free-text answer hoặc stance judge theo label SciFact.}
+\end{frame}
+
+\begin{frame}{Kết quả thực nghiệm: generation cost/error matrix}
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.57\textwidth}
+      \scriptsize
+      \setlength{\tabcolsep}{2.8pt}
+      \renewcommand{\arraystretch}{1.12}
+      \begin{tabular}{>{\raggedright\arraybackslash}p{0.36\linewidth}r r r r}
+        \toprule
+        Run & rows & err. & latency & prompt tok. \\
+        \midrule
+        Groq Llama 8B full & 800 & 61 & 15.47s & 903.7 \\
+        Groq Qwen3-32B full & 800 & 67 & 16.45s & 903.7 \\
+        MiMo v2.5 Pro full & 800 & 0 & 8.76s & 903.7 \\
+        MiMo long top-k 10 & 480 & 0 & 11.26s & 2477.0 \\
+        \bottomrule
+      \end{tabular}\par
+      \vspace{0.30cm}
+      \minihead{Tổng hợp context/KV}\\
+      \footnotesize Full matrix giữ cùng trung bình 824.7 context tokens; KV sau budget khoảng 760 MB, tiết kiệm khoảng 1189 MB. Các slide trước bổ sung \smallcode{R rel} \(n=3\) làm answer-quality proxy.
+    \end{column}
+    \begin{column}{0.38\textwidth}
+      \minihead{Latency, seconds}\\[-0.12cm]
+      \begin{tikzpicture}[x=0.17cm,y=0.46cm]
+        \footnotesize
+        \node[left] at (0,3.2) {Llama}; \fill[Warm] (0,3.02) rectangle (15.47,3.38); \node[right] at (15.47,3.2) {15.47};
+        \node[left] at (0,2.2) {Qwen}; \fill[Warm!70!Accent] (0,2.02) rectangle (16.45,2.38); \node[right] at (16.45,2.2) {16.45};
+        \node[left] at (0,1.2) {MiMo}; \fill[Accent] (0,1.02) rectangle (8.76,1.38); \node[right] at (8.76,1.2) {8.76};
+        \node[left] at (0,0.2) {MiMo L}; \fill[AccentDark] (0,0.02) rectangle (11.26,0.38); \node[right] at (11.26,0.2) {11.26};
+        \draw[Line] (0,-0.32) -- (17,-0.32);
+      \end{tikzpicture}\par
+      \vspace{0.18cm}
+      \minihead{Long-context stress test}\\
+      \footnotesize MiMo long-context giữ trung bình 2398 context tokens; KV sau budget khoảng 1959 MB, tiết kiệm khoảng 1827 MB.
+    \end{column}
+  \end{columns}
+  \note{Nguồn: docs/reports/phase1c3_multi_model_generation.md, docs/reports/phase1c3_mimo_long_context.md và summary CSV tương ứng.}
+\end{frame}
+
+\begin{frame}{HotpotQA eval: chuyển sang Kaggle}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.48\textwidth}
+      \minihead{Vì sao không chạy local matrix}\\[-0.08cm]
+      \begin{tightitemize}
+        \item HotpotQA BEIR có khoảng 5.23M documents; smoke local phải tải 654 MB và build docstore rất lâu.
+        \item BM25 local dùng khoảng 8--9 GB RSS trước generation.
+        \item Matrix cũ sẽ rebuild index theo từng action row, nên không phù hợp để chạy 16--64 rows.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \minihead{Pipeline mới}\\[-0.08cm]
+      \begin{tightitemize}
+        \item Kaggle private notebook, CPU, internet enabled, MiMo secret qua \smallcode{MIMO\_API\_KEY}.
+        \item Build BM25 một lần rồi ghi \smallcode{retrieval\_cache.jsonl}.
+        \item Replay 16 MiMo action rows: legacy, evidence-aware, adaptive balanced/aggressive ở 4k--32k chars.
+        \item Join \smallcode{hotpotqa/hotpot\_qa} để có EM/token-F1; RAGAS post-hoc \(n=5/action\).
+      \end{tightitemize}
+    \end{column}
+  \end{columns}
+  \vspace{0.28cm}
+  \centering
+  \scriptsize\color{Muted}
+  Slide HotpotQA sẽ lấy số từ \smallcode{benchmark\_results/budgetrag/phase1c3\_hotpotqa\_kaggle/\textless run\textgreater/hotpotqa\_summary.csv}; chưa trộn với SciFact matrix vì khác benchmark và khác sampling.
+\end{frame}
+
+\begin{frame}{Trade-off: làm sao biết strategy nào tốt?}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.44\textwidth}
+      \minihead{Đã có trong deck}\\[-0.08cm]
+      \begin{tightitemize}
+        \item Retrieval benchmark có accuracy proxy: \smallcode{hit@3}, \smallcode{nDCG@3}, recall/precision.
+        \item RAGAS smoke \(n=5\) có answer/context proxy cho retrieval-level.
+        \item Generation matrix đã có \smallcode{R rel} \(n=3\) stratified cho toàn bộ 64 action rows, nhưng vẫn là proxy nhỏ.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.52\textwidth}
+      \minihead{Cách chọn sau khi có labels}\\[-0.08cm]
+      \scriptsize
+      \renewcommand{\arraystretch}{1.12}
+      \begin{tabular}{>{\bfseries\raggedright\arraybackslash}p{0.22\textwidth}>{\raggedright\arraybackslash}p{0.66\textwidth}}
+        Pareto & action tốt nếu quality không giảm quá \(\delta\) nhưng token/latency/KV thấp hơn. \\
+        Reward & chọn action có \(R=quality+support-cost-error\) cao nhất trên validation queries. \\
+        Robustness & kiểm tra error rate, provider quota, và action distribution; không chọn action chỉ thắng nhờ thiếu coverage. \\
+        Generalize & train/test split theo \smallcode{query\_id}; báo riêng SciFact/NFCorpus nếu có đủ run. \\
+      \end{tabular}
+    \end{column}
+  \end{columns}
+
+  \vspace{0.32cm}
+  \centering
+  \footnotesize\color{Muted}
+  Vì vậy Phase 1C.3 đã có cost/error và answer-quality proxy nhỏ. Phase 1D RLAIF mới biến proxy đó thành reward ổn định để chọn policy.
+\end{frame}
+
+\begin{frame}{Data đọc như thế nào cho policy}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.31\textwidth}
+      \minihead{Retrieval action}\\
+      \color{Muted}SciFact cho thấy BM25 vẫn là action rẻ và mạnh; hybrid/vector chỉ đáng chọn khi reward bù được build/latency cost.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Context action}\\
+      \color{Muted}Phase 1C.3 đã có RAGAS answer relevancy \(n=3\) stratified cho matrix; reward vẫn cần thêm evidence sufficiency và groundedness ổn định hơn.
+    \end{column}
+    \begin{column}{0.31\textwidth}
+      \minihead{Generator action}\\
+      \color{Muted}MiMo long-context là upper bound; Groq/Qwen high-context adaptive bị rate limit nên error penalty và quota provider phải nằm trong reward.
+    \end{column}
+  \end{columns}
+  \takeaway{\small Kết luận không phải ``policy nhỏ nhất luôn tốt''. Một action chỉ tốt nếu nằm trên Pareto frontier: grounded quality giữ được, cost và lỗi giảm.}
+\end{frame}
+
+\begin{frame}{Qwen2.5 KV-cache @ 1k / 16k / 128k}
+  \scriptsize
+  \centering
+  \setlength{\tabcolsep}{4.0pt}
+  \renewcommand{\arraystretch}{1.17}
+  \begin{tabular}{l r r r r r r}
+    \toprule
+    Model & layers & KV heads & head dim & 1k & 16k & 128k \\
+    \midrule
+    Qwen2.5-0.5B & 24 & 2 & 64 & 12 MiB & 192 MiB & 1.5 GiB \\
+    Qwen2.5-1.5B & 28 & 2 & 128 & 28 MiB & 448 MiB & 3.5 GiB \\
+    Qwen2.5-3B & 36 & 2 & 128 & 36 MiB & 576 MiB & 4.5 GiB \\
+    Qwen2.5-7B & 28 & 4 & 128 & 56 MiB & 896 MiB & 7.0 GiB \\
+    Qwen2.5-14B & 48 & 8 & 128 & 192 MiB & 3.0 GiB & 24.0 GiB \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.40cm}
+  \footnotesize
+  \[
+    KV = 2 \times layers \times num\_key\_value\_heads \times head\_dim \times seq \times batch \times dtype\_bytes
+  \]
+  \vspace{-0.12cm}
+  \begin{minipage}{0.88\textwidth}
+    \scriptsize\color{Muted}
+    Assumption: batch=1, fp16/bf16. 1k = 1024 tokens, 16k = 16384, 128k = 131072. KV tăng tuyến tính theo sequence length.\\
+    Bảng dùng KV heads/GQA; các run cũ dùng profile analytical \code{qwen2.5-14b} conservative hơn.
+  \end{minipage}
+\end{frame}
+
+\begin{frame}{Local Qwen và roadmap KV}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.48\textwidth}
+      \minihead{Estimator/profiling}
+      \begin{tightitemize}
+        \item đọc model config, không load weights cho estimate;
+        \item start Qwen2.5 0.5B/1.5B nếu có GPU;
+        \item đo prompt tokens, output tokens, prefill/decode latency, peak CUDA memory, estimated KV.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \minihead{KV pruning POC}
+      \begin{tightitemize}
+        \item prefill full/compressed context;
+        \item capture \smallcode{past\_key\_values};
+        \item retain sink + recent + RLAIF evidence tokens;
+        \item slice KV rồi decode continuation.
+      \end{tightitemize}
+    \end{column}
+  \end{columns}
+  \takeaway{Phase 1D chỉ bao gồm estimate/profiling và POC nếu chạy thật; production KV-cache pruning nằm ngoài phạm vi.}
+\end{frame}
+
+\begin{frame}{Kế hoạch thực thi 7 ngày}
+  \scriptsize
+  \setlength{\tabcolsep}{4pt}
+  \renewcommand{\arraystretch}{1.18}
+  \begin{tabular}{>{\bfseries}p{0.10\textwidth}p{0.28\textwidth}p{0.50\textwidth}}
+    \toprule
+    Ngày & Trọng tâm & Kết quả cần có \\
+    \midrule
+    1 & Thu generation outputs & Phase 1C.3 logs, logged outcomes \\
+    2 & Context RLAIF & evidence chunks/spans, preference pairs \\
+    3 & Answer RLAIF & correctness/support/hallucination/refusal/citation labels \\
+    4 & Reward & normalized token/latency/KV costs, reward JSONL \\
+    5 & Bandit & baselines + bandit eval against fixed/adaptive heuristic \\
+    6 & Local Qwen/KV & KV estimate table, small-model profiling if GPU available \\
+    7 & Report & Phase 1D report, slide update, quyết định bước tiếp theo \\
+    \bottomrule
+  \end{tabular}
+
+  \vspace{0.42cm}
+  \centering
+  \small\color{Muted}
+  Quyết định tiếp theo: runtime KV pruning POC hay DPO smoke, dựa trên evidence labels và profiling thật.
+\end{frame}
+
+\begin{frame}{Ranh giới claim}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.48\textwidth}
+      \minihead{Có thể nói}\\
+      \begin{tightitemize}
+        \item đã có fixed/adaptive BudgetRAG policy và KV estimator;
+        \item Phase 1C.3 snapshot có số liệu token/KV saving;
+        \item Phase 1D đề xuất RLAIF + offline contextual bandit;
+        \item appendix KV quantization chỉ tính payload từ bit-width.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \minihead{Không nói nếu chưa chạy}\\
+      \begin{tightitemize}
+        \item đã có PPO/GRPO hoặc full RL;
+        \item có human preference learning;
+        \item Qwen14B DPO đã hoàn tất;
+        \item runtime KV pruning production-ready;
+        \item KV quantization latency/quality/VRAM overhead khi chưa đo.
+      \end{tightitemize}
+    \end{column}
+  \end{columns}
+  \takeaway{\small Deck này cố ý tách kết quả đã chạy, tính toán analytical và roadmap triển khai để tránh claim quá mức.}
+\end{frame}
+
+\begin{frame}{Kết thúc}
+  \small
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.48\textwidth}
+      \minihead{Luận điểm chính}\\
+      \begin{tightitemize}
+        \item action space đủ hẹp để chạy offline bandit, nhưng vẫn bao phủ retriever, fusion, policy và budget;
+        \item RLAIF biến ``context có vẻ tốt'' thành label đo được: evidence đủ, answer được support, claim không bịa;
+        \item KV-cache được đưa vào reward như cost, chưa claim runtime pruning khi chưa đo.
+      \end{tightitemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \minihead{Quyết định tiếp theo}\\
+      \begin{tightitemize}
+        \item chốt label schema cho context/answer RLAIF;
+        \item chạy logged-outcome matrix đủ lớn cho bandit eval;
+        \item profile local Qwen trước khi nói về runtime KV pruning hoặc TurboQuant gain thật.
+      \end{tightitemize}
+    \end{column}
+  \end{columns}
+
+  \vspace{0.55cm}
+  \centering
+  {\large\bfseries\color{AccentDark}
+  Chốt: học policy từ logged outcomes; giữ groundedness làm điều kiện, tối ưu token/latency/KV như cost.}
+\end{frame}
+
+\appendix
+
+\begin{frame}{Appendix: KV quantization payload estimate}
+  \scriptsize
+  \begin{columns}[T,onlytextwidth]
+    \begin{column}{0.37\textwidth}
+      \minihead{Công thức payload}\\
+      \[
+        TQ_{3.5b}=KV_{bf16}\times\frac{3+4}{16+16}
+        =KV_{bf16}\times\frac{7}{32}
+      \]
+      \vspace{0.12cm}
+      \footnotesize\color{Muted}
+      Giả định variant 3-bit key + 4-bit value. Đây chỉ là payload KV, chưa cộng metadata, packing alignment, kernel workspace hay allocator overhead.
+      \vspace{0.28cm}
+
+      \minihead{Ví dụ kiểm tra}\\
+      \footnotesize\color{Muted}
+      Qwen2.5-14B 16k bf16 KV = 3072 MiB.\\
+      \(3072\times7/32=672\) MiB.
+    \end{column}
+    \begin{column}{0.59\textwidth}
+      \minihead{Qwen2.5 KV payload nếu TurboQuant 3.5-bit}
+      \vspace{0.12cm}
+      \renewcommand{\arraystretch}{1.14}
+      \setlength{\tabcolsep}{4pt}
+      \begin{tabular}{l r r}
+        \toprule
+        Model & 16k TQ payload & 128k TQ payload \\
+        \midrule
+        Qwen2.5-0.5B & 42 MiB & 336 MiB \\
+        Qwen2.5-1.5B & 98 MiB & 784 MiB \\
+        Qwen2.5-3B & 126 MiB & 1008 MiB \\
+        Qwen2.5-7B & 196 MiB & 1568 MiB \\
+        Qwen2.5-14B & 672 MiB & 5376 MiB \\
+        \bottomrule
+      \end{tabular}\par
+      \vspace{0.22cm}
+      \footnotesize\color{Muted}
+      128k Qwen2.5-14B: \(24576\times7/32=5376\) MiB. Không dùng headline 6x hoặc runtime savings khi chưa đo implementation cụ thể.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\end{document}

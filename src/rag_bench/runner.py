@@ -4,13 +4,14 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any, Callable
 
 from rag_bench.benchmarks import load_benchmark
-from rag_bench.context_budget import ContextBudget, apply_context_budget
+from rag_bench.context_budget import ContextBudget, apply_context_budget, estimate_tokens_from_chars
 from rag_bench.context_metrics import aggregate_context_budget_metrics, aggregate_kv_estimates, context_budget_metrics
-from rag_bench.groq_client import RoundRobinGroqClient
+from rag_bench.groq_client import OpenAICompatibleClient, RoundRobinGroqClient, estimate_requested_tokens
 from rag_bench.io import write_csv, write_json, write_jsonl
 from rag_bench.kv_estimator import estimate_kv_cache_savings
 from rag_bench.metrics import (
@@ -22,8 +23,11 @@ from rag_bench.metrics import (
 )
 from rag_bench.prompts import build_rag_messages_from_context
 from rag_bench.retriever_registry import create_retriever, retriever_uses_llm
-from rag_bench.secrets import ApiKey, load_groq_keys
+from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
 from rag_bench.types import BenchmarkData
+
+
+DEFAULT_MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,11 @@ class RunConfig:
     adaptive_medium_budget: int = 2000
     adaptive_large_budget: int = 4000
     adaptive_profile: str = "conservative"
+    generation_provider: str = "groq"
+    generation_model_role: str | None = None
+    mimo_env_file: Path = Path(".secrets/.env")
+    mimo_api_key_var: str = "MIMO_API_KEY"
+    mimo_base_url: str = DEFAULT_MIMO_BASE_URL
 
 
 def run_benchmark(
@@ -74,10 +83,12 @@ def run_benchmark(
     run_id = _run_id(config)
     run_dir = config.output_dir / run_id
     uses_retrieval_llm = any(retriever_uses_llm(name) for name in config.retrievers)
-    keys = [] if config.skip_generation and not config.ragas and not uses_retrieval_llm else load_groq_keys(config.groq_keys_path)
+    if uses_retrieval_llm and not config.skip_generation and config.generation_provider != "groq":
+        raise ValueError("MiMo generation with LLM-based retrievers is not supported; use a non-LLM retriever.")
+    keys = _load_generation_keys(config, uses_retrieval_llm=uses_retrieval_llm)
     llm = None
     if not config.skip_generation or uses_retrieval_llm:
-        llm = groq_client_factory(keys) if groq_client_factory is not None else _build_groq_client(config, keys)
+        llm = groq_client_factory(keys) if groq_client_factory is not None else _build_generation_client(config, keys)
     data = benchmark_loader(config.bench, limit=config.limit, allow_large=config.allow_large_bench)
 
     all_rows: list[dict[str, Any]] = []
@@ -143,15 +154,48 @@ def run_benchmark(
             retrieval_metric_rows.append(per_query_metrics)
 
             generation = None
+            messages = build_rag_messages_from_context(query, prompt_context)
+            estimated_request_tokens = estimate_requested_tokens(
+                messages,
+                max_completion_tokens=config.max_completion_tokens,
+            )
+            estimated_prompt_tokens = max(1, estimated_request_tokens - max(0, config.max_completion_tokens))
             if not config.skip_generation and llm is not None:
                 generation = llm.generate(
-                    build_rag_messages_from_context(query, prompt_context),
+                    messages,
                     temperature=config.temperature,
                     max_completion_tokens=config.max_completion_tokens,
                 )
             answer = generation.answer if generation is not None else ""
+            estimated_completion_tokens = (
+                generation.completion_tokens
+                if generation is not None and generation.completion_tokens is not None
+                else estimate_tokens_from_chars(len(answer))
+            )
             answer_em = exact_match(answer, query.reference_answers)
             answer_f1 = token_f1(answer, query.reference_answers)
+            generation_detail = (
+                {
+                    "provider": config.generation_provider,
+                    "model": config.model,
+                    "model_role": config.generation_model_role,
+                    "max_completion_tokens": config.max_completion_tokens,
+                    "latency_s": generation.latency_s,
+                    "prompt_tokens": generation.prompt_tokens,
+                    "completion_tokens": generation.completion_tokens,
+                    "total_tokens": generation.total_tokens,
+                    "token_usage_is_estimated": generation.prompt_tokens is None or generation.completion_tokens is None,
+                    "estimated_prompt_tokens": estimated_prompt_tokens,
+                    "estimated_completion_tokens": estimated_completion_tokens,
+                    "estimated_request_tokens": estimated_request_tokens,
+                    "answer_length_chars": len(answer),
+                    "answer_length_est_tokens": estimate_tokens_from_chars(len(answer)),
+                    "error": generation.error,
+                    "error_status_code": generation.error_status_code,
+                }
+                if generation is not None
+                else None
+            )
             row = {
                 "experiment": _experiment_metadata(
                     config,
@@ -187,7 +231,12 @@ def run_benchmark(
                     0,
                     budgeted_context.original_est_tokens - budgeted_context.kept_est_tokens,
                 ),
+                "estimated_prompt_tokens": estimated_prompt_tokens,
+                "estimated_completion_tokens": estimated_completion_tokens if generation is not None else None,
+                "answer_length_chars": len(answer) if generation is not None else None,
+                "answer_length_est_tokens": estimate_tokens_from_chars(len(answer)) if generation is not None else None,
                 "generation_skipped": generation is None,
+                "generation": generation_detail,
                 "answer": answer,
                 "answer_latency_s": generation.latency_s if generation is not None else None,
                 "total_latency_s": time.perf_counter() - query_started,
@@ -309,6 +358,29 @@ def run_benchmark(
     return summary
 
 
+def _load_generation_keys(config: RunConfig, *, uses_retrieval_llm: bool) -> list[ApiKey]:
+    if config.skip_generation and not config.ragas and not uses_retrieval_llm:
+        return []
+    if config.generation_provider == "mimo" and not config.skip_generation and not uses_retrieval_llm and not config.ragas:
+        return [_load_mimo_key(config)]
+    return load_groq_keys(config.groq_keys_path)
+
+
+def _load_mimo_key(config: RunConfig) -> ApiKey:
+    env_value = os.environ.get(config.mimo_api_key_var)
+    if env_value:
+        return ApiKey(alias="mimo", value=env_value)
+    return load_env_api_key(config.mimo_env_file, config.mimo_api_key_var, alias="mimo")
+
+
+def _build_generation_client(config: RunConfig, keys: list[ApiKey]) -> RoundRobinGroqClient:
+    if config.generation_provider == "mimo":
+        return _build_mimo_client(config, keys)
+    if config.generation_provider != "groq":
+        raise ValueError(f"Unsupported generation provider: {config.generation_provider}")
+    return _build_groq_client(config, keys)
+
+
 def _build_groq_client(config: RunConfig, keys: list[ApiKey]) -> RoundRobinGroqClient:
     return RoundRobinGroqClient(
         keys=keys,
@@ -317,6 +389,26 @@ def _build_groq_client(config: RunConfig, keys: list[ApiKey]) -> RoundRobinGroqC
         key_tokens_per_minute=config.key_tokens_per_minute,
         key_requests_per_minute=config.key_requests_per_minute,
         rate_limit_scope=config.rate_limit_scope,
+        provider_name="Groq",
+    )
+
+
+def _build_mimo_client(config: RunConfig, keys: list[ApiKey]) -> RoundRobinGroqClient:
+    return RoundRobinGroqClient(
+        keys=keys,
+        model=config.model,
+        max_retries=config.max_retries,
+        key_tokens_per_minute=config.key_tokens_per_minute,
+        key_requests_per_minute=config.key_requests_per_minute,
+        rate_limit_scope="per-key",
+        client_factory=lambda key, timeout: OpenAICompatibleClient(
+            api_key=key.value,
+            base_url=config.mimo_base_url,
+            timeout_s=timeout,
+            token_parameter="max_tokens",
+        ),
+        provider_name="MiMo",
+        completion_token_parameter="max_tokens",
     )
 
 
@@ -330,6 +422,7 @@ def _serializable_config(config: RunConfig) -> dict[str, Any]:
     output = dict(config.__dict__)
     output["output_dir"] = str(config.output_dir)
     output["groq_keys_path"] = str(config.groq_keys_path)
+    output["mimo_env_file"] = str(config.mimo_env_file)
     output["retrievers"] = list(config.retrievers)
     return output
 
@@ -344,7 +437,7 @@ def _experiment_metadata(
 ) -> dict[str, Any]:
     context_budget_chars = config.context_budget_chars or config.max_context_chars
     generation_model = None if config.skip_generation else config.model
-    generation_provider = None if config.skip_generation else "groq"
+    generation_provider = None if config.skip_generation else config.generation_provider
     return {
         "run_id": run_id,
         "created_at": created_at,
@@ -365,6 +458,7 @@ def _experiment_metadata(
         "skip_generation": config.skip_generation,
         "generation_provider": generation_provider,
         "generation_model": generation_model,
+        "generation_model_role": None if config.skip_generation else config.generation_model_role,
         "kv_profile": None if config.disable_kv_estimate else config.kv_profile,
     }
 

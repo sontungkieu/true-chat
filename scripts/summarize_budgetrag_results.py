@@ -22,6 +22,7 @@ SUMMARY_COLUMNS = [
     "skip_generation",
     "generation_provider",
     "generation_model",
+    "generation_model_role",
     "kv_profile",
     "adaptive_enabled",
     "adaptive_profile",
@@ -55,9 +56,15 @@ SUMMARY_COLUMNS = [
     "exact_match",
     "token_f1",
     "answer_latency_s",
+    "avg_generation_latency_s",
+    "avg_estimated_prompt_tokens",
+    "avg_estimated_completion_tokens",
+    "answer_length_avg",
+    "error_count",
 ]
 
 MARKDOWN_COLUMNS = [
+    ("model", "generation_model"),
     ("retriever", "retriever"),
     ("policy", "context_policy"),
     ("profile", "adaptive_profile"),
@@ -65,6 +72,7 @@ MARKDOWN_COLUMNS = [
     ("queries", "query_count"),
     ("kept chars", "avg_kept_context_chars"),
     ("compression", "avg_context_compression_ratio"),
+    ("latency", "avg_generation_latency_s"),
     ("token savings", "avg_estimated_token_savings"),
     ("KV savings", "avg_estimated_kv_cache_savings_mb"),
     ("quality", "token_f1"),
@@ -201,8 +209,9 @@ def _summary_row(
             "",
         ),
         "skip_generation": skip_generation,
-        "generation_provider": "" if skip_generation is True else _first_present(aggregate_experiment.get("generation_provider"), top_experiment.get("generation_provider"), ""),
-        "generation_model": "" if skip_generation is True else _first_present(aggregate_experiment.get("generation_model"), top_experiment.get("generation_model"), config.get("model"), ""),
+        "generation_provider": "" if skip_generation is True else _first_present(aggregate_experiment.get("generation_provider"), top_experiment.get("generation_provider"), generation.get("provider"), config.get("generation_provider"), ""),
+        "generation_model": "" if skip_generation is True else _first_present(aggregate_experiment.get("generation_model"), top_experiment.get("generation_model"), generation.get("model"), config.get("model"), ""),
+        "generation_model_role": "" if skip_generation is True else _first_present(aggregate_experiment.get("generation_model_role"), top_experiment.get("generation_model_role"), generation.get("model_role"), config.get("generation_model_role"), ""),
         "kv_profile": _first_present(
             aggregate_experiment.get("kv_profile"),
             top_experiment.get("kv_profile"),
@@ -242,6 +251,11 @@ def _summary_row(
         "exact_match": generation.get("avg_exact_match"),
         "token_f1": generation.get("avg_token_f1"),
         "answer_latency_s": generation.get("avg_answer_latency_s"),
+        "avg_generation_latency_s": generation.get("avg_answer_latency_s"),
+        "avg_estimated_prompt_tokens": generation.get("avg_estimated_prompt_tokens"),
+        "avg_estimated_completion_tokens": generation.get("avg_estimated_completion_tokens"),
+        "answer_length_avg": generation.get("avg_answer_length_chars"),
+        "error_count": generation.get("error_count"),
     }
 
 
