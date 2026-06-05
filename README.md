@@ -749,11 +749,12 @@ The runner defaults to retrieval-only mode (`SKIP_GENERATION=1`) so it can safel
 SKIP_GENERATION=0 \
 MODELS=mimo_v25 \
 MIMO_ENV_FILE=.secrets/.env \
+MAX_COMPLETION_TOKENS=2048 \
 LIMIT=50 \
 scripts/run_retriever_diversity_budgetrag_matrix.sh
 ```
 
-Future MiMo jobs default to standard `mimo-v2.5`; `mimo-v2.5-pro` is kept only for historical provenance and disabled in the default model matrix. Merged reports may combine historical Pro rows with future standard-v2.5 rows, but they must annotate `judge_model`/`generator_model` drift and keep model provenance visible. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with `legacy`, `evidence-aware`, `score-density`, and `adaptive-heuristic` profiles `balanced/aggressive` over budgets `1000`, `2000`, and `4000`. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
+Future MiMo jobs default to standard `mimo-v2.5`; `mimo-v2.5-pro` is kept only for historical provenance and disabled in the default model matrix. Retriever-diverse generation now defaults to `MAX_COMPLETION_TOKENS=2048` because the earlier 256-token cap produced empty visible MiMo answers. Merged reports may combine historical Pro rows with future standard-v2.5 rows, but they must annotate `judge_model`/`generator_model` drift and keep model provenance visible. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with `legacy`, `evidence-aware`, `score-density`, and `adaptive-heuristic` profiles `balanced/aggressive` over budgets `1000`, `2000`, and `4000`. The next-run decision report in `docs/reports/phase1d_retriever_diversity_next_run_decision.md` recommends the 50-query, two-budget A1-medium run before any full 2250-row generation matrix. A 100-row targeted DeepSeek v4 Flash context audit is documented in `docs/reports/phase1d_retriever_diversity_deepseek_audit.md`; MiMo-vs-DeepSeek sufficiency agreement is 80/83 comparable rows, with 76 consensus-insufficient rows. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
 
 Validate a retriever-diverse generation subset before spending judge budget:
 

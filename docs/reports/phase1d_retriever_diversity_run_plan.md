@@ -141,9 +141,26 @@ before a larger run. Generation must be enabled explicitly:
 SKIP_GENERATION=0 \
 MODELS=mimo_v25 \
 MIMO_ENV_FILE=.secrets/.env \
+MAX_COMPLETION_TOKENS=2048 \
 LIMIT=50 \
 scripts/run_retriever_diversity_budgetrag_matrix.sh
 ```
+
+The runner default for retriever-diverse generation is `MAX_COMPLETION_TOKENS=2048`.
+The earlier 10-query smoke used 256 and produced 77 empty visible answers, so
+do not use a sub-1024 cap for MiMo V2.5 generation except as an explicit failure
+reproduction test.
+
+The current next-run decision is documented in
+`docs/reports/phase1d_retriever_diversity_next_run_decision.md`: run the
+50-query, two-budget A1-medium matrix before any full 2250-row generation
+matrix, and run a targeted DeepSeek audit over the 100 highest-impact context
+rows as judge-reliability validation.
+
+The targeted DeepSeek audit is now complete and documented in
+`docs/reports/phase1d_retriever_diversity_deepseek_audit.md`. It found 80/83
+MiMo-vs-DeepSeek sufficiency agreement over comparable rows, 76
+consensus-insufficient rows, and only 3 high-disagreement rows.
 
 Once context labels exist, inspect policy-level evidence quality with:
 

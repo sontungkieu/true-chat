@@ -132,6 +132,22 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      156/300 reward rows, mostly downward, with mean changed-only delta
      `-0.301` and preference count rising from 1559 to 2412. Treat it as
      calibration supervision, not as a default reward or selector target.
+   - Added `docs/reports/phase1d_retriever_diversity_next_run_decision.md`.
+     The subset has enough retriever-level signal to keep branch A alive, but
+     the low-cap empty-answer issue means the next run should be A1-medium:
+     50 queries, three retrievers, five policy/profile variants, budgets
+     `1000,4000`, and standard MiMo V2.5 with `MAX_COMPLETION_TOKENS=2048`.
+     Do not run local Qwen profiling in this branch.
+   - Selected 100 high-impact targeted DeepSeek audit rows from the
+     retriever-diverse subset, sharded into two 50-row files, to check MiMo
+     context-sufficiency harshness before trusting context reward as a selector
+     target.
+   - Completed the 100-row targeted DeepSeek v4 Flash context audit: 100 valid
+     labels, 12 ambiguous rows, 0 invalid JSON/errors, MiMo-vs-DeepSeek
+     sufficiency agreement `80/83 = 0.964`, 76 consensus-insufficient rows, 3
+     high-disagreement rows, and 1 MiMo-harsh row. This supports the MiMo
+     context-insufficiency signal on high-risk rows but does not change reward
+     defaults.
    - Do not scale that subset directly to the full 2250-row matrix with `MAX_COMPLETION_TOKENS=256`; the low cap produced 77 empty generated answers with no request errors. Use a larger generation cap first, then re-check empty-answer and label coverage.
 
 ```bash

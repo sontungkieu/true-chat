@@ -16,7 +16,7 @@ CONTEXT_BUDGETS="${CONTEXT_BUDGETS:-1000,2000,4000}"
 ADAPTIVE_PROFILES="${ADAPTIVE_PROFILES:-balanced,aggressive}"
 KV_PROFILE="${KV_PROFILE:-qwen2.5-14b}"
 MAX_CONTEXT_CHARS="${MAX_CONTEXT_CHARS:-12000}"
-MAX_COMPLETION_TOKENS="${MAX_COMPLETION_TOKENS:-256}"
+MAX_COMPLETION_TOKENS="${MAX_COMPLETION_TOKENS:-2048}"
 SKIP_GENERATION="${SKIP_GENERATION:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
@@ -57,6 +57,9 @@ if [[ "${SKIP_GENERATION}" == "1" ]]; then
     "${common_args[@]}" \
     --skip-generation
 else
+  if (( MAX_COMPLETION_TOKENS < 1024 )); then
+    echo "[retriever-diversity] warning: MAX_COMPLETION_TOKENS=${MAX_COMPLETION_TOKENS} is low for MiMo V2.5 and can produce empty visible answers" >&2
+  fi
   echo "[retriever-diversity] mode=generation models=${MODELS}" >&2
   uv run --frozen --extra vector python scripts/run_budgetrag_generation_matrix.py \
     "${common_args[@]}" \

@@ -45,6 +45,10 @@ The follow-up step was a small MiMo-\code{v2.5} generation subset with explicit 
 
 The run also exposed an operational issue: \code{MAX\_COMPLETION\_TOKENS=256} is too low for standard MiMo V2.5 generation, producing 77 empty answer strings with no request errors. Future retriever-diverse generation runs should use a larger generation cap before scaling to the full 50-query matrix.
 
+The next-run decision therefore keeps the retriever-diverse branch active but avoids the full 2250-row matrix for now. The recommended follow-up is a 50-query, two-budget run with standard MiMo V2.5 and \code{MAX\_COMPLETION\_TOKENS=2048}, plus a targeted DeepSeek audit over 100 high-impact context rows. Local Qwen profiling is deferred from this branch.
+
+The targeted DeepSeek audit is complete: DeepSeek v4 Flash produced 100 valid context labels with no invalid JSON or request errors, and MiMo-vs-DeepSeek sufficiency agreement is 80/83 over comparable rows. The audit found 76 consensus-insufficient rows and only 3 high-disagreement rows, supporting the direction of the MiMo context-insufficiency signal while keeping context reward non-default.
+
 \subsection{Larger Logged Query Groups}
 
 The action coverage diagnostics show exact-signature sparsity. More query groups and broader logged action families are needed before a learned selector can robustly beat strong smoothed baselines.
