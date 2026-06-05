@@ -93,12 +93,14 @@ uv run python scripts/summarize_rlaif_labels.py \
 ```
 
 4. Add context-level RLAIF feedback
-   - Status: schema baseline and `rlaif-label-contexts` CLI implemented; full context-label run still pending.
+   - Status: schema baseline and `rlaif-label-contexts` CLI implemented; first real MiMo subset completed on 50 action rows and documented in `docs/reports/phase1d_rlaif_context_labels_mimo50.md`.
    - Judge candidate retrieved/context chunks before generation.
    - Identify selected evidence chunks, redundant chunks, irrelevant chunks, missing evidence, and sufficiency.
    - The labeling path supports `--dry-run`, `--resume`, `--limit`, `--max-errors`, `--judge-provider`, `--judge-model`, JSON repair, progress logging, and incremental writes.
    - Missing contexts, invalid JSON, empty completions, and judge errors become ambiguous labels with null scores, never score zero.
    - Summarize context labels with `scripts/summarize_rlaif_context_labels.py` to track sufficiency, missing evidence, selected/redundant/irrelevant chunk counts, dropped unknown chunk ids, and context quality statistics.
+   - Current subset result: 50 valid JSON labels, 0 invalid JSON, 0 errors, 4 ambiguous rows, 18 sufficient rows, 29 insufficient rows, mean context quality 0.478, mean evidence support 0.410, and mean selected chunks 1.38.
+   - Next implementation change: add a non-default `rlaif-reward --context-labels` merge path and filter `ambiguous=true` rows out of clean context supervision.
    - Build context preference pairs between full, evidence-aware, aggressive, fixed-budget, and adaptive contexts.
    - Keep this independent from answer scoring so the system can learn context allocation directly.
 
@@ -282,10 +284,10 @@ Context label schema:
    - Current shrinkage-smoothed result: coverage stays 1.000, reward improves to 0.602, quality to 0.773, and oracle gap to 0.070; this is the strongest full-coverage non-oracle baseline so far, but still trails `best_average` on reward/quality.
    - Pairwise calibration limitation: `pairwise_tie_v1` currently changes preference construction and diagnostics, but reward-based selectors still train on scalar reward rows; pairwise preferences affect selection only after a pairwise ranker or calibrated scalar reward path is added.
    - Cost-feature limitation: current selector cost features are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before pre-generation selection.
-   - Next evaluator change: run context-level labels on a small subset, expand logged query groups and retriever diversity, then add a pairwise ranker.
+   - Next evaluator change: merge context-level labels into non-default reward diagnostics, expand logged query groups and retriever diversity, then add a pairwise ranker.
 
 5. Outputs
-   - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and the `rlaif-label-contexts` skeleton write the implemented files below; a full context-label run remains pending.
+   - Status: `rlaif-reward`, `rlaif-train`, `rlaif-eval`, and `rlaif-label-contexts` write the implemented files below; a 50-action real context-label subset is complete, while a full 192-action context-label run remains pending.
    - `rlaif_rewards.jsonl`
    - `rlaif_preferences.jsonl`
    - `rlaif_reward_summary.md`
@@ -297,6 +299,7 @@ Context label schema:
    - `selector_sweep_summary.md`: multi-seed selector mean/std report.
    - `rlaif_action_coverage.md`: action signature sparsity and split coverage diagnostics.
    - `rlaif_answer_labels_summary.md`: judge label coverage, score distribution, and RAGAS correlation summary.
+   - `rlaif_context_labels_mimo50_summary.md`: context-label sufficiency, evidence support, minimality, and chunk-selection summary.
    - `rlaif_pairwise_labels.jsonl`: direct pairwise AI-judge labels for reward-derived action pairs.
    - `rlaif_pairwise_labels_summary.md`: direct pairwise label agreement and risk summary.
    - `docs/reports/phase1d_rlaif_selector_smoke.md`: curated smoke report over real Phase 1C.3 outputs joined with RAGAS answer relevancy.
@@ -308,6 +311,7 @@ Context label schema:
    - `docs/reports/phase1d_rlaif_v2_family_smoothed_selector_eval.md`: curated family-smoothed selector report.
    - `docs/reports/phase1d_rlaif_v2_smoothed_linear_selector_eval.md`: curated smoothed-linear selector report.
    - `docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md`: curated shrinkage-smoothed selector report.
+   - `docs/reports/phase1d_rlaif_context_labels_mimo50.md`: curated first real context-level RLAIF subset report.
    - `docs/reports/local_qwen_kv_estimates.md`: analytical Qwen2.5 KV-cache memory table for local deployment planning.
    - `docs/reports/phase1d_rlaif_context_labels_template.md`: context-label report template for sufficiency, redundancy, missing evidence, dropped unknown chunk ids, and context quality.
    - `docs/reports/phase1d_rlaif_pairwise_labels_template.md`: pairwise-label report template for reward-preference agreement, disagreement examples, quality regret, and unsupported-claim risk.
@@ -503,7 +507,7 @@ Raw benchmark matrices remain ignored. Small synthetic fixtures and compact summ
 ## Definition Of Done
 
 - Phase 1C.3 feedback schema is implemented or explicitly stubbed with tests.
-- Context-level RLAIF labels are represented in schema/tests and can be generated through a dry-run labeler.
+- Context-level RLAIF labels are represented in schema/tests and have a first real MiMo-50 subset report.
 - Phase 1D reward/preference builder is implemented and covered by tests.
 - Both context-only and retrieval-context preference modes are represented.
 - CLI can build rewards/preferences from existing BudgetRAG output folders.
