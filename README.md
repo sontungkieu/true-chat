@@ -730,7 +730,7 @@ LIMIT=50 \
 scripts/run_retriever_diversity_budgetrag_matrix.sh
 ```
 
-Future MiMo jobs default to standard `mimo-v2.5`; `mimo-v2.5-pro` is kept only for historical provenance and disabled in the default model matrix. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with full/evidence-aware/score-density/adaptive context policies and budgets `1000`, `2000`, and `4000`. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
+Future MiMo jobs default to standard `mimo-v2.5`; `mimo-v2.5-pro` is kept only for historical provenance and disabled in the default model matrix. Merged reports may combine historical Pro rows with future standard-v2.5 rows, but they must annotate `judge_model`/`generator_model` drift and keep model provenance visible. The plan in `docs/reports/phase1d_retriever_diversity_run_plan.md` covers `bm25`, `graph-bm25`, and `hybrid-rrf` crossed with `legacy`, `evidence-aware`, `score-density`, and `adaptive-heuristic` profiles `balanced/aggressive` over budgets `1000`, `2000`, and `4000`. Web search remains a live stress test only and must not be mixed with BEIR-style reproducible benchmark claims.
 
 After context labels exist for the resulting actions, inspect evidence quality by retriever and policy:
 
@@ -1037,7 +1037,7 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
   --repo-ref hotpotqa-kaggle-run \
   --provider mimo \
   --model mimo-v2.5 \
-  --model-role long-context-upper-bound \
+  --model-role long-context-judge-generator \
   --context-policies legacy,evidence-aware \
   --context-budgets 4000,8000,16000,32000 \
   --ragas-model mimo-v2.5 \
@@ -1050,7 +1050,7 @@ uv run --frozen python scripts/upload_kaggle_budgetrag_eval_notebook.py \
   --repo-ref hotpotqa-kaggle-run \
   --provider mimo \
   --model mimo-v2.5 \
-  --model-role long-context-upper-bound \
+  --model-role long-context-judge-generator \
   --context-policies adaptive-heuristic \
   --adaptive-profiles balanced \
   --context-budgets 4000,8000,16000,32000 \

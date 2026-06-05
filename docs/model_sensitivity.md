@@ -8,7 +8,7 @@ BudgetRAG Phase 1C.3 adds generation-mode validation across model roles instead 
 | --- | --- | --- | --- |
 | `groq_llama8b` | `groq` | `llama-3.1-8b-instant` | fast-small-baseline |
 | `groq_qwen32b` | `groq` | `qwen/qwen3-32b` | stronger-baseline |
-| `mimo_v25` | `mimo` | `mimo-v2.5` | long-context-upper-bound |
+| `mimo_v25` | `mimo` | `mimo-v2.5` | long-context-judge-generator |
 
 The source config is `configs/budgetrag_models.json`.
 

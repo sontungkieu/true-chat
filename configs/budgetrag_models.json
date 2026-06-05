@@ -24,7 +24,7 @@
     "mimo_v25": {
       "provider": "mimo",
       "model": "mimo-v2.5",
-      "role": "long-context-upper-bound",
+      "role": "long-context-judge-generator",
       "enabled": true,
       "base_url": "https://token-plan-sgp.xiaomimimo.com/v1",
       "base_url_env": "MIMO_BASE_URL",

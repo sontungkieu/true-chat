@@ -30,8 +30,8 @@ Context policies:
 - `legacy/full`
 - `evidence-aware`
 - `score-density`
-- `adaptive-balanced`
-- `adaptive-aggressive`
+- `adaptive-heuristic` with profile `balanced`
+- `adaptive-heuristic` with profile `aggressive`
 
 Budgets:
 
@@ -44,12 +44,14 @@ Models:
 - Existing Groq/MiMo generator setup if available.
 - Future MiMo jobs should use standard `mimo-v2.5`; `mimo-v2.5-pro`
   remains historical provenance only.
+- Merged reports may combine historical Pro rows with future standard-v2.5 rows,
+  but they must annotate judge/generator-model drift and keep provenance visible.
 - Keep model dimension explicit in the action id and summary tables.
 
 This gives a compact first matrix:
 
 ```text
-3 retrievers x 5 context policies x 3 budgets x 1 generator family
+3 retrievers x 5 policy/profile variants x 3 budgets x 1 generator family
 ```
 
 The run should be sampled first. It should not be described as a full benchmark
@@ -132,8 +134,8 @@ LIMIT=50 \
 scripts/run_retriever_diversity_budgetrag_matrix.sh
 ```
 
-Use `DRY_RUN=1` to print the resolved command. Generation must be enabled
-explicitly:
+Use `DRY_RUN=1` to print the resolved command and preserve the resolved matrix
+before a larger run. Generation must be enabled explicitly:
 
 ```bash
 SKIP_GENERATION=0 \

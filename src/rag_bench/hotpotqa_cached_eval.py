@@ -31,7 +31,7 @@ from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 DEFAULT_BENCH = "hotpotqa"
 DEFAULT_DATASET_ID = "beir/hotpotqa/test"
 DEFAULT_MODEL = "mimo-v2.5"
-DEFAULT_MODEL_ROLE = "long-context-upper-bound"
+DEFAULT_MODEL_ROLE = "long-context-judge-generator"
 DEFAULT_POLICIES = ("legacy", "evidence-aware", "adaptive-heuristic")
 DEFAULT_BUDGETS = (4000, 8000, 16000, 32000)
 DEFAULT_ADAPTIVE_PROFILES = ("balanced", "aggressive")

@@ -23,6 +23,10 @@ Future MiMo 2.5 runs should use standard `mimo-v2.5`, not `mimo-v2.5-pro`,
 because the Pro endpoint did not show enough quality difference to justify the
 extra cost. Existing reports may still name `mimo-v2.5-pro` when describing
 historical runs; do not rewrite historical provenance.
+Every new judge/generation summary must preserve `judge_provider`,
+`judge_model`, and `generator_model` columns so historical Pro labels are not
+silently aggregated with future standard-v2.5 labels. Merged result tables are
+allowed when the drift is explicitly annotated.
 
 Therefore the next bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm. Do not add DPO, PPO, GRPO, runtime KV pruning, or a complex reward model in this phase. Current results should be framed as evidence that the infrastructure works, while learned selectors remain data-limited.
 

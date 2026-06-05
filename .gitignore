@@ -214,6 +214,7 @@ runs/
 benchmark_results/budgetrag/
 benchmark_results/rlaif/
 report_phase1b.md
+pdf/Report_Internship_*.pdf
 *.zip*
 .webui_secret_key
 *private*
