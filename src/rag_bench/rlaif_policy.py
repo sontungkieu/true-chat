@@ -18,6 +18,7 @@ POLICY_NAMES = (
     "best_average",
     "family_smoothed_best_average",
     "linear_reward_model",
+    "smoothed_linear_selector",
     "oracle_logged",
 )
 
@@ -122,12 +123,31 @@ class LinearRewardModelPolicy:
         )
 
 
+class SmoothedLinearSelectorPolicy:
+    policy_type = "smoothed_linear_selector"
+
+    def select(self, group_rewards: list[dict[str, Any]], policy: dict[str, Any]) -> dict[str, Any] | None:
+        model = policy["policies"].get("smoothed_linear_selector", {})
+        candidates = [row for row in group_rewards if _can_featurize(row, model)]
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda row: (
+                _smoothed_linear_model_score(row, model),
+                -_cost_sum(row),
+                str(row.get("action_id")),
+            ),
+        )
+
+
 POLICY_IMPLEMENTATIONS = {
     FixedActionPolicy.policy_type: FixedActionPolicy(),
     CheapestActionPolicy.policy_type: CheapestActionPolicy(),
     BestAverageActionPolicy.policy_type: BestAverageActionPolicy(),
     FamilySmoothedBestAveragePolicy.policy_type: FamilySmoothedBestAveragePolicy(),
     LinearRewardModelPolicy.policy_type: LinearRewardModelPolicy(),
+    SmoothedLinearSelectorPolicy.policy_type: SmoothedLinearSelectorPolicy(),
     OracleLoggedPolicy.policy_type: OracleLoggedPolicy(),
 }
 
@@ -154,6 +174,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
     )
     family_smoothed = _train_family_smoothed_best_average(scored_rewards, signature_stats)
     linear_model = _train_linear_reward_model(scored_rewards)
+    smoothed_linear = _train_smoothed_linear_selector(scored_rewards)
     policy = {
         "schema_version": POLICY_VERSION,
         "runtime_default_replacement": False,
@@ -186,6 +207,7 @@ def train_offline_selector_policies(config: RlaifTrainConfig) -> dict[str, Any]:
             },
             "family_smoothed_best_average": family_smoothed,
             "linear_reward_model": linear_model,
+            "smoothed_linear_selector": smoothed_linear,
             "oracle_logged": {
                 "policy_type": "oracle_logged",
                 "selection_rule": "offline upper bound; choose the logged action with highest observed reward",
@@ -308,6 +330,32 @@ def _train_linear_reward_model(scored_rewards: list[dict[str, Any]]) -> dict[str
     }
 
 
+def _train_smoothed_linear_selector(scored_rewards: list[dict[str, Any]]) -> dict[str, Any]:
+    aggregate_stats = _aggregate_reward_feature_stats(scored_rewards)
+    feature_names = _smoothed_linear_feature_names(scored_rewards)
+    raw_vectors = [
+        _smoothed_linear_feature_vector(row, feature_names, aggregate_stats)
+        for row in scored_rewards
+    ]
+    means, stds = _feature_normalization(raw_vectors, feature_names)
+    x_rows = [_normalize_feature_vector(vector, feature_names, means, stds) for vector in raw_vectors]
+    y_values = [float(row["reward"]) for row in scored_rewards]
+    coefficients = _fit_ridge_regression(x_rows, y_values, l2=1e-3)
+    return {
+        "policy_type": "smoothed_linear_selector",
+        "selection_rule": "score candidate actions with a linear model that uses action/context/cost features plus train-only aggregate reward means for exact signatures, retrieval-context families, context policies, and retrievers",
+        "runtime_default_replacement": False,
+        "feature_names": feature_names,
+        "feature_means": means,
+        "feature_stds": stds,
+        "coefficients": coefficients,
+        "aggregate_reward_features": aggregate_stats,
+        "training_rows": len(scored_rewards),
+        "target": "reward",
+        "label_leakage_guard": "aggregate reward features are computed only from the rlaif-train input rows and are reused unchanged during eval; eval reward and quality labels are never read to fill missing aggregates",
+    }
+
+
 def _train_family_smoothed_best_average(
     scored_rewards: list[dict[str, Any]],
     signature_stats: list[dict[str, Any]],
@@ -406,6 +454,26 @@ def _linear_feature_names(rows: list[dict[str, Any]]) -> list[str]:
     return names
 
 
+def _smoothed_linear_feature_names(rows: list[dict[str, Any]]) -> list[str]:
+    return [
+        *_linear_feature_names(rows),
+        "exact_signature_train_mean_reward",
+        "exact_signature_train_count_norm",
+        "exact_signature_train_missing",
+        "family_train_mean_reward",
+        "family_train_count_norm",
+        "family_train_missing",
+        "context_policy_train_mean_reward",
+        "context_policy_train_count_norm",
+        "context_policy_train_missing",
+        "retriever_train_mean_reward",
+        "retriever_train_count_norm",
+        "retriever_train_missing",
+        "global_train_mean_reward",
+        "global_train_count_norm",
+    ]
+
+
 def _linear_feature_vector(row: dict[str, Any], feature_names: list[str]) -> list[float]:
     signature = _signature(row)
     categorical = {
@@ -442,6 +510,39 @@ def _linear_feature_vector(row: dict[str, Any], feature_names: list[str]) -> lis
             values[name] = 1.0 if name.split("=", 1)[1] == categorical["generator_model"] else 0.0
         else:
             values[name] = 0.0
+    return [values.get(name, 0.0) for name in feature_names]
+
+
+def _smoothed_linear_feature_vector(
+    row: dict[str, Any],
+    feature_names: list[str],
+    aggregate_stats: dict[str, Any],
+) -> list[float]:
+    values = dict(zip(feature_names, _linear_feature_vector(row, feature_names)))
+    global_stats = aggregate_stats.get("global") if isinstance(aggregate_stats.get("global"), dict) else {}
+    global_mean = _number_or_zero(global_stats.get("mean_reward"))
+    global_count = int(global_stats.get("count") or 0)
+    max_count = max(1, int(aggregate_stats.get("max_count") or global_count or 1))
+
+    aggregate_specs = [
+        ("exact_signature", _signature_id(row), "signature_id", "exact_signature_train"),
+        ("retrieval_context_family", _retrieval_context_family_id(row), "family_id", "family_train"),
+        ("context_policy", _context_policy_id(row), "context_policy_id", "context_policy_train"),
+        ("retriever", _retriever_id(row), "retriever_id", "retriever_train"),
+    ]
+    for bucket_name, key, id_name, feature_prefix in aggregate_specs:
+        stats = _aggregate_lookup(aggregate_stats, bucket_name, id_name, key)
+        if stats is None:
+            values[f"{feature_prefix}_mean_reward"] = global_mean
+            values[f"{feature_prefix}_count_norm"] = 0.0
+            values[f"{feature_prefix}_missing"] = 1.0
+            continue
+        values[f"{feature_prefix}_mean_reward"] = _number_or_zero(stats.get("mean_reward"))
+        values[f"{feature_prefix}_count_norm"] = _bounded_norm(stats.get("count"), float(max_count))
+        values[f"{feature_prefix}_missing"] = 0.0
+
+    values["global_train_mean_reward"] = global_mean
+    values["global_train_count_norm"] = _bounded_norm(global_count, float(max_count))
     return [values.get(name, 0.0) for name in feature_names]
 
 
@@ -534,6 +635,26 @@ def _linear_model_score(row: dict[str, Any], model: dict[str, Any]) -> float:
     return sum(coef * value for coef, value in zip(coefficients, normalized))
 
 
+def _smoothed_linear_model_score(row: dict[str, Any], model: dict[str, Any]) -> float:
+    feature_names = list(model.get("feature_names") or [])
+    coefficients = [float(value) for value in model.get("coefficients") or []]
+    means = [float(value) for value in model.get("feature_means") or []]
+    stds = [float(value) if float(value) != 0 else 1.0 for value in model.get("feature_stds") or []]
+    aggregate_stats = model.get("aggregate_reward_features")
+    if not isinstance(aggregate_stats, dict):
+        return float("-inf")
+    if (
+        not feature_names
+        or len(feature_names) != len(coefficients)
+        or len(feature_names) != len(means)
+        or len(feature_names) != len(stds)
+    ):
+        return float("-inf")
+    raw = _smoothed_linear_feature_vector(row, feature_names, aggregate_stats)
+    normalized = _normalize_feature_vector(raw, feature_names, means, stds)
+    return sum(coef * value for coef, value in zip(coefficients, normalized))
+
+
 def _can_featurize(row: dict[str, Any], model: dict[str, Any]) -> bool:
     feature_names = list(model.get("feature_names") or [])
     coefficients = list(model.get("coefficients") or [])
@@ -614,6 +735,66 @@ def _signature_stats(scored_rewards: Iterable[dict[str, Any]]) -> list[dict[str,
     return stats
 
 
+def _aggregate_reward_feature_stats(scored_rewards: list[dict[str, Any]]) -> dict[str, Any]:
+    signature_stats = _signature_stats(scored_rewards)
+    family_stats = _family_stats(
+        scored_rewards,
+        key_fn=_retrieval_context_family_id,
+        payload_fn=_retrieval_context_family_payload,
+        id_name="family_id",
+    )
+    context_policy_stats = _family_stats(
+        scored_rewards,
+        key_fn=_context_policy_id,
+        payload_fn=_context_policy_payload,
+        id_name="context_policy_id",
+    )
+    retriever_stats = _family_stats(
+        scored_rewards,
+        key_fn=_retriever_id,
+        payload_fn=_retriever_payload,
+        id_name="retriever_id",
+    )
+    all_stats = [*signature_stats, *family_stats, *context_policy_stats, *retriever_stats]
+    max_count = max([int(row.get("count") or 0) for row in all_stats] or [1])
+    return {
+        "schema_version": "rlaif-aggregate-reward-features-v1",
+        "source": "train_rewards_only",
+        "max_count": max_count,
+        "global": {
+            "count": len(scored_rewards),
+            "mean_reward": _mean_field(scored_rewards, "reward"),
+            "mean_quality": _mean_field(scored_rewards, "quality"),
+        },
+        "exact_signatures": signature_stats,
+        "retrieval_context_families": family_stats,
+        "context_policies": context_policy_stats,
+        "retrievers": retriever_stats,
+    }
+
+
+def _aggregate_lookup(
+    aggregate_stats: dict[str, Any],
+    bucket_name: str,
+    id_name: str,
+    key: str,
+) -> dict[str, Any] | None:
+    bucket = aggregate_stats.get(
+        {
+            "exact_signature": "exact_signatures",
+            "retrieval_context_family": "retrieval_context_families",
+            "context_policy": "context_policies",
+            "retriever": "retrievers",
+        }[bucket_name]
+    )
+    if not isinstance(bucket, list):
+        return None
+    for row in bucket:
+        if isinstance(row, dict) and str(row.get(id_name)) == key:
+            return row
+    return None
+
+
 def _fixed_signature(signature_stats: list[dict[str, Any]]) -> dict[str, Any]:
     return sorted(
         signature_stats,
@@ -687,6 +868,14 @@ def _context_policy_id(row: dict[str, Any]) -> str:
 
 def _context_policy_payload(row: dict[str, Any]) -> dict[str, Any]:
     return {"context_policy": _context_policy_id(row)}
+
+
+def _retriever_id(row: dict[str, Any]) -> str:
+    return str(_signature(row).get("retrieval_strategy") or "missing")
+
+
+def _retriever_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {"retriever": _retriever_id(row)}
 
 
 def _budget_bucket(value: Any) -> str:

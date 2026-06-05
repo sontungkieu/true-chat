@@ -84,22 +84,23 @@ seed 1:
   family_smoothed reward 0.613
 ```
 
-## Next Step
+## Follow-Up Result
 
-The next selector should combine the strengths of exact-signature ranking, family smoothing, and
-light learned scoring:
+The follow-up selector combined exact-signature ranking, family smoothing, and light learned
+scoring:
 
 ```text
 smoothed_linear_selector
 ```
 
-Candidate behavior:
+Implemented behavior:
 
 ```text
 features:
-  exact_signature_mean_reward_if_seen
+  exact_signature_train_mean_reward_if_seen
   retrieval_context_family_mean_reward
   context_policy_mean_reward
+  retriever_mean_reward
   token_cost_norm / latency_norm / kv_cost_norm
 
 guardrail:
@@ -107,5 +108,16 @@ guardrail:
   no runtime default replacement
 ```
 
-Do not move to DPO/PPO/GRPO or runtime KV pruning yet. The next bottleneck is still selector
-calibration under small logged data.
+Six-seed result:
+
+```text
+smoothed_linear_selector:
+  coverage 1.000
+  reward 0.595
+  quality 0.767
+  oracle gap 0.076
+```
+
+This improves over `linear_reward_model` (`0.586` reward, `0.086` oracle gap), but it still trails
+`family_smoothed_best_average` and `best_average`. Do not move to DPO/PPO/GRPO or runtime KV
+pruning yet. The next bottleneck is still small logged data and missing context-level RLAIF labels.

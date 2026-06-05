@@ -12,6 +12,7 @@ from rag_bench.rlaif_policy import (
     OracleLoggedPolicy,
     RlaifEvalConfig,
     RlaifTrainConfig,
+    SmoothedLinearSelectorPolicy,
     evaluate_offline_selector_policies,
     train_offline_selector_policies,
 )
@@ -42,7 +43,7 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
     )
 
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    assert summary["policy_count"] == 6
+    assert summary["policy_count"] == 7
     assert summary["reward_count"] == 4
     assert summary["preference_count"] == 1
     assert policy["runtime_default_replacement"] is False
@@ -52,6 +53,7 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
         "best_average",
         "family_smoothed_best_average",
         "linear_reward_model",
+        "smoothed_linear_selector",
         "oracle_logged",
     }
     assert policy["policies"]["fixed"]["signature"]["context_policy"] == "evidence-aware"
@@ -62,6 +64,10 @@ def test_train_writes_offline_policy_baselines(tmp_path: Path) -> None:
     assert linear_model["training_rows"] == 4
     assert linear_model["runtime_default_replacement"] is False
     assert len(linear_model["feature_names"]) == len(linear_model["coefficients"])
+    smoothed_model = policy["policies"]["smoothed_linear_selector"]
+    assert smoothed_model["runtime_default_replacement"] is False
+    assert smoothed_model["aggregate_reward_features"]["source"] == "train_rewards_only"
+    assert "family_train_mean_reward" in smoothed_model["feature_names"]
 
 
 def test_public_policy_names_match_artifact_keys() -> None:
@@ -70,6 +76,7 @@ def test_public_policy_names_match_artifact_keys() -> None:
     assert BestAverageActionPolicy.policy_type == "best_average"
     assert FamilySmoothedBestAveragePolicy.policy_type == "family_smoothed_best_average"
     assert LinearRewardModelPolicy.policy_type == "linear_reward_model"
+    assert SmoothedLinearSelectorPolicy.policy_type == "smoothed_linear_selector"
     assert OracleLoggedPolicy.policy_type == "oracle_logged"
 
 
@@ -100,6 +107,30 @@ def test_linear_reward_model_features_do_not_leak_labels(tmp_path: Path) -> None
     assert "exclude reward" in linear_model["label_leakage_guard"]
 
 
+def test_smoothed_linear_aggregate_features_are_train_only(tmp_path: Path) -> None:
+    train_rewards_path = tmp_path / "train_rewards.jsonl"
+    policy_path = tmp_path / "rlaif_policy.json"
+    train_row = _reward("q1", "bm25", "evidence-aware", 0.80, 0.85, token=0.20)
+    eval_row = _reward("q2", "bm25", "evidence-aware", 0.10, 0.20, token=0.95)
+    eval_row["metadata"]["action_signature_id"] = "eval-only-signature"  # type: ignore[index]
+    _write_jsonl(train_rewards_path, [train_row])
+
+    train_offline_selector_policies(
+        RlaifTrainConfig(rewards_path=train_rewards_path, output_path=policy_path)
+    )
+
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    aggregate_features = policy["policies"]["smoothed_linear_selector"]["aggregate_reward_features"]
+    exact_signature_ids = {
+        row["signature_id"]
+        for row in aggregate_features["exact_signatures"]
+    }
+    assert train_row["metadata"]["action_signature_id"] in exact_signature_ids  # type: ignore[index]
+    assert eval_row["metadata"]["action_signature_id"] not in exact_signature_ids  # type: ignore[index]
+    assert aggregate_features["global"]["count"] == 1
+    assert "eval reward" in policy["policies"]["smoothed_linear_selector"]["label_leakage_guard"]
+
+
 def test_eval_reports_oracle_gap_and_policy_costs(tmp_path: Path) -> None:
     rewards_path = tmp_path / "rlaif_rewards.jsonl"
     policy_path = tmp_path / "rlaif_policy.json"
@@ -124,11 +155,13 @@ def test_eval_reports_oracle_gap_and_policy_costs(tmp_path: Path) -> None:
     best_average = summary["policy_metrics"]["best_average"]
     cheapest = summary["policy_metrics"]["cheapest"]
     linear = summary["policy_metrics"]["linear_reward_model"]
+    smoothed = summary["policy_metrics"]["smoothed_linear_selector"]
     assert oracle["oracle_gap"] == 0.0
     assert best_average["mean_reward"] == oracle["mean_reward"]
     assert cheapest["mean_token_cost"] < summary["policy_metrics"]["fixed"]["mean_token_cost"]
     assert best_average["coverage"] == 1.0
     assert linear["coverage"] == 1.0
+    assert smoothed["coverage"] == 1.0
     assert out_md.read_text(encoding="utf-8").startswith("# RLAIF Offline Selector Evaluation")
 
 
@@ -159,10 +192,50 @@ def test_family_smoothed_selector_backs_off_for_unseen_exact_signature(tmp_path:
     )
 
     family_smoothed = summary["policy_metrics"]["family_smoothed_best_average"]
+    smoothed_linear = summary["policy_metrics"]["smoothed_linear_selector"]
     best_average = summary["policy_metrics"]["best_average"]
     assert best_average["coverage"] == 0.0
     assert family_smoothed["coverage"] == 1.0
     assert family_smoothed["mean_reward"] == 0.75
+    assert smoothed_linear["coverage"] == 1.0
+
+
+def test_smoothed_linear_selector_uses_family_mean_when_exact_signature_missing() -> None:
+    evidence_row = _reward("q1", "bm25", "evidence-aware", 0.75, 0.82, token=0.35)
+    legacy_row = _reward("q1", "bm25", "legacy", 0.40, 0.50, token=0.09)
+    evidence_family = "bm25|evidence-aware|<=4k|none"
+    legacy_family = "bm25|legacy|none|none"
+    policy = {
+        "policies": {
+            "smoothed_linear_selector": {
+                "feature_names": [
+                    "bias",
+                    "family_train_mean_reward",
+                    "family_train_missing",
+                    "global_train_mean_reward",
+                ],
+                "feature_means": [0.0, 0.0, 0.0, 0.0],
+                "feature_stds": [1.0, 1.0, 1.0, 1.0],
+                "coefficients": [0.0, 1.0, -1.0, 0.0],
+                "aggregate_reward_features": {
+                    "source": "train_rewards_only",
+                    "max_count": 2,
+                    "global": {"count": 4, "mean_reward": 0.55},
+                    "exact_signatures": [],
+                    "retrieval_context_families": [
+                        {"family_id": evidence_family, "count": 2, "mean_reward": 0.82},
+                        {"family_id": legacy_family, "count": 2, "mean_reward": 0.35},
+                    ],
+                    "context_policies": [],
+                    "retrievers": [],
+                },
+            }
+        }
+    }
+
+    selected = SmoothedLinearSelectorPolicy().select([legacy_row, evidence_row], policy)
+
+    assert selected is evidence_row
 
 
 def test_eval_keeps_missing_reward_separate_from_zero(tmp_path: Path) -> None:

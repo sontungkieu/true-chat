@@ -38,10 +38,10 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{family\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, multi-seed selector sweep, action coverage diagnostics, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{family\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector}, multi-seed selector sweep, action coverage diagnostics, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{202 passed} \\
+Trạng thái test gần nhất & \texttt{204 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -60,7 +60,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item Context judge hiện tại: thêm \texttt{rlaif-label-contexts} để label sufficient context, selected/redundant/irrelevant chunks, missing evidence và context quality với cùng cơ chế dry-run/resume/JSON repair; thêm script summary và report template cho context labels.
   \item Pairwise judge hiện tại: thêm \texttt{rlaif-label-pairs} để judge trực tiếp action A/B từ \texttt{rlaif\_preferences.jsonl}, nhưng không bắt buộc tin preference cũ; output có A/B/tie/ambiguous, quality/support/efficiency winner, quality regret, unsupported-claim risk và confidence.
   \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ.
-  \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average, \texttt{family\_smoothed\_best\_average}, \texttt{linear\_reward\_model} và oracle-logged baselines.
+  \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average, \texttt{family\_smoothed\_best\_average}, \texttt{linear\_reward\_model}, \texttt{smoothed\_linear\_selector} và oracle-logged baselines.
   \item Multi-seed selector hiện tại: thêm \texttt{scripts/run\_rlaif\_split\_sweep.py} để chạy nhiều split seed và báo mean/std cho selector metrics.
   \item Action coverage hiện tại: thêm \texttt{scripts/inspect\_rlaif\_action\_coverage.py} để phân tích exact signature sparsity và collapsed family coverage.
   \item AI-judge held-out hiện tại: full MiMo answer-label run trên Kaggle đã hoàn tất; reward được rebuild bằng \texttt{--answer-labels}, rerun split/train/eval và ghi report \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}.
@@ -298,7 +298,7 @@ uv run rag-bench rlaif-eval \
 
 \texttt{rlaif-split} chia theo \texttt{benchmark + query\_id}, không chia random theo action row. Tất cả action của cùng một query luôn nằm cùng train hoặc eval split. Preference chỉ được giữ nếu cả chosen/rejected action cùng nằm trong train hoặc cùng nằm trong eval; preference cắt ngang split bị drop và được đếm trong manifest.
 
-\texttt{rlaif-train} hiện tạo sáu baseline offline:
+\texttt{rlaif-train} hiện tạo bảy baseline offline:
 
 \begin{itemize}[leftmargin=*]
   \item \texttt{fixed}: chọn action signature có nhiều reward thật nhất, tie-break bằng reward trung bình.
@@ -306,6 +306,7 @@ uv run rag-bench rlaif-eval \
   \item \texttt{best-average}: chọn action signature khả dụng có reward trung bình cao nhất trong dữ liệu train.
   \item \texttt{family\_smoothed\_best\_average}: chọn theo exact signature mean nếu có; nếu không có thì backoff sang retrieval-context-family mean rồi context-policy mean.
   \item \texttt{linear\_reward\_model}: learned offline selector bằng ridge regression trên action/context/cost features, không dùng reward, quality, evidence-support labels hoặc preference outcome làm input feature.
+  \item \texttt{smoothed\_linear\_selector}: learned offline selector bằng ridge regression trên action/context/cost features cộng thêm exact/family/context-policy/retriever reward means và counts được tính chỉ từ train split; eval rows không được dùng để fill aggregate features.
   \item \texttt{oracle-logged}: upper bound offline, chọn action có reward quan sát cao nhất trong cùng query group.
 \end{itemize}
 
@@ -320,6 +321,8 @@ Multi-seed sweep với seeds 1, 2, 3, 4, 5 và 42 cho thấy seed 42 hơi lạc 
 Action coverage diagnostics cho thấy bottleneck chính là exact-signature sparsity. Có 77 exact signatures trên 192 reward rows và 34 queries; 20 signatures là singleton (26.0\%). Trung bình qua 6 split, exact-signature eval group coverage là 0.911, khớp với coverage của \texttt{best-average}. Khi collapse xuống \texttt{retrieval\_context\_family} gồm retriever, context policy, budget bucket và adaptive profile, eval group coverage lên 1.0. Vì vậy bước kế tiếp nên là family-level smoothing/backoff, chưa phải pairwise ranker phức tạp.
 
 \texttt{family\_smoothed\_best\_average} đã được thêm để kiểm chứng giả thuyết này. Trung bình 6 seed, policy này đạt coverage 1.0, reward 0.598, quality 0.767 và oracle gap 0.074. Nó sửa coverage loss của \texttt{best-average} và giảm oracle gap (0.074 so với 0.080), nhưng vẫn thấp hơn \texttt{best-average} về reward/quality trung bình (0.598/0.767 so với 0.618/0.794). Kết luận: family smoothing hữu ích như coverage repair, nhưng chưa đủ để thay thế exact-signature ranking.
+
+\texttt{smoothed\_linear\_selector} kiểm tra xem aggregate train means có giúp learned selector tốt hơn không. Policy này giữ coverage 1.0 và cải thiện nhẹ so với \texttt{linear\_reward\_model}: reward 0.595 so với 0.586, oracle gap 0.076 so với 0.086. Tuy nhiên nó vẫn thấp hơn \texttt{family\_smoothed\_best\_average} và \texttt{best-average}. Diễn giải đúng là aggregate train means hữu ích, nhưng trong small-data logged-candidate regime hiện tại, simple family smoothing và exact-signature averaging vẫn là baseline rất mạnh.
 
 \section{Hai điểm đã harden trước reward/preference}
 
@@ -366,9 +369,9 @@ Thứ tự tiếp theo nên giữ như sau:
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Context judge run}: chạy \texttt{rlaif-label-contexts} trên subset nhỏ sau khi answer-label và pairwise audit đã ổn, rồi dùng labels này để tạo context-sufficiency preferences.
   \item \textbf{Context label report}: chạy \texttt{scripts/summarize\_rlaif\_context\_labels.py} và điền \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md}.
-  \item \textbf{Smoothed learned selector}: thêm feature từ exact/family/context-policy train means vào learned selector, không leak held-out reward/quality labels.
+  \item \textbf{More logged query groups}: tăng số query/action groups trước khi kết luận selector learned có generalization ổn định.
   \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
-  \item \textbf{Simple ranking baseline}: sau khi \texttt{linear\_reward\_model} ổn định qua nhiều seed, cân nhắc pairwise ranker nhẹ từ preference rows.
+  \item \textbf{Simple ranking baseline}: sau khi có thêm data/context labels, cân nhắc pairwise ranker nhẹ từ preference rows.
   \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.
 \end{enumerate}
 

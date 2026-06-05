@@ -88,6 +88,13 @@ Behavior:
 ```
 
 Six-seed evaluation shows it repairs coverage to `1.000` and improves oracle gap over
-`best_average`, but it still trails `best_average` on mean reward/quality. The next step is a
-smoothed learned selector that uses exact/family/context-policy train means as non-leaking
-features.
+`best_average`, but it still trails `best_average` on mean reward/quality.
+
+A second follow-up, `smoothed_linear_selector`, has also been implemented. It adds train-only
+aggregate reward means/counts for exact signatures, retrieval-context families, context policies,
+and retrievers to the learned ridge model. It keeps coverage at `1.000` and improves over
+`linear_reward_model` on reward/oracle gap, but it still does not beat `family_smoothed_best_average`
+or `best_average` on the six-seed mean.
+
+The next bottleneck is therefore not just action representation. The next useful step is richer
+context-level RLAIF labels and/or more logged query groups before trying a pairwise ranker.
