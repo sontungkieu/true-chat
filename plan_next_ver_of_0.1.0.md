@@ -16,7 +16,7 @@ The current result bottlenecks are still data and coverage, not algorithmic soph
 
 - full MiMo context labels exist for the first 192-action Phase 1D dataset, but they are still small and AI-generated;
 - logged query/action data is still small;
-- retriever-diverse retrieval-only action coverage now exists for a 50-query SciFact sample, but generation/judge labels do not yet exist for those retriever-diverse rows;
+- retriever-diverse retrieval-only action coverage now exists for a 50-query SciFact sample, and a first 10-query retriever-diverse MiMo V2.5 generation/answer-label subset now exists, but it is still too small for selector generalization claims;
 - exact action signatures remain sparse.
 
 Future MiMo 2.5 runs should use standard `mimo-v2.5`, not `mimo-v2.5-pro`,
@@ -30,10 +30,13 @@ allowed when the drift is explicitly annotated.
 
 Therefore the next bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm. Do not add DPO, PPO, GRPO, runtime KV pruning, or a complex reward model in this phase. Current results should be framed as evidence that the infrastructure works, while learned selectors remain data-limited.
 
-The immediate next experiment is a small retriever-diverse generation/judge
-subset using standard `mimo-v2.5`, not a larger algorithmic selector. The
-retrieval-only coverage run has already verified that sampled queries can carry
-all three retrievers (`bm25`, `graph-bm25`, `hybrid-rrf`) and 45 action rows.
+The immediate next experiment is to rerun or expand the small retriever-diverse
+generation/judge subset with a larger MiMo completion cap, not to add a larger
+algorithmic selector. The retrieval-only coverage run has already verified that
+sampled queries can carry all three retrievers (`bm25`, `graph-bm25`,
+`hybrid-rrf`) and 45 action rows. The first 10-query generation subset verified
+the answer-label/reward/preference path, but `MAX_COMPLETION_TOKENS=256`
+produced 77 empty answer strings, so full generation should not use that cap.
 
 Do not overclaim:
 
@@ -109,6 +112,8 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
    - It should write incrementally so a long MiMo judge run can resume safely.
    - Invalid JSON, empty completions, missing answers, and missing contexts become ambiguous labels with `quality_score: null`, never score zero.
    - MiMo V2.5 can spend hidden reasoning tokens before emitting JSON, so the default answer-judge completion budget is `4096`.
+   - First retriever-diverse MiMo V2.5 generation/answer-label subset: 300 action rows over 10 SciFact queries, 300 answer labels, 299 valid JSON labels, 222 labels with numeric diagnostics, 186 clean AI-judge reward rows, and 1559 preference pairs. The run is documented in `docs/reports/phase1d_retriever_diversity_generation_mimo10.md`.
+   - Do not scale that subset directly to the full 2250-row matrix with `MAX_COMPLETION_TOKENS=256`; the low cap produced 77 empty generated answers with no request errors. Use a larger generation cap first, then re-check empty-answer and label coverage.
 
 ```bash
 uv run rag-bench rlaif-label-answers \

@@ -22,7 +22,7 @@ The current Vast AI scripts target RTX 5060 Ti 16GB hosts with CUDA 13.0 and CUD
 
 \subsection{Retriever Diversity}
 
-Current evidence mostly supports context-budget/action selection. To claim retrieval-context allocation, logged actions must include multiple retrieval strategies. A first retrieval-only SciFact run now covers 45 jobs over 50 queries:
+Current evidence mostly supports context-budget/action selection. To claim retrieval-context allocation, logged actions must include multiple retrieval strategies. A first retrieval-only SciFact run covers 45 jobs over 50 queries:
 
 \begin{itemize}[leftmargin=*]
   \item 3 retrievers: BM25, graph-BM25, and hybrid-RRF;
@@ -31,7 +31,16 @@ Current evidence mostly supports context-budget/action selection. To claim retri
   \item generation was skipped, so this verifies logged action coverage but does not provide answer-quality or judge-label evidence.
 \end{itemize}
 
-The next step is a small MiMo-\code{v2.5} generation subset with explicit \code{retriever}, \code{context\_policy}, \code{adaptive\_profile}, \code{budget}, \code{generator\_model}, and \code{judge\_model} columns. Optional web-search remains a live stress test only and must not be mixed with reproducible BEIR claims.
+The follow-up step was a small MiMo-\code{v2.5} generation subset with explicit \code{retriever}, \code{context\_policy}, \code{adaptive\_profile}, \code{budget}, \code{generator\_model}, and \code{judge\_model} columns. Optional web-search remains a live stress test only and must not be mixed with reproducible BEIR claims. This generation subset has now been run for 10 SciFact queries:
+
+\begin{itemize}[leftmargin=*]
+  \item 30 jobs produced 300 retriever-diverse action rows over BM25, graph-BM25, and hybrid-RRF with standard \code{mimo-v2.5}.
+  \item MiMo answer judging produced 300 labels, 299 valid JSON labels, 222 labels with numeric diagnostics, and 186 clean reward rows after filtering ambiguous labels.
+  \item The reward build produced 1559 preference pairs, including 1189 retrieval-context preferences.
+  \item Six-seed held-out selector evaluation is only a diagnostic because the run contains 10 query groups; it verifies the pipeline but does not support a learned-selector generalization claim.
+\end{itemize}
+
+The run also exposed an operational issue: \code{MAX\_COMPLETION\_TOKENS=256} is too low for standard MiMo V2.5 generation, producing 77 empty answer strings with no request errors. Future retriever-diverse generation runs should use a larger generation cap before scaling to the full 50-query matrix.
 
 \subsection{Larger Logged Query Groups}
 
