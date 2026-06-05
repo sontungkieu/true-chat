@@ -33,6 +33,7 @@ pairwise_calibration = _load_script(
     "scripts/diagnose_rlaif_pairwise_calibration.py",
 )
 selector_sweep = _load_script("run_rlaif_split_sweep", "scripts/run_rlaif_split_sweep.py")
+action_coverage = _load_script("inspect_rlaif_action_coverage", "scripts/inspect_rlaif_action_coverage.py")
 kv_estimates = _load_script("estimate_local_qwen_kv_cache", "scripts/estimate_local_qwen_kv_cache.py")
 
 
@@ -121,6 +122,56 @@ def test_run_rlaif_selector_sweep_writes_multiseed_summary(tmp_path: Path) -> No
     assert "Runtime default replacement: `false`" in rendered
     assert summary["policy_stats"]["linear_reward_model"]["coverage"]["count"] == 2
     assert summary["policy_stats"]["oracle_logged"]["oracle_gap"]["mean"] == 0.0
+
+
+def test_inspect_rlaif_action_coverage_reports_signature_sparsity(tmp_path: Path) -> None:
+    rewards_path = tmp_path / "rlaif_rewards.jsonl"
+    manifest_path = tmp_path / "split_manifest.json"
+    _write_jsonl(
+        rewards_path,
+        [
+            _coverage_reward("q1", "sig-a", "bm25", "evidence-aware", 4000, 0.70),
+            _coverage_reward("q2", "sig-a", "bm25", "evidence-aware", 4000, 0.72),
+            _coverage_reward("q3", "sig-b", "bm25", "evidence-aware", 8000, 0.74),
+            _coverage_reward("q4", "sig-c", "bm25", "evidence-aware", 4000, 0.76),
+        ],
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "seed": 7,
+                "train_queries": [
+                    {"benchmark": "scifact", "query_id": "q1"},
+                    {"benchmark": "scifact", "query_id": "q2"},
+                ],
+                "eval_queries": [
+                    {"benchmark": "scifact", "query_id": "q3"},
+                    {"benchmark": "scifact", "query_id": "q4"},
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = action_coverage.inspect_action_coverage(
+        rewards_path=rewards_path,
+        split_manifest_paths=[manifest_path],
+        top_n=4,
+    )
+
+    assert summary["levels"]["exact_signature"]["unique_count"] == 3
+    assert summary["levels"]["exact_signature"]["singleton_count"] == 2
+    split = summary["split_summaries"][0]["levels"]
+    assert split["exact_signature"]["eval_query_coverage"] == 0.0
+    assert split["exact_signature"]["eval_group_coverage"] == 0.0
+    assert split["context_policy"]["eval_query_coverage"] == 1.0
+    assert split["context_policy"]["eval_group_coverage"] == 1.0
+    assert split["retriever"]["eval_query_coverage"] == 1.0
+    rendered = action_coverage.render_markdown(summary)
+    assert "RLAIF Action Coverage Diagnostics" in rendered
+    assert "retrieval_context_family" in rendered
 
 
 def test_qwen_kv_estimate_formula_and_table() -> None:
@@ -421,5 +472,41 @@ def _sweep_reward(
                 "generator_model": "mimo_v25_pro",
             },
             "action_signature": signature,
+        },
+    }
+
+
+def _coverage_reward(
+    query_id: str,
+    signature_id: str,
+    retriever: str,
+    context_policy: str,
+    budget_chars: int,
+    reward: float,
+) -> dict:
+    return {
+        "action_id": f"action-{query_id}-{signature_id}",
+        "query_id": query_id,
+        "reward": reward,
+        "quality": reward,
+        "metadata": {
+            "query_group": {
+                "benchmark": "scifact",
+                "query_id": query_id,
+                "top_k": 10,
+                "generator_model": "mimo_v25_pro",
+            },
+            "action_signature_id": signature_id,
+            "action_signature": {
+                "retrieval_strategy": retriever,
+                "fusion_strategy": "single",
+                "top_k": 10,
+                "context_policy": context_policy,
+                "budget_chars": budget_chars,
+                "adaptive_profile": None,
+                "selected_context_policy": context_policy,
+                "selected_budget_chars": budget_chars,
+                "generator_model": "mimo_v25_pro",
+            },
         },
     }

@@ -38,10 +38,10 @@
 \begin{center}
 \begin{tabular}{>{\raggedright\arraybackslash}p{3.4cm} >{\raggedright\arraybackslash}p{10.2cm}}
 \toprule
-Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{linear\_reward\_model}, multi-seed selector sweep, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
+Mốc code hiện tại & Schema, \texttt{rlaif-build}, \texttt{rlaif-label-answers}, \texttt{rlaif-label-contexts}, \texttt{rlaif-label-pairs}, \texttt{rlaif-reward --answer-labels}, opt-in \texttt{pairwise\_tie\_v1}, \texttt{rlaif-split}, \texttt{rlaif-train}, \texttt{rlaif-eval}, \texttt{linear\_reward\_model}, multi-seed selector sweep, action coverage diagnostics, answer/context/pairwise-label summaries, pairwise calibration diagnostics và Qwen KV estimates \\
 Mốc schema & \texttt{fdefb63} -- \texttt{feat(rlaif): add retrieval-context schemas} \\
 Mốc kế hoạch & \texttt{c634bd3} -- \texttt{docs(plan): update rlaif retrieval-context roadmap} \\
-Trạng thái test gần nhất & \texttt{200 passed} \\
+Trạng thái test gần nhất & \texttt{201 passed} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -62,6 +62,7 @@ Các commit gần nhất tạo nền cho Phase 1C.3:
   \item Reward/preference hiện tại: thêm \texttt{rlaif-reward} để ghi reward, preference và summary từ dataset RLAIF đã chuẩn hóa, gồm optional \texttt{--answer-labels} để dùng AI-judge labels hợp lệ.
   \item Offline selector hiện tại: thêm \texttt{rlaif-split}, \texttt{rlaif-train} và \texttt{rlaif-eval} cho held-out query evaluation với fixed, cheapest, best-average, \texttt{linear\_reward\_model} và oracle-logged baselines.
   \item Multi-seed selector hiện tại: thêm \texttt{scripts/run\_rlaif\_split\_sweep.py} để chạy nhiều split seed và báo mean/std cho selector metrics.
+  \item Action coverage hiện tại: thêm \texttt{scripts/inspect\_rlaif\_action\_coverage.py} để phân tích exact signature sparsity và collapsed family coverage.
   \item AI-judge held-out hiện tại: full MiMo answer-label run trên Kaggle đã hoàn tất; reward được rebuild bằng \texttt{--answer-labels}, rerun split/train/eval và ghi report \texttt{docs/reports/phase1d\_rlaif\_ai\_judge\_heldout\_eval.md}.
   \item Direct pairwise audit hiện tại: chạy MiMo trên 50 reward-derived preference pairs, ghi 50 valid JSON labels, 2 ambiguous timeouts, 41 A wins, 7 B wins và agreement 0.854 trên non-ambiguous decisions; report nằm ở \texttt{docs/reports/phase1d\_rlaif\_pairwise\_mimo50.md}.
   \item Pairwise calibration diagnostics hiện tại: thêm \texttt{scripts/diagnose\_rlaif\_pairwise\_calibration.py}; MiMo-50 diagnostics ghi 38 small quality/support delta pairs, 35 cheaper-wins-when-tied và 5 scalar-over-quality disagreements.
@@ -315,6 +316,8 @@ Sau khi có full MiMo answer labels và candidate \texttt{pairwise\_tie\_v1}, \t
 
 Multi-seed sweep với seeds 1, 2, 3, 4, 5 và 42 cho thấy seed 42 hơi lạc quan. Trung bình 6 seed, \texttt{linear\_reward\_model} giữ coverage 1.0 và tốt hơn \texttt{cheapest} về reward trung bình (0.586 so với 0.577) và oracle gap (0.086 so với 0.094), nhưng chưa vượt \texttt{best-average} về reward/quality trung bình. Điều này biến kết quả v2 thành positive first signal thay vì claim ổn định.
 
+Action coverage diagnostics cho thấy bottleneck chính là exact-signature sparsity. Có 77 exact signatures trên 192 reward rows và 34 queries; 20 signatures là singleton (26.0\%). Trung bình qua 6 split, exact-signature eval group coverage là 0.911, khớp với coverage của \texttt{best-average}. Khi collapse xuống \texttt{retrieval\_context\_family} gồm retriever, context policy, budget bucket và adaptive profile, eval group coverage lên 1.0. Vì vậy bước kế tiếp nên là family-level smoothing/backoff, chưa phải pairwise ranker phức tạp.
+
 \section{Hai điểm đã harden trước reward/preference}
 
 Pasted review đã chỉ ra hai điểm yếu hợp lý cần sửa trước khi xây reward/preference builder. Hai điểm này đã được xử lý trong hardening hiện tại.
@@ -360,7 +363,7 @@ Thứ tự tiếp theo nên giữ như sau:
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Context judge run}: chạy \texttt{rlaif-label-contexts} trên subset nhỏ sau khi answer-label và pairwise audit đã ổn, rồi dùng labels này để tạo context-sufficiency preferences.
   \item \textbf{Context label report}: chạy \texttt{scripts/summarize\_rlaif\_context\_labels.py} và điền \texttt{docs/reports/phase1d\_rlaif\_context\_labels\_template.md}.
-  \item \textbf{Action coverage diagnostics}: phân tích action signature nào train/eval bị lệch, signature nào quá sparse và có nên collapse action dimensions không.
+  \item \textbf{Family-smoothed selector}: thêm selector backoff từ exact signature mean sang retrieval-context-family mean rồi context-policy mean.
   \item \textbf{Richer pairwise sample}: chạy pairwise trên sample đa dạng hơn sau khi context labels được populate.
   \item \textbf{Simple ranking baseline}: sau khi \texttt{linear\_reward\_model} ổn định qua nhiều seed, cân nhắc pairwise ranker nhẹ từ preference rows.
   \item \textbf{Contextual bandit thật}: chỉ sau khi offline eval cho thấy không làm giảm answer quality.

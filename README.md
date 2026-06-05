@@ -437,6 +437,18 @@ uv run python scripts/run_rlaif_split_sweep.py \
 
 The sweep writes `selector_sweep_summary.json` and `selector_sweep_summary.md` plus one `split_seed*/` directory per seed. It is a logged-candidate offline robustness check, not a runtime policy change.
 
+Inspect action coverage and signature sparsity:
+
+```bash
+uv run python scripts/inspect_rlaif_action_coverage.py \
+  --rewards benchmark_results/rlaif/<run-name>/rlaif_rewards.jsonl \
+  --split-manifests benchmark_results/rlaif/<run-name>/split_sweep_seeds_1_2_3_4_5_42/split_seed*/split_manifest.json \
+  --out-md benchmark_results/rlaif/<run-name>/action_coverage.md \
+  --out-json benchmark_results/rlaif/<run-name>/action_coverage.json
+```
+
+The diagnostic compares exact action ids, exact signatures, collapsed retrieval-context families, context policies, and retrievers. Use it before adding more complex selectors; if exact signatures are sparse but collapsed families cover eval groups, prefer family-level smoothing/backoff over a larger model.
+
 Summarize local matrix outputs:
 
 ```bash
