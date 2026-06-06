@@ -162,6 +162,9 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      favors graph-BM25 by mean reward/quality, but context labels are still
      needed before a final retriever-quality claim. Report:
      `docs/reports/phase1d_retriever_diversity_a1_mimo_v25_eval.md`.
+   - Updated the internship PDF Main Results with the A1 answer-label
+     validation table, A1 answer quality by retriever table, A1 answer-only
+     selector sweep table, and the prepared 600-row context-label subset gate.
    - Added A1 answer-label postprocess tooling:
      `scripts/validate_rlaif_answer_labels.py` validates and merges sharded
      MiMo answer-label JSONL files, skips corrupted partial lines, reports
