@@ -169,7 +169,12 @@ def test_eval_reports_oracle_gap_and_policy_costs(tmp_path: Path) -> None:
     assert best_average["coverage"] == 1.0
     assert linear["coverage"] == 1.0
     assert smoothed["coverage"] == 1.0
-    assert out_md.read_text(encoding="utf-8").startswith("# RLAIF Offline Selector Evaluation")
+    assert oracle["selected_retriever_distribution"] == {"bm25": 3}
+    assert oracle["selected_context_policy_distribution"] == {"evidence-aware": 2, "legacy": 1}
+    rendered = out_md.read_text(encoding="utf-8")
+    assert rendered.startswith("# RLAIF Offline Selector Evaluation")
+    assert "Retrievers" in rendered
+    assert "Context policies" in rendered
 
 
 def test_family_smoothed_selector_backs_off_for_unseen_exact_signature(tmp_path: Path) -> None:

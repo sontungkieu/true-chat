@@ -9,7 +9,9 @@ Action normalization & Normalize retrieval-context action dimensions. & Stable a
 RLAIF schemas & Schemas for actions, feedback, rewards, and preferences. & Validated JSONL records. \\
 Dataset builder & Convert BudgetRAG \code{query\_results.jsonl} into normalized datasets. & actions and feedback JSONL. \\
 Answer labeler & AI-judge answer labels with resume and JSON repair. & answer-label JSONL. \\
+Answer-label validator & Merge and validate sharded answer-label outputs. & merged labels and validation summary. \\
 Context labeler & AI-judge context sufficiency and chunk labels. & context-label JSONL. \\
+Stratified action sampler & Select balanced context-label subsets by retriever, policy/profile, and budget. & sampled action JSONL and summary. \\
 Reward builder & Build scalar rewards and preferences with guardrails. & rewards and preferences JSONL. \\
 Query splitter & Deterministic query-level split. & train/eval JSONL and manifest. \\
 Selector policies & Offline selector baselines. & policy artifact and eval summary. \\
@@ -24,4 +26,4 @@ Model-bench workflow & Benchmark local or existing vLLM endpoints and record ser
 
 The corresponding source files are under \code{src/rag\_bench/} for modules and \code{scripts/} for standalone analysis scripts.
 
-The code-level test suite covers schema validation, builders, reward/preference logic, labeler hardening, split behavior, selector policies, analysis scripts, model-bench helpers, and secret handling. The merged internship branch currently verifies with 269 passing tests.
+The code-level test suite covers schema validation, builders, reward/preference logic, labeler hardening, split behavior, selector policies, analysis scripts, model-bench helpers, and secret handling. The merged internship branch currently verifies with 271 passing tests.

@@ -707,7 +707,7 @@ uv run rag-bench rlaif-eval \
   --split-manifest benchmark_results/rlaif/<run-name>/split_seed42/split_manifest.json
 ```
 
-`rlaif-split` writes `train_rewards.jsonl`, `eval_rewards.jsonl`, `train_preferences.jsonl`, `eval_preferences.jsonl`, `split_manifest.json`, and `split_summary.md`. It splits by `benchmark + query_id`, not by random action rows, so all actions for the same query stay in the same split. Preferences crossing the split boundary are dropped and counted in the manifest. `rlaif-train` writes fixed, cheapest, best-average, `family_smoothed_best_average`, `shrinkage_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged selector baselines. `family_smoothed_best_average` backs off from exact signature mean reward to retrieval-context family mean reward and then context-policy mean reward. `shrinkage_smoothed_best_average` scores every row by shrinking exact-signature means toward retrieval-context-family means, family means toward context-policy means, and context-policy means toward the global train mean. `linear_reward_model` is a small offline ridge-regression selector over retrieval-context action/cost features; its feature table excludes reward, quality, evidence-support, and preference-outcome labels. `smoothed_linear_selector` adds train-only aggregate reward features for exact signatures, retrieval-context families, context policies, and retrievers, then applies the learned model to held-out rows without filling missing aggregates from eval rewards. The policy artifact sets `runtime_default_replacement=false`; it is an offline evaluation artifact and does not replace the default `adaptive-heuristic` runtime policy. `rlaif-eval` reports mean reward, quality, normalized token/latency/KV costs, selected action distribution, coverage, and paired oracle gap. When `--split-manifest` is provided, the eval summary records `held_out_query_eval=true`. These selector costs are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before any selector can run pre-generation.
+`rlaif-split` writes `train_rewards.jsonl`, `eval_rewards.jsonl`, `train_preferences.jsonl`, `eval_preferences.jsonl`, `split_manifest.json`, and `split_summary.md`. It splits by `benchmark + query_id`, not by random action rows, so all actions for the same query stay in the same split. Preferences crossing the split boundary are dropped and counted in the manifest. `rlaif-train` writes fixed, cheapest, best-average, `family_smoothed_best_average`, `shrinkage_smoothed_best_average`, `linear_reward_model`, `smoothed_linear_selector`, and oracle-logged selector baselines. `family_smoothed_best_average` backs off from exact signature mean reward to retrieval-context family mean reward and then context-policy mean reward. `shrinkage_smoothed_best_average` scores every row by shrinking exact-signature means toward retrieval-context-family means, family means toward context-policy means, and context-policy means toward the global train mean. `linear_reward_model` is a small offline ridge-regression selector over retrieval-context action/cost features; its feature table excludes reward, quality, evidence-support, and preference-outcome labels. `smoothed_linear_selector` adds train-only aggregate reward features for exact signatures, retrieval-context families, context policies, and retrievers, then applies the learned model to held-out rows without filling missing aggregates from eval rewards. The policy artifact sets `runtime_default_replacement=false`; it is an offline evaluation artifact and does not replace the default `adaptive-heuristic` runtime policy. `rlaif-eval` reports mean reward, quality, normalized token/latency/KV costs, selected action distribution, selected retriever/context-policy/adaptive-profile/budget distributions, coverage, and paired oracle gap. When `--split-manifest` is provided, the eval summary records `held_out_query_eval=true`. These selector costs are logged/offline normalized costs; runtime deployment needs estimated token/KV costs and predicted latency features before any selector can run pre-generation.
 
 Run a multi-seed held-out selector sweep:
 
@@ -773,6 +773,21 @@ The 10-query MiMo V2.5 generation smoke is documented in `docs/reports/phase1d_r
 
 The A1-medium follow-up is documented in `docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md`. It uses standard `mimo-v2.5`, 50 SciFact queries, BM25/graph-BM25/hybrid-RRF, five policy/profile variants, budgets `1000` and `4000`, and `MAX_COMPLETION_TOKENS=2048`. The run produced 1500/1500 non-empty generations with zero generation errors and normalized into 1500 RLAIF action rows. Feedback provenance is intentionally `missing` until answer/context judge labels are run, so this report is a generation-coverage gate rather than a reward or selector-quality result.
 
+When A1 answer-label Kaggle shards finish, validate and merge them before rebuilding rewards:
+
+```bash
+uv run python scripts/validate_rlaif_answer_labels.py \
+  --actions benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_actions.jsonl \
+  --labels \
+    benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_answer_labels_mimo_v25_kaggle_part1_1_500.jsonl \
+    benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_answer_labels_mimo_v25_kaggle_part2_501_1000.jsonl \
+    benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_answer_labels_mimo_v25_kaggle_part3_1001_1500.jsonl \
+  --merged-output benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_answer_labels_mimo_v25_merged.jsonl \
+  --out-md benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/answer_label_validation_summary.md
+```
+
+The validator skips corrupted partial JSONL lines, excludes unknown action ids from the merged output, reports duplicates, missing action ids, ambiguous/error/invalid labels, and keeps missing/ambiguous labels from becoming score zero. This is intended for sharded Kaggle outputs where seed labels and interrupted local runs may overlap.
+
 After answer labels and rewards exist, inspect answer quality by retriever and policy:
 
 ```bash
@@ -785,6 +800,19 @@ uv run python scripts/analyze_retriever_diversity_answer_quality.py \
 ```
 
 The analyzer groups clean scored labels by retriever, context policy, retriever-policy pair, adaptive profile, and budget. It reports answer quality, correctness, evidence support, unsupported-claim risk, reward, and normalized token/latency/KV cost. Ambiguous unscored labels are excluded by default and must be read together with the answer-label summary.
+
+Before spending context-judge budget on all 1500 A1 rows, select a balanced 600-row subset:
+
+```bash
+uv run python scripts/select_stratified_rlaif_actions.py \
+  --actions benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_actions.jsonl \
+  --answer-labels benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_answer_labels_mimo_v25_merged.jsonl \
+  --output benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_actions_context_stratified600.jsonl \
+  --per-cell 20 \
+  --seed 42
+```
+
+The sampler stratifies by `retrieval_strategy`, `context_policy`, `adaptive_profile`, and `budget_chars`, which gives roughly 20 rows per A1 retriever-policy-budget cell. If answer labels are provided, it prioritizes ambiguous, low-support, high-unsupported-risk, high-quality-low-support, and high-cost rows inside each cell before applying a seeded random tie-break.
 
 After context labels exist for the resulting actions, inspect evidence quality by retriever and policy:
 

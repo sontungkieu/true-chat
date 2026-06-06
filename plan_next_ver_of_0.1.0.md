@@ -156,6 +156,21 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      earlier 256-token-cap subset, but feedback provenance remains `missing`
      until answer/context labels are run. Report:
      `docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md`.
+   - Added A1 answer-label postprocess tooling while Kaggle shards run:
+     `scripts/validate_rlaif_answer_labels.py` validates and merges sharded
+     MiMo answer-label JSONL files, skips corrupted partial lines, reports
+     missing/unknown/duplicate action ids, and preserves null/missing labels
+     instead of turning them into zero scores.
+   - Added `scripts/select_stratified_rlaif_actions.py` to prepare the next
+     600-row context-label subset, balanced by
+     `retrieval_strategy x context_policy/profile x budget`, with optional
+     answer-label-priority sampling for ambiguous, low-support, unsupported,
+     high-quality-low-support, and high-cost cases.
+   - Added
+     `docs/reports/phase1d_retriever_diversity_a1_mimo_v25_eval_template.md`
+     and extended `rlaif-eval` with selected retriever/context-policy/
+     adaptive-profile/budget distributions so A1 can answer whether offline
+     selectors actually allocate across retrievers.
    - Do not use `MAX_COMPLETION_TOKENS=256` for future standard MiMo V2.5 generation runs; the low cap produced 77 empty generated answers with no request errors. Keep the larger cap and validate empty-answer coverage before spending judge budget.
 
 ```bash

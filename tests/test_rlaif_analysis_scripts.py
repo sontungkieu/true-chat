@@ -40,6 +40,14 @@ context_label_validation = _load_script(
     "validate_rlaif_context_labels",
     "scripts/validate_rlaif_context_labels.py",
 )
+answer_label_validation = _load_script(
+    "validate_rlaif_answer_labels",
+    "scripts/validate_rlaif_answer_labels.py",
+)
+stratified_actions = _load_script(
+    "select_stratified_rlaif_actions",
+    "scripts/select_stratified_rlaif_actions.py",
+)
 context_reward_pipeline = _load_script(
     "run_context_reward_ablation_pipeline",
     "scripts/run_context_reward_ablation_pipeline.py",
@@ -250,6 +258,149 @@ def test_validate_rlaif_context_labels_merges_shards_and_reports_gaps(tmp_path: 
     rendered = context_label_validation.render_markdown(summary)
     assert "RLAIF Context Label Validation" in rendered
     assert "Merge rule" in rendered
+
+
+def test_validate_rlaif_answer_labels_skips_corrupted_lines_and_merges_best_rows(tmp_path: Path) -> None:
+    actions_path = tmp_path / "rlaif_actions.jsonl"
+    shard_a = tmp_path / "answer_a.jsonl"
+    shard_b = tmp_path / "answer_b.jsonl"
+    merged_path = tmp_path / "merged_answer.jsonl"
+    _write_jsonl(actions_path, [{"action_id": "a1"}, {"action_id": "a2"}, {"action_id": "a3"}])
+    shard_a.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "action_id": "a1",
+                        "overall_quality": 0.4,
+                        "answer_correctness": 0.4,
+                        "evidence_support": 0.3,
+                        "ambiguous": True,
+                        "invalid_json": False,
+                    }
+                ),
+                "{truncated",
+                json.dumps(
+                    {
+                        "action_id": "a2",
+                        "overall_quality": 0.8,
+                        "answer_correctness": 0.8,
+                        "evidence_support": 0.7,
+                        "ambiguous": False,
+                        "invalid_json": False,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        shard_b,
+        [
+            {
+                "action_id": "a1",
+                "overall_quality": 0.9,
+                "answer_correctness": 0.9,
+                "evidence_support": 0.9,
+                "ambiguous": False,
+                "invalid_json": False,
+            },
+            {
+                "action_id": "unknown",
+                "overall_quality": 0.7,
+                "answer_correctness": 0.7,
+                "evidence_support": 0.7,
+                "ambiguous": False,
+                "invalid_json": False,
+            },
+        ],
+    )
+
+    summary = answer_label_validation.validate_answer_labels(
+        actions_path=actions_path,
+        label_paths=[shard_a, shard_b],
+        merged_output=merged_path,
+    )
+
+    merged = _read_jsonl(merged_path)
+    assert summary["action_count"] == 3
+    assert summary["label_row_count"] == 4
+    assert summary["invalid_json_line_count"] == 1
+    assert summary["merged_label_count"] == 2
+    assert summary["missing_action_count"] == 1
+    assert summary["unknown_action_count"] == 1
+    assert summary["duplicate_action_id_count"] == 1
+    assert summary["duplicate_conflict_count"] == 1
+    assert summary["clean_usable_label_count"] == 2
+    assert {row["action_id"]: row for row in merged}["a1"]["overall_quality"] == 0.9
+    rendered = answer_label_validation.render_markdown(summary)
+    assert "RLAIF Answer Label Validation" in rendered
+    assert "corrupted JSONL lines are skipped" in rendered
+
+
+def test_select_stratified_rlaif_actions_is_deterministic_and_prioritizes_labels(tmp_path: Path) -> None:
+    actions_path = tmp_path / "rlaif_actions.jsonl"
+    labels_path = tmp_path / "answer_labels.jsonl"
+    output_a = tmp_path / "selected_a.jsonl"
+    output_b = tmp_path / "selected_b.jsonl"
+    actions = []
+    labels = []
+    for retriever in ("bm25", "graph-bm25"):
+        for policy in ("legacy", "evidence-aware"):
+            for budget in (1000, 4000):
+                for index in range(3):
+                    action_id = f"{retriever}-{policy}-{budget}-{index}"
+                    actions.append(
+                        {
+                            "action_id": action_id,
+                            "retrieval_strategy": retriever,
+                            "context_policy": policy,
+                            "adaptive_profile": None,
+                            "budget_chars": budget,
+                            "token_usage": {"total_tokens": 100 + index},
+                        }
+                    )
+                    labels.append(
+                        {
+                            "action_id": action_id,
+                            "overall_quality": 0.9 if index == 0 else 0.5,
+                            "quality_score": 0.9 if index == 0 else 0.5,
+                            "answer_correctness": 0.8,
+                            "evidence_support": 0.2 if index == 0 else 0.8,
+                            "unsupported_claim_penalty": 0.7 if index == 0 else 0.0,
+                            "ambiguous": index == 0,
+                            "invalid_json": False,
+                        }
+                    )
+    _write_jsonl(actions_path, actions)
+    _write_jsonl(labels_path, labels)
+
+    summary_a = stratified_actions.select_stratified_actions(
+        actions_path=actions_path,
+        output_path=output_a,
+        answer_labels_path=labels_path,
+        per_cell=2,
+        seed=7,
+    )
+    summary_b = stratified_actions.select_stratified_actions(
+        actions_path=actions_path,
+        output_path=output_b,
+        answer_labels_path=labels_path,
+        per_cell=2,
+        seed=7,
+    )
+
+    selected = _read_jsonl(output_a)
+    assert summary_a["cell_count"] == 8
+    assert summary_a["selected_count"] == 16
+    assert summary_a["underfilled_cell_count"] == 0
+    assert output_a.read_text(encoding="utf-8") == output_b.read_text(encoding="utf-8")
+    assert summary_a["priority_reason_counts"]["high_quality_low_support"] == 8
+    assert len({row["action_id"] for row in selected if row["action_id"].endswith("-0")}) == 8
+    rendered = stratified_actions.render_markdown(summary_b)
+    assert "Stratified RLAIF Action Selection" in rendered
+    assert "retrieval_strategy" in rendered
 
 
 def test_context_reward_ablation_pipeline_builds_candidates_and_manifest(tmp_path: Path) -> None:

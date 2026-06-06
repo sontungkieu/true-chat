@@ -327,6 +327,10 @@ def _policy_metrics(
         "mean_latency": _mean_field(selected_rows, "latency_norm"),
         "mean_kv_cost": _mean_field(selected_rows, "kv_cost_norm"),
         "selected_action_distribution": dict(sorted(distribution.items())),
+        "selected_retriever_distribution": _selected_signature_distribution(selected_rows, "retrieval_strategy"),
+        "selected_context_policy_distribution": _selected_signature_distribution(selected_rows, "context_policy"),
+        "selected_adaptive_profile_distribution": _selected_signature_distribution(selected_rows, "adaptive_profile"),
+        "selected_budget_distribution": _selected_budget_distribution(selected_rows),
     }
 
 
@@ -1056,6 +1060,16 @@ def _retriever_payload(row: dict[str, Any]) -> dict[str, Any]:
     return {"retriever": _retriever_id(row)}
 
 
+def _selected_signature_distribution(rows: Iterable[dict[str, Any]], field_name: str) -> dict[str, int]:
+    values = Counter(str(_signature(row).get(field_name) or "missing") for row in rows)
+    return dict(sorted(values.items()))
+
+
+def _selected_budget_distribution(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
+    values = Counter(_budget_bucket(_signature(row).get("budget_chars")) for row in rows)
+    return dict(sorted(values.items()))
+
+
 def _budget_bucket(value: Any) -> str:
     number = _number_or_none(value)
     if number is None:
@@ -1200,12 +1214,22 @@ def _render_eval_markdown(summary: dict[str, Any]) -> str:
     for policy_name in POLICY_NAMES:
         metrics = summary["policy_metrics"][policy_name]
         lines.append(f"### `{policy_name}`")
+        for title, key in (
+            ("Retrievers", "selected_retriever_distribution"),
+            ("Context policies", "selected_context_policy_distribution"),
+            ("Adaptive profiles", "selected_adaptive_profile_distribution"),
+            ("Budget buckets", "selected_budget_distribution"),
+        ):
+            distribution = metrics.get(key) or {}
+            rendered = ", ".join(f"`{name}`={count}" for name, count in sorted(distribution.items())) or "N/A"
+            lines.append(f"- {title}: {rendered}")
         distribution = metrics["selected_action_distribution"]
         if not distribution:
-            lines.append("- N/A")
+            lines.append("- Signatures: N/A")
             continue
+        lines.append("- Signatures:")
         for signature_id, count in sorted(distribution.items()):
-            lines.append(f"- `{signature_id}`: {count}")
+            lines.append(f"  - `{signature_id}`: {count}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
