@@ -1,0 +1,35 @@
+\section{Appendix E: From Experiment Logs to Final Report}
+
+This appendix maps the committed Markdown experiment reports to the PDF sections where their results are summarized. It is included to make the consolidation path explicit and auditable.
+
+{\scriptsize
+\Urlmuskip=0mu plus 1mu
+\begin{longtable}{>{\raggedright\arraybackslash}p{6.2cm} >{\raggedright\arraybackslash}p{4.5cm} >{\raggedright\arraybackslash}p{3.5cm}}
+\toprule
+Markdown report & PDF location & Main use \\
+\midrule
+\url{docs/reports/phase1b_smoke_results.md} & Phase 1B; Appendix A & Fixed-policy smoke matrix and compression/KV context. \\
+\url{docs/reports/phase1c_adaptive_smoke_results.md} & Phase 1C; timeline & Initial adaptive heuristic behavior. \\
+\url{docs/reports/phase1c1_adaptive_validation.md} & Phase 1C; timeline & 50-query adaptive validation and conservative-budget observation. \\
+\url{docs/reports/phase1c2_adaptive_threshold_calibration.md} & Phase 1C; Appendix A & Adaptive profile calibration. \\
+\url{docs/reports/phase1c3_multi_model_generation.md} & Phase 1C.3 & Multi-model generation coverage, latency, and provider-limit caveats. \\
+\url{docs/reports/phase1c3_mimo_long_context.md} & Phase 1C.3; KV motivation & MiMo long-context budget behavior and analytical KV savings. \\
+\url{docs/reports/phase1d_rlaif_selector_smoke.md} & Phase 1C.3; Appendix B & 192 joined rows, RAGAS feedback, initial selector-smoke counts. \\
+\url{docs/reports/phase1d_rlaif_full_context_reward_ablation.md} & Main Results; Appendix B/C & Full 192-row context labels, reward ablation, selector sweeps. \\
+\url{docs/reports/phase1d_rlaif_context_reward_candidate.md} & Main Results & MiMo50 context-candidate setup and non-default reward framing. \\
+\url{docs/reports/phase1d_rlaif_v2_multiseed_selector_eval.md} & Main Results; Appendix C & Six-seed answer-only selector metrics and limitations. \\
+\url{docs/reports/phase1d_rlaif_v2_shrinkage_selector_eval.md} & Main Results; Appendix C & Shrinkage-smoothed selector result and full-coverage interpretation. \\
+\url{docs/reports/phase1d_rlaif_pairwise_mimo50.md} & Main Results; Appendix C & Direct pairwise agreement and confidence. \\
+\url{docs/reports/phase1d_rlaif_pairwise_calibration_diagnostics.md} & Main Results; Appendix C & Near-tie quality/support calibration pattern. \\
+\url{docs/reports/phase1d_rlaif_action_coverage.md} & Main Results; Appendix B & Exact-signature sparsity and family-level coverage. \\
+\url{docs/reports/phase1d_retriever_diversity_retrieval_only_limit50.md} & Main Results; completed evaluations & 2250-action retrieval-only coverage run. \\
+\url{docs/reports/phase1d_retriever_diversity_generation_mimo10.md} & Main Results; completed evaluations & 300-row retriever-diverse generation, answer/context labels, and cap-256 empty-answer issue. \\
+\url{docs/reports/phase1d_retriever_diversity_deepseek_audit.md} & Main Results; Appendix C & DeepSeek secondary-judge agreement on high-risk context rows. \\
+\url{docs/reports/phase1d_retriever_diversity_next_run_decision.md} & Main Results; completed evaluations & A1-medium decision and guardrails. \\
+\url{docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md} & Main Results; completed evaluations & 1500-row A1 generation gate and pending-label boundary. \\
+\url{docs/reports/local_qwen_kv_estimates.md} & KV-cache motivation; Appendix D & Analytical Qwen KV-cache memory table. \\
+\bottomrule
+\end{longtable}
+}
+
+Reports that only contain raw command templates, intermediate validation summaries, or ignored local artifact paths are not copied verbatim. Their stable numbers are consolidated through the curated reports listed above.

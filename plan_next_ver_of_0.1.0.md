@@ -171,6 +171,12 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      and extended `rlaif-eval` with selected retriever/context-policy/
      adaptive-profile/budget distributions so A1 can answer whether offline
      selectors actually allocate across retrievers.
+   - Consolidated the detailed Markdown experiment reports into the internship
+     PDF: the main results now include a data-rich Key Findings table, a phase
+     timeline, full context-label statistics, context reward ablations,
+     pairwise and DeepSeek audits, answer-only selector sweeps, retriever-
+     diversity status, and an appendix mapping Markdown reports to PDF
+     sections. A1 answer/context labels remain explicitly marked as pending.
    - Do not use `MAX_COMPLETION_TOKENS=256` for future standard MiMo V2.5 generation runs; the low cap produced 77 empty generated answers with no request errors. Keep the larger cap and validate empty-answer coverage before spending judge budget.
 
 ```bash

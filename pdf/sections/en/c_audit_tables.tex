@@ -62,15 +62,14 @@ Scalar-over-quality disagreements & 5 \\
 \bottomrule
 \end{longtable}
 
-\subsection{Targeted Multi-Judge Audit}
+\subsection{DeepSeek Secondary-Judge Audit}
 
 \begin{longtable}{l r r r r}
 \toprule
 Judge & Labels & Valid & Ambiguous & Clean sufficiency \\
 \midrule
-MiMo & 60 & 60 & 0 & 57 \\
-DeepSeek & 60 & 60 & 10 & 50 \\
-Groq & 60 & 60 & 11 & 49 \\
+MiMo & 100 & 100 & 3 & 95 \\
+DeepSeek & 100 & 100 & 12 & 88 \\
 \bottomrule
 \end{longtable}
 
@@ -78,9 +77,7 @@ Groq & 60 & 60 & 11 & 49 \\
 \toprule
 Pair & Compared & Agree & Agreement rate \\
 \midrule
-MiMo vs DeepSeek & 47 & 43 & 0.915 \\
-MiMo vs Groq & 46 & 40 & 0.870 \\
-DeepSeek vs Groq & 41 & 39 & 0.951 \\
+MiMo vs DeepSeek & 83 & 80 & 0.964 \\
 \bottomrule
 \end{longtable}
 
@@ -88,10 +85,20 @@ DeepSeek vs Groq & 41 & 39 & 0.951 \\
 \toprule
 Audit signal & Count \\
 \midrule
-Consensus insufficient cases & 51 \\
-Majority vote insufficient & 55 \\
-Majority vote sufficient & 5 \\
-High-disagreement cases & 6 \\
-MiMo-harsh cases & 6 \\
+Consensus insufficient cases & 76 \\
+Majority vote insufficient & 93 \\
+Majority vote sufficient & 4 \\
+Majority vote tie & 3 \\
+High-disagreement cases & 3 \\
+MiMo-harsh cases & 1 \\
+\bottomrule
+\end{longtable}
+
+\begin{longtable}{l r r}
+\toprule
+Score comparison & N & Pearson \\
+\midrule
+MiMo vs DeepSeek context quality & 85 & 0.476 \\
+MiMo vs DeepSeek evidence support & 85 & 0.905 \\
 \bottomrule
 \end{longtable}

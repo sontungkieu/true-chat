@@ -1,35 +1,64 @@
 \section{Main Results}
 
-\subsection{Headline Findings}
+The project should be read as a sequence rather than as a single Phase 1D experiment: benchmark foundation, BudgetRAG context policies, adaptive allocation, RLAIF labels, reward/preference construction, offline selector evaluation, retriever diversity, and KV-cache motivation.
+
+All results below are offline logged-candidate results. They are not human preference learning, not online RL, not DPO/PPO/GRPO, and not runtime KV-cache pruning. Context reward remains a non-default candidate.
+
+\subsection{Key Findings}
 
 \begin{center}
 \small
-\begin{tabular}{>{\raggedright\arraybackslash}p{7.6cm} >{\raggedright\arraybackslash}p{5.6cm}}
+\begin{tabular}{>{\raggedright\arraybackslash}p{4.0cm} >{\raggedright\arraybackslash}p{7.0cm} >{\raggedright\arraybackslash}p{3.1cm}}
 \toprule
-Finding & Evidence in this report \\
+Finding & Evidence & Interpretation \\
 \midrule
-Full context-level RLAIF labeling is now available. & 192/192 MiMo context labels were merged; 177 were clean usable labels. \\
-Retrieved contexts contain substantial noise. & Mean selected chunks 1.276 versus mean irrelevant chunks 3.708. \\
-Context labels changed reward/preference construction. & Context penalty 0.25 changed 140/192 reward rows and increased preferences from 722 to 952. \\
-Context sufficiency is a real bottleneck. & Sufficiency rate 0.591, with 76 insufficient contexts among the scored labels. \\
-The strongest full-coverage non-oracle selector is smoothed, not purely learned. & Shrinkage-smoothed selector: reward 0.602, quality 0.773, coverage 1.000 in the six-seed sweep. \\
-Multi-judge audit supports the insufficiency signal. & 51/60 targeted rows were consensus-insufficient; 6 rows were high-disagreement/MiMo-harsh cases. \\
+Full context-level RLAIF labels are available. & 192/192 MiMo context labels were merged; 177 were clean usable labels; sufficiency rate was 0.591. & Context supervision is no longer only a skeleton or subset. \\
+Retrieved contexts contain noise. & Mean selected chunks 1.276 versus mean irrelevant chunks 3.708. & Answer-level reward can hide weak evidence contexts. \\
+Context reward changes the optimization target. & Penalty 0.25 changed 140/192 reward rows; preferences increased from 722 to 952; mean changed delta was -0.212. & Context reward is useful for calibration, but still non-default. \\
+Pairwise RLAIF mostly agrees with scalar reward. & MiMo-50 pairwise audit agreement was 0.854 over non-ambiguous decisions; mean confidence was 0.914. & Scalar reward is not arbitrary, but needs calibration for near-tie answers. \\
+Secondary judge supports the insufficiency signal. & DeepSeek v4 Flash agreed with MiMo on 80/83 comparable high-risk sufficiency decisions, agreement 0.964. & MiMo is not uniquely harsh on this targeted subset. \\
+Retriever-diversity coverage is fixed. & Retrieval-only run produced 2250 actions across BM25, graph-BM25, and hybrid-RRF; A1-medium generation produced 1500/1500 non-empty rows with 0 errors and 0 empty answers. & Logged action coverage now supports retrieval-context allocation experiments. \\
+A1 retriever-quality ranking is still pending. & A1 answer labels and context labels were not complete at the time of this report. & Do not claim final BM25 vs graph-BM25 vs hybrid-RRF quality ranking yet. \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\subsection{Full MiMo Context Labels}
+\subsection{Phase Timeline and Deliverables}
 
-The first full context-label pass merged 192 action rows with no missing, unknown, duplicate, or conflicting action ids. It produced 177 clean usable labels, 15 ambiguous labels, 0 invalid JSON labels, and 1 error. The sufficiency rate was 0.591, with 110 sufficient contexts and 76 insufficient contexts.
+{\scriptsize
+\begin{longtable}{>{\raggedright\arraybackslash}p{1.5cm} >{\raggedright\arraybackslash}p{2.7cm} >{\raggedright\arraybackslash}p{4.8cm} >{\raggedright\arraybackslash}p{4.7cm}}
+\toprule
+Phase & Goal & Implementation & Key output/result \\
+\midrule
+Phase 1A & Benchmark foundation & Retriever registry, benchmark CLI, retrieval metrics, and traceable records. & A reusable output schema for later BudgetRAG and RLAIF stages. \\
+Phase 1B & Fixed BudgetRAG policies & Legacy, character budget, per-document budget, score-density, sentence-trim, and evidence-aware policies. & 10-query SciFact smoke showed context compression and analytical KV savings can be measured independently from answer quality. \\
+Phase 1B.1 & Traceable matrix outputs & Matrix runner and summarizer with stable raw output directories. & Phase outputs became auditable and joinable for later RLAIF builders. \\
+Phase 1C & Adaptive heuristic & Deterministic selector using score gap, entropy, confidence, and document-dominance features. & Initial adaptive path was stable but conservative. \\
+Phase 1C.1 & Larger retrieval validation & 50-query SciFact BM25 retrieval-only validation. & Adaptive heuristic selected \code{evidence-aware} for 48 queries and \code{per-doc-budget} for 2, but still selected budget 4000 for all 50. \\
+Phase 1C.2 & Calibrated adaptive profiles & Conservative, balanced, and aggressive profiles with normalized gap/entropy thresholds. & Balanced/aggressive profiles created smaller-context stress tests; aggressive budget-4000 kept 2080 chars on average versus conservative 4000. \\
+Phase 1C.3 & Generation feedback & Multi-model generation, RAGAS join, MiMo answer labels, and long-context MiMo runs. & 192 joined RLAIF action rows and 192 MiMo answer labels; MiMo quality vs RAGAS answer relevancy correlation 0.277. \\
+Phase 1D & RLAIF reward/preference and offline selector & Answer/context/pairwise labelers, reward/preference builder, query-level split, selector baselines, and audits. & Full context labels, reward ablations, pairwise audit, action coverage diagnostics, and six-seed selector sweeps. \\
+Retriever-diversity extension & Multi-retriever logged actions & BM25, graph-BM25, and hybrid-RRF retrieval-only and generation matrices. & Retrieval-only 2250-row coverage run; A1-medium 1500-row complete generation gate with labels pending. \\
+\bottomrule
+\end{longtable}
+}
+
+\subsection{Full Context-Level RLAIF Labels}
+
+The first full MiMo context-label pass merged all 192 Phase 1D selector-smoke action rows. Validation found no missing action ids, no unknown action ids, no duplicate action ids, no duplicate conflicts, and no invalid JSON labels.
 
 \begin{center}
+\small
 \begin{tabular}{l r}
 \toprule
 Metric & Value \\
 \midrule
-Merged labels & 192 \\
+Merged context labels & 192 \\
 Clean usable labels & 177 \\
 Ambiguous labels & 15 \\
+Invalid JSON labels & 0 \\
+Sufficient contexts & 110 \\
+Insufficient contexts & 76 \\
 Sufficiency rate & 0.591 \\
 Mean selected chunks & 1.276 \\
 Mean redundant chunks & 0.286 \\
@@ -41,28 +70,120 @@ Mean minimality & 0.947 \\
 \end{tabular}
 \end{center}
 
-The main qualitative signal is that the judge often identifies only one or two useful chunks while marking several chunks as irrelevant. This supports context-level supervision rather than answer-only reward.
+The important evidence is not only the sufficiency rate. It is the gap between selected and irrelevant chunks: the judge typically identifies a small evidence subset while marking several retrieved chunks as irrelevant. This supports the BudgetRAG/MemAlign direction: context selection should be supervised at the chunk level, not only judged after answer generation.
 
 \subsection{Context Reward Ablation}
 
-Context labels materially changed reward/preference construction. The answer-only baseline created 722 preferences. Context penalty 0.25 created 952 preferences and changed 140 reward rows; 108 changes were negative and 32 were positive. Stronger penalties were more aggressive and compressed the reward scale.
+The context labels were merged into reward construction only through explicit, non-default candidates. Ambiguous context labels fall back to answer-level feedback. The answer-only reward remains the baseline.
+
+\begin{center}
+\scriptsize
+\begin{tabular}{>{\raggedright\arraybackslash}p{2.7cm} r r r r >{\raggedright\arraybackslash}p{3.0cm}}
+\toprule
+Setting & Preferences & Changed rows & Negative deltas & Mean changed delta & Interpretation \\
+\midrule
+answer-only & 722 & -- & -- & -- & Baseline reward from answer labels/fallback feedback. \\
+context penalty 0.25 & 952 & 140 & 108 & -0.212 & Conservative context candidate; useful for further audit. \\
+context penalty 0.50 & 946 & 140 & 108 & -0.316 & Stronger penalty; lower absolute reward scale. \\
+context penalty 1.00 & 944 & 140 & 108 & -0.525 & Too harsh for default use; diagnostic only. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The reward landscape changes materially: penalty 0.25 increases preference count from 722 to 952 and changes 140/192 reward rows. Most changes are negative because insufficient or noisy contexts are penalized. This is expected; it means the context labels are exposing evidence failures that answer-level labels alone do not represent.
+
+\subsection{Pairwise RLAIF Audit}
+
+Direct pairwise RLAIF was used to audit whether scalar reward-derived preferences align with an independent pairwise judge. In the MiMo-50 audit, Action A was the scalar reward-chosen action and Action B was the rejected action.
+
+\begin{center}
+\small
+\begin{tabular}{l r}
+\toprule
+Metric & Value \\
+\midrule
+Pair labels & 50 \\
+Valid JSON & 50 \\
+Ambiguous/error rows & 2 \\
+A wins & 41 \\
+B wins & 7 \\
+Agreement over non-ambiguous decisions & 0.854 \\
+Mean confidence & 0.914 \\
+Small quality/support delta pairs & 38 \\
+Cheaper wins when quality/support tied & 35 \\
+Scalar-over-quality disagreements & 5 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The disagreement pattern is narrow: all seven direct-judge disagreements in the MiMo-50 audit came from \code{query\_id=128}. In those cases the scalar reward favored slightly higher quality/support scores, while the pairwise judge considered both answers acceptable or both correct abstentions and then preferred the cheaper action. The calibration diagnostic therefore suggests a candidate tie band of quality 0.10 and support 0.20, but this remains an audit-derived candidate, not a default reward rule.
+
+\subsection{DeepSeek Secondary-Judge Audit}
+
+The retriever-diverse 300-row subset was used to select 100 high-risk context rows: MiMo-insufficient contexts, large negative context-reward deltas, high answer quality with low context support, and rows with many irrelevant chunks. DeepSeek v4 Flash was then used as a secondary context judge.
+
+\begin{center}
+\small
+\begin{tabular}{l r}
+\toprule
+Metric & Value \\
+\midrule
+Targeted rows & 100 \\
+DeepSeek valid JSON labels & 100 \\
+DeepSeek ambiguous labels & 12 \\
+DeepSeek invalid JSON/errors & 0 \\
+Comparable MiMo-vs-DeepSeek sufficiency rows & 83 \\
+Agreement & 80/83 = 0.964 \\
+Consensus-insufficient rows & 76 \\
+High-disagreement rows & 3 \\
+MiMo-harsh rows & 1 \\
+Evidence-support Pearson correlation & 0.905 \\
+Context-quality Pearson correlation & 0.476 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This audit does not turn AI feedback into ground truth. It does, however, reduce the concern that MiMo is uniquely harsh on high-risk rows. The stronger agreement on evidence support than on raw context quality also suggests that sufficiency/support labels are safer reward inputs than an uncalibrated context-quality scalar.
+
+\subsection{Offline Selector Results}
+
+The selector is evaluated only over logged candidate actions. The artifact keeps \code{runtime\_default\_replacement=false}; it does not replace the runtime \code{adaptive-heuristic} policy.
 
 \begin{center}
 \small
 \begin{tabular}{>{\raggedright\arraybackslash}p{4.4cm} r r r r}
 \toprule
-Setting & Preferences & Changed rows & Negative deltas & Mean changed delta \\
+Policy & Reward & Quality & Coverage & Oracle gap \\
 \midrule
-answer-only & 722 & -- & -- & -- \\
-context penalty 0.25 & 952 & 140 & 108 & -0.212 \\
-context penalty 0.50 & 946 & 140 & 108 & -0.316 \\
-context penalty 1.00 & 944 & 140 & 108 & -0.525 \\
+cheapest & 0.577 $\pm$ 0.159 & 0.770 $\pm$ 0.152 & 1.000 $\pm$ 0.000 & 0.094 \\
+best average & 0.618 $\pm$ 0.147 & 0.794 $\pm$ 0.125 & 0.911 $\pm$ 0.050 & 0.080 \\
+shrinkage smoothed best average & 0.602 $\pm$ 0.117 & 0.773 $\pm$ 0.097 & 1.000 $\pm$ 0.000 & 0.070 \\
+smoothed linear selector & 0.595 $\pm$ 0.137 & 0.767 $\pm$ 0.122 & 1.000 $\pm$ 0.000 & 0.076 \\
+oracle logged & 0.671 $\pm$ 0.134 & 0.834 $\pm$ 0.138 & 1.000 $\pm$ 0.000 & 0.000 \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Penalty 0.25 is the conservative non-default candidate. Penalty 1.00 remains diagnostic.
+The result is useful but conservative. \code{best\_average} has the strongest non-oracle reward/quality where it covers a query group, but its coverage is 0.911 because exact action signatures are sparse. \code{shrinkage\_smoothed\_best\_average} is the strongest full-coverage non-oracle selector by reward and oracle gap. Learned linear selectors are functional and full-coverage, but they do not yet robustly beat simple smoothed baselines. The bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm.
 
-\subsection{Multi-Judge Targeted Audit}
+\subsection{Retriever-Diversity Extension}
 
-The targeted multi-judge audit compares MiMo labels with secondary DeepSeek and Groq labels on 60 high-impact rows. DeepSeek v4 Flash labels were available for the full 192-row context-label set and were then filtered to the same targeted subset. Groq Qwen3 32B was run directly on the 60 targeted rows. The strongest signal was 51/60 consensus-insufficient rows and 6 MiMo-harsh/high-disagreement rows. MiMo was not globally too harsh on this subset, but the disagreement rows should be inspected before increasing context penalties.
+The first Phase 1D logs were effectively BM25-only. The retriever-diversity extension fixes this logged-action coverage gap, then starts adding quality supervision.
+
+{\scriptsize
+\begin{longtable}{>{\raggedright\arraybackslash}p{3.3cm} r r r >{\raggedright\arraybackslash}p{5.5cm}}
+\toprule
+Run & Actions & Retrievers & Scored rewards & Purpose / conclusion \\
+\midrule
+Retrieval-only limit50 & 2250 & 3 & 0 & Coverage run only: every sampled query has BM25, graph-BM25, and hybrid-RRF rows across 45 action configurations. \\
+300-row generation subset & 300 & 3 & 186 & Diagnostic quality run: graph-BM25 had slightly better answer support/context quality; hybrid-RRF was noisier, but \code{MAX\_COMPLETION\_TOKENS=256} caused 77 empty answers. \\
+A1-medium generation & 1500 & 3 & 0 pending & Generation gate: 1500/1500 non-empty rows, 0 generation errors, 0 empty answers with standard \code{mimo-v2.5} and cap 2048; answer labels are pending. \\
+\bottomrule
+\end{longtable}
+}
+
+The correct interpretation is:
+
+\begin{quote}
+Retriever diversity coverage is now fixed, but final retriever-quality evidence is still in progress. A1 answer labels and a stratified context-label subset must be completed before claiming a stable BM25 vs graph-BM25 vs hybrid-RRF ranking.
+\end{quote}
