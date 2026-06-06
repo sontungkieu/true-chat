@@ -164,7 +164,7 @@ oracle logged & 0.671 $\pm$ 0.134 & 0.834 $\pm$ 0.138 & 1.000 $\pm$ 0.000 & 0.00
 \end{tabular}
 \end{center}
 
-The result is useful but conservative. \code{best\_average} has the strongest non-oracle reward/quality where it covers a query group, but its coverage is 0.911 because exact action signatures are sparse. \code{shrinkage\_smoothed\_best\_average} is the strongest full-coverage non-oracle selector by reward and oracle gap. Learned linear selectors are functional and full-coverage, but they do not yet robustly beat simple smoothed baselines. The bottleneck is richer supervision and broader logged action coverage, not a more complex RL algorithm.
+\textbf{Takeaway:} \code{shrinkage\_smoothed\_best\_average} is the best full-coverage non-oracle baseline by reward and oracle gap, while \code{best\_average} still has higher reward/quality on the query groups it covers. This indicates that action representation and logged-action coverage remain stronger bottlenecks than adding a more complex RL algorithm. Learned linear selectors are functional and full-coverage, but they do not yet robustly beat simple smoothed baselines.
 
 \subsection{Retriever-Diversity Extension}
 
@@ -182,7 +182,7 @@ A1-medium generation & 1500 & 3 & 0 pending & Generation gate: 1500/1500 non-emp
 \end{longtable}
 }
 
-The correct interpretation is:
+\textbf{Takeaway:} the retriever-diversity extension has fixed the logged-action coverage problem, but it has not yet closed the quality-supervision gap:
 
 \begin{quote}
 Retriever diversity coverage is now fixed, but final retriever-quality evidence is still in progress. A1 answer labels and a stratified context-label subset must be completed before claiming a stable BM25 vs graph-BM25 vs hybrid-RRF ranking.
