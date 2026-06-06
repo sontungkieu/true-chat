@@ -153,10 +153,16 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      produced 1500/1500 non-empty standard MiMo V2.5 generations with
      `MAX_COMPLETION_TOKENS=2048`, 0 generation errors, and 1500 normalized
      RLAIF action rows. This closes the generation-coverage issue from the
-     earlier 256-token-cap subset, but feedback provenance remains `missing`
-     until answer/context labels are run. Report:
+     earlier 256-token-cap subset. Report:
      `docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md`.
-   - Added A1 answer-label postprocess tooling while Kaggle shards run:
+   - Completed A1 answer-label postprocess from the three Kaggle shards:
+     1500/1500 valid MiMo V2.5 labels, 1460 clean usable labels, 0 invalid
+     JSON lines, 0 missing/unknown/duplicate action ids, 1460 scored answer-
+     only reward rows, and 17026 preferences. The first answer-level signal
+     favors graph-BM25 by mean reward/quality, but context labels are still
+     needed before a final retriever-quality claim. Report:
+     `docs/reports/phase1d_retriever_diversity_a1_mimo_v25_eval.md`.
+   - Added A1 answer-label postprocess tooling:
      `scripts/validate_rlaif_answer_labels.py` validates and merges sharded
      MiMo answer-label JSONL files, skips corrupted partial lines, reports
      missing/unknown/duplicate action ids, and preserves null/missing labels
@@ -176,7 +182,8 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      timeline, full context-label statistics, context reward ablations,
      pairwise and DeepSeek audits, answer-only selector sweeps, retriever-
      diversity status, and an appendix mapping Markdown reports to PDF
-     sections. A1 answer/context labels remain explicitly marked as pending.
+     sections. A1 answer labels are now complete; A1 context labels remain
+     explicitly marked as pending.
    - Do not use `MAX_COMPLETION_TOKENS=256` for future standard MiMo V2.5 generation runs; the low cap produced 77 empty generated answers with no request errors. Keep the larger cap and validate empty-answer coverage before spending judge budget.
 
 ```bash

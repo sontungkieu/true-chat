@@ -771,9 +771,9 @@ uv run python scripts/validate_retriever_diversity_generation_subset.py \
 
 The 10-query MiMo V2.5 generation smoke is documented in `docs/reports/phase1d_retriever_diversity_generation_mimo10.md` and its validation report is in `docs/reports/phase1d_retriever_diversity_generation_subset_validation.md`. It produced 300 action rows with full retriever/policy/budget coverage and zero request-level generation errors, but 77 rows had empty answer strings at `MAX_COMPLETION_TOKENS=256`. Treat those as missing-answer rows and use a larger generation cap before scaling to the full 2250-row matrix.
 
-The A1-medium follow-up is documented in `docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md`. It uses standard `mimo-v2.5`, 50 SciFact queries, BM25/graph-BM25/hybrid-RRF, five policy/profile variants, budgets `1000` and `4000`, and `MAX_COMPLETION_TOKENS=2048`. The run produced 1500/1500 non-empty generations with zero generation errors and normalized into 1500 RLAIF action rows. Feedback provenance is intentionally `missing` until answer/context judge labels are run, so this report is a generation-coverage gate rather than a reward or selector-quality result.
+The A1-medium follow-up is documented in `docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md` and `docs/reports/phase1d_retriever_diversity_a1_mimo_v25_eval.md`. It uses standard `mimo-v2.5`, 50 SciFact queries, BM25/graph-BM25/hybrid-RRF, five policy/profile variants, budgets `1000` and `4000`, and `MAX_COMPLETION_TOKENS=2048`. The run produced 1500/1500 non-empty generations with zero generation errors and normalized into 1500 RLAIF action rows. The three sharded Kaggle answer-label jobs merged into 1500/1500 valid MiMo V2.5 labels, 1460 clean usable labels, 0 invalid JSON lines, 0 missing/unknown/duplicate action ids, and an answer-only reward rebuild with 1460 scored rewards and 17026 preferences. Graph-BM25 is currently strongest by mean answer-level reward/quality, but A1 context labels remain pending before making a final retriever-quality claim.
 
-When A1 answer-label Kaggle shards finish, validate and merge them before rebuilding rewards:
+A1 answer-label shards can be validated and merged with:
 
 ```bash
 uv run python scripts/validate_rlaif_answer_labels.py \
@@ -786,7 +786,7 @@ uv run python scripts/validate_rlaif_answer_labels.py \
   --out-md benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/answer_label_validation_summary.md
 ```
 
-The validator skips corrupted partial JSONL lines, excludes unknown action ids from the merged output, reports duplicates, missing action ids, ambiguous/error/invalid labels, and keeps missing/ambiguous labels from becoming score zero. This is intended for sharded Kaggle outputs where seed labels and interrupted local runs may overlap.
+The validator skips corrupted partial JSONL lines, excludes unknown action ids from the merged output, reports duplicates, missing action ids, ambiguous/error/invalid labels, and keeps missing/ambiguous labels from becoming score zero. This is intended for sharded Kaggle outputs where seed labels and interrupted local runs may overlap. For the completed A1 run, the merged output is `benchmark_results/rlaif/retriever_diversity_a1_medium_mimo50_cap2048/rlaif_answer_labels_mimo_v25_merged.jsonl`.
 
 After answer labels and rewards exist, inspect answer quality by retriever and policy:
 
