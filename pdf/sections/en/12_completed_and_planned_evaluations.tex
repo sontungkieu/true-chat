@@ -45,9 +45,11 @@ The follow-up step was a small MiMo-\code{v2.5} generation subset with explicit 
 
 The run also exposed an operational issue: \code{MAX\_COMPLETION\_TOKENS=256} is too low for standard MiMo V2.5 generation, producing 77 empty answer strings with no request errors. Future retriever-diverse generation runs should use a larger generation cap before scaling to the full 50-query matrix.
 
-The next-run decision therefore keeps the retriever-diverse branch active but avoids the full 2250-row matrix for now. The recommended follow-up is a 50-query, two-budget run with standard MiMo V2.5 and \code{MAX\_COMPLETION\_TOKENS=2048}, plus a targeted DeepSeek audit over 100 high-impact context rows. Local Qwen profiling is deferred from this branch.
+The next-run decision therefore keeps the retriever-diverse branch active but avoids the full 2250-row matrix for now. The recommended follow-up was a 50-query, two-budget run with standard MiMo V2.5 and \code{MAX\_COMPLETION\_TOKENS=2048}, plus a targeted DeepSeek audit over 100 high-impact context rows. Local Qwen profiling is deferred from this branch.
 
 The targeted DeepSeek audit is complete: DeepSeek v4 Flash produced 100 valid context labels with no invalid JSON or request errors, and MiMo-vs-DeepSeek sufficiency agreement is 80/83 over comparable rows. The audit found 76 consensus-insufficient rows and only 3 high-disagreement rows, supporting the direction of the MiMo context-insufficiency signal while keeping context reward non-default.
+
+The A1-medium generation gate is now complete. It covers 50 SciFact queries, BM25, graph-BM25, hybrid-RRF, five policy/profile variants, budgets \code{1000} and \code{4000}, and standard \code{mimo-v2.5} with \code{MAX\_COMPLETION\_TOKENS=2048}. The run produced 1500/1500 non-empty generated answers, 0 generation errors, 30 query-result files, and 1500 normalized RLAIF action rows. Mean answer length is 338 characters and mean total latency is 6.46 seconds. This result closes the generation-coverage issue from the earlier low-cap subset, but it is not yet an answer-quality or selector-quality result because all 1500 feedback rows still have provenance \code{missing} until answer/context judge labels are run.
 
 \subsection{Larger Logged Query Groups}
 

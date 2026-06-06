@@ -148,7 +148,15 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      high-disagreement rows, and 1 MiMo-harsh row. This supports the MiMo
      context-insufficiency signal on high-risk rows but does not change reward
      defaults.
-   - Do not scale that subset directly to the full 2250-row matrix with `MAX_COMPLETION_TOKENS=256`; the low cap produced 77 empty generated answers with no request errors. Use a larger generation cap first, then re-check empty-answer and label coverage.
+   - Completed the A1-medium retriever-diverse generation gate:
+     50 SciFact queries x 3 retrievers x 5 policy/profile variants x 2 budgets
+     produced 1500/1500 non-empty standard MiMo V2.5 generations with
+     `MAX_COMPLETION_TOKENS=2048`, 0 generation errors, and 1500 normalized
+     RLAIF action rows. This closes the generation-coverage issue from the
+     earlier 256-token-cap subset, but feedback provenance remains `missing`
+     until answer/context labels are run. Report:
+     `docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md`.
+   - Do not use `MAX_COMPLETION_TOKENS=256` for future standard MiMo V2.5 generation runs; the low cap produced 77 empty generated answers with no request errors. Keep the larger cap and validate empty-answer coverage before spending judge budget.
 
 ```bash
 uv run rag-bench rlaif-label-answers \

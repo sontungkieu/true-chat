@@ -771,6 +771,8 @@ uv run python scripts/validate_retriever_diversity_generation_subset.py \
 
 The 10-query MiMo V2.5 generation smoke is documented in `docs/reports/phase1d_retriever_diversity_generation_mimo10.md` and its validation report is in `docs/reports/phase1d_retriever_diversity_generation_subset_validation.md`. It produced 300 action rows with full retriever/policy/budget coverage and zero request-level generation errors, but 77 rows had empty answer strings at `MAX_COMPLETION_TOKENS=256`. Treat those as missing-answer rows and use a larger generation cap before scaling to the full 2250-row matrix.
 
+The A1-medium follow-up is documented in `docs/reports/phase1d_retriever_diversity_a1_medium_generation_validation.md`. It uses standard `mimo-v2.5`, 50 SciFact queries, BM25/graph-BM25/hybrid-RRF, five policy/profile variants, budgets `1000` and `4000`, and `MAX_COMPLETION_TOKENS=2048`. The run produced 1500/1500 non-empty generations with zero generation errors and normalized into 1500 RLAIF action rows. Feedback provenance is intentionally `missing` until answer/context judge labels are run, so this report is a generation-coverage gate rather than a reward or selector-quality result.
+
 After answer labels and rewards exist, inspect answer quality by retriever and policy:
 
 ```bash
