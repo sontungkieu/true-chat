@@ -18,8 +18,8 @@ Context reward changes the optimization target. & Penalty 0.25 changed 140/192 r
 Pairwise RLAIF mostly agrees with scalar reward. & MiMo-50 pairwise audit agreement was 0.854 over non-ambiguous decisions; mean confidence was 0.914. & Scalar reward is not arbitrary, but needs calibration for near-tie answers. \\
 Secondary judge supports the insufficiency signal. & DeepSeek v4 Flash agreed with MiMo on 80/83 comparable high-risk sufficiency decisions, agreement 0.964. & MiMo is not uniquely harsh on this targeted subset. \\
 Retriever-diversity coverage is fixed. & Retrieval-only run produced 2250 actions across BM25, graph-BM25, and hybrid-RRF; A1-medium generation produced 1500/1500 non-empty rows with 0 errors and 0 empty answers. & Logged action coverage now supports retrieval-context allocation experiments. \\
-A1 answer-level quality is now measured. & A1 has 1500/1500 valid MiMo V2.5 answer labels, 1460 clean usable labels, 1460 scored rewards, and graph-BM25 has the best mean answer-level reward among the three retrievers. & This is an answer-level signal, not a final retriever ranking. \\
-A1 context-level evidence is now measured on a stratified subset. & The 600-row A1 context pass has 548 clean usable labels, sufficiency 0.6985, context quality 0.6431, evidence support 0.6567, and 3.487 irrelevant chunks on average. & Context supervision is no longer pending, but it covers 600/1500 rows. \\
+A1 has answer-level and stratified context-level evidence. & A1 has 1500/1500 valid answer labels and 600 context labels with 548 clean usable rows. Graph-BM25 leads answer-level reward/quality, while hybrid-RRF leads context sufficiency/support on the subset. & Final retriever ranking remains metric-dependent and provisional. \\
+A1 context-level evidence is now measured on a stratified subset. & The 600-row A1 context pass has sufficiency 0.6985, context quality 0.6431, evidence support 0.6567, and 3.487 irrelevant chunks on average. & This turns A1 from generation-only validation into retriever-diverse answer/context evaluation, but only over a stratified subset. \\
 A1 answer and context signals diverge. & Graph-BM25 is strongest at answer level; hybrid-RRF has the highest context sufficiency/support in the 600-row subset, while graph-BM25 has lower token cost and higher KV savings. & Retriever ranking is metric-dependent and should remain query-conditioned. \\
 A1 selector signal is positive but costly. & With context reward 0.25, \code{linear\_reward\_model} remains the strongest non-oracle selector: reward 0.669 $\pm$ 0.081, quality 0.967 $\pm$ 0.026, oracle gap 0.145 $\pm$ 0.082. & The learned selector still uses high-cost actions; context reward remains non-default. \\
 \bottomrule
@@ -230,6 +230,8 @@ hybrid-RRF & 186 & 0.780 & 0.682 & 0.730 & 689.935 \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+This turns A1 from a generation-only validation into a retriever-diverse answer/context evaluation, but only over a stratified 600/1500 context-label subset.
 
 {\tiny
 \begin{longtable}{>{\raggedright\arraybackslash}p{2.8cm} r r r r r r}
