@@ -159,12 +159,25 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      1500/1500 valid MiMo V2.5 labels, 1460 clean usable labels, 0 invalid
      JSON lines, 0 missing/unknown/duplicate action ids, 1460 scored answer-
      only reward rows, and 17026 preferences. The first answer-level signal
-     favors graph-BM25 by mean reward/quality, but context labels are still
-     needed before a final retriever-quality claim. Report:
+     favors graph-BM25 by mean reward/quality. Report:
      `docs/reports/phase1d_retriever_diversity_a1_mimo_v25_eval.md`.
+   - Completed the A1 stratified 600-row context-label pass from four Kaggle
+     shards: 600/600 context labels, 548 clean usable labels, 52 ambiguous
+     labels, 2 invalid JSON labels, 0 missing/unknown/duplicate action ids,
+     sufficiency 0.6985, context quality 0.6431, and evidence support 0.6567.
+     The context-level signal favors hybrid-RRF on sufficiency/support and
+     graph-BM25 on efficiency/noise, so the final retriever ranking remains
+     provisional and metric-dependent.
+   - Built the non-default A1 context reward candidate with penalty 0.25:
+     1500 reward rows, 1492 scored rewards, 20934 preferences, and 464 reward
+     rows changed versus answer-only with mean changed delta -0.112. Reran the
+     six-seed selector sweep and selected-retriever distribution diagnostics;
+     `linear_reward_model` remains strongest non-oracle by reward but still
+     favors high-cost actions.
    - Updated the internship PDF Main Results with the A1 answer-label
-     validation table, A1 answer quality by retriever table, A1 answer-only
-     selector sweep table, and the prepared 600-row context-label subset gate.
+     validation table, A1 answer quality by retriever table, A1 context-label
+     validation/evidence-quality tables, answer-only and context-candidate
+     selector sweeps, and the answer-vs-context retriever-signal caveat.
    - Added A1 answer-label postprocess tooling:
      `scripts/validate_rlaif_answer_labels.py` validates and merges sharded
      MiMo answer-label JSONL files, skips corrupted partial lines, reports
@@ -185,8 +198,8 @@ Only after that can Phase 1D safely ask: "Which retrieval-context action should 
      timeline, full context-label statistics, context reward ablations,
      pairwise and DeepSeek audits, answer-only selector sweeps, retriever-
      diversity status, and an appendix mapping Markdown reports to PDF
-     sections. A1 answer labels are now complete; A1 context labels remain
-     explicitly marked as pending.
+     sections. A1 answer labels are complete, and A1 context labels are now
+     complete for the stratified 600/1500 subset.
    - Do not use `MAX_COMPLETION_TOKENS=256` for future standard MiMo V2.5 generation runs; the low cap produced 77 empty generated answers with no request errors. Keep the larger cap and validate empty-answer coverage before spending judge budget.
 
 ```bash

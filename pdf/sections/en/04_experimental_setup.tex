@@ -19,11 +19,15 @@ Full MiMo answer labels & 192 \\
 Full MiMo context labels & 192 \\
 Clean usable context labels & 177 \\
 Targeted multi-judge audit rows & 60 \\
+A1 retriever-diverse action rows & 1500 \\
+A1 clean answer labels & 1460 \\
+A1 stratified context labels & 600 \\
+A1 clean context labels & 548 \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The action log is not yet broad enough to support strong retrieval-strategy allocation claims. Most completed results use BM25. Planned retriever-diversity runs add BM25, graph-BM25, and hybrid-RRF as separate logged action families.
+The original Phase 1D action log is too BM25-heavy to support strong retrieval-strategy allocation claims by itself. The A1 retriever-diverse extension adds BM25, graph-BM25, and hybrid-RRF as separate logged action families, but the final retriever ranking remains provisional because context labels cover a stratified 600/1500 subset.
 
 A small sampled HotpotQA Kaggle evaluation is included later as supplementary multi-hop stress evidence. It is not part of the main Phase 1D selector training/evaluation set, and it is not reported as a full HotpotQA benchmark claim.
 
