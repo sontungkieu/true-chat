@@ -753,6 +753,43 @@ def test_dictionary_planner_does_not_bypass_private_taint_guard() -> None:
     assert llm.calls == 0
 
 
+def test_eval_style_private_user_tier_blocks_external_generation_even_with_public_hits() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    retriever = PublicDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer(
+            [{"role": "user", "content": "/dict TERM_A là gì", "data_tier": "private"}],
+            session_id="eval-private-item",
+        )
+
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert llm.calls == 0
+
+
 def test_dictionary_mode_uses_public_structured_procedure_evidence() -> None:
     class PublicDictionaryRetriever(FakeDictionaryRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:

@@ -210,6 +210,7 @@ __marimo__/
 
 # Local benchmark outputs and archives
 runs/
+eval_results/
 *.zip*
 .webui_secret_key
 *private*

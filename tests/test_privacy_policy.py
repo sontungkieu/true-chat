@@ -273,6 +273,38 @@ def test_self_hosted_trusted_backend_and_model_allows_private_taint() -> None:
     assert decision.reason == "private_uses_trusted_private_backend"
 
 
+def test_eval_judge_policy_blocks_private_external_but_allows_trusted_private_backend() -> None:
+    external_state = ConversationPrivacyState(session_id="judge-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    external = enforce_privacy_route(
+        "mimo",
+        "mimo-v2.5",
+        external_state,
+        (),
+        allow_external_semi_private=True,
+        backend_id="mimo",
+        backend_kind=BackendKind.EXTERNAL_SAAS,
+    )
+    trusted_state = ConversationPrivacyState(session_id="judge-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    trusted = enforce_privacy_route(
+        "local",
+        "trusted-judge",
+        trusted_state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=PrivateBackendPolicy.from_values(
+            trusted_private_backends={"private_judge"},
+            trusted_private_models={"trusted-judge"},
+        ),
+        backend_id="private_judge",
+        backend_kind=BackendKind.SELF_HOSTED_PRIVATE,
+    )
+
+    assert external.provider_allowed is False
+    assert external.reason == "private_taint_blocks_external_saas_backend"
+    assert trusted.provider_allowed is True
+    assert trusted.reason == "private_uses_trusted_private_backend"
+
+
 def test_private_capable_backend_with_untrusted_model_is_blocked() -> None:
     state = ConversationPrivacyState(session_id="chat-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
     policy = PrivateBackendPolicy.from_values(

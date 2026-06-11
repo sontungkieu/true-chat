@@ -15,6 +15,7 @@ from rag_bench.chat_service import (
     DEFAULT_MIMO_MODELS,
     DEFAULT_PROXY_MODEL_ID,
 )
+from rag_bench.eval_harness import DEFAULT_RAG_EVAL_OUTPUT_ROOT, RagEvalConfig, run_rag_eval
 from rag_bench.model_bench import DEFAULT_MODEL_BENCH_OUTPUT_DIR, MODEL_BENCH_PRESETS, ModelBenchConfig, run_model_benchmark
 from rag_bench.retriever_registry import list_retriever_ids
 from rag_bench.runner import RunConfig, run_benchmark
@@ -34,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
         return _serve(args)
     if args.command == "model-bench":
         return _model_bench(args)
+    if args.command == "eval-rag":
+        return _eval_rag(args)
     parser.print_help()
     return 1
 
@@ -119,6 +122,54 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Extra raw argument passed to vLLM. Repeat for multiple tokens, e.g. --vllm-arg --dtype --vllm-arg auto.",
     )
+
+    eval_parser = subparsers.add_parser("eval-rag", help="Evaluate RAG with separate generator and judge roles.")
+    eval_parser.add_argument("--eval-set", type=Path, required=True, help="JSONL RAG eval set.")
+    eval_parser.add_argument("--out-dir", type=Path, default=None, help=f"Output directory. Defaults under {DEFAULT_RAG_EVAL_OUTPUT_ROOT}.")
+    eval_parser.add_argument("--bench", choices=sorted(BENCHMARKS), default="scifact")
+    eval_parser.add_argument("--retriever", default="dictionary-graph", help=f"Retriever used by the generator service: {retriever_help}")
+    eval_parser.add_argument("--top-k", type=int, default=3)
+    eval_parser.add_argument("--groq-keys-path", type=Path, default=Path(".secrets/groq_key.env"))
+    eval_parser.add_argument("--vector-model", default=DEFAULT_VECTOR_MODEL)
+    eval_parser.add_argument("--max-completion-tokens", type=int, default=512)
+    eval_parser.add_argument("--temperature", type=float, default=0.0)
+    eval_parser.add_argument("--max-context-chars", type=int, default=2500)
+    eval_parser.add_argument("--dictionary-artifact", type=Path, default=Path("runs/pb_dictionary_abcd_mimo_graph"))
+    eval_parser.add_argument("--dictionary-source-dir", type=Path, default=Path("data/semi_private/File Từ điển PB_2021"))
+    eval_parser.add_argument("--dictionary-letters", default="A,B,C,D")
+    eval_parser.add_argument("--dictionary-top-k", type=int, default=5)
+    eval_parser.add_argument("--dictionary-required", action="store_true")
+    eval_parser.add_argument("--structured-evidence-jsonl", type=Path, default=None)
+    eval_parser.add_argument("--structured-evidence-md", type=Path, default=None)
+    eval_parser.add_argument("--generator-provider", default="local")
+    eval_parser.add_argument("--generator-model", default="heuristic-local")
+    eval_parser.add_argument("--generator-backend-id", default=None)
+    eval_parser.add_argument(
+        "--generator-backend-kind",
+        choices=("local_process", "self_hosted_private", "private_lan", "private_vpc", "external_saas", "unknown"),
+        default="local_process",
+    )
+    eval_parser.add_argument("--generator-trusted-private-backend", default="", help="Comma-separated trusted generator backend ids.")
+    eval_parser.add_argument("--generator-trusted-private-model", default="", help="Comma-separated trusted generator model ids.")
+    eval_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"))
+    eval_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
+    eval_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
+    eval_parser.add_argument("--mimo-models", default=",".join(DEFAULT_MIMO_MODELS))
+    eval_parser.add_argument("--judge-provider", default=None)
+    eval_parser.add_argument("--judge-model", default=None)
+    eval_parser.add_argument("--judge-backend-id", default=None)
+    eval_parser.add_argument(
+        "--judge-backend-kind",
+        choices=("local_process", "self_hosted_private", "private_lan", "private_vpc", "external_saas", "unknown"),
+        default=None,
+    )
+    eval_parser.add_argument("--judge-trusted-private-backend", default="", help="Comma-separated trusted judge backend ids.")
+    eval_parser.add_argument("--judge-trusted-private-model", default="", help="Comma-separated trusted judge model ids.")
+    eval_parser.add_argument("--allow-external-judge-public", action="store_true")
+    eval_parser.add_argument("--allow-external-judge-semi-private", action="store_true")
+    eval_parser.add_argument("--disable-llm-judge", dest="disable_llm_judge", action="store_true", default=True)
+    eval_parser.add_argument("--enable-llm-judge", dest="disable_llm_judge", action="store_false")
+    eval_parser.add_argument("--include-private-outputs", action="store_true", help="Write private query/answer text to result JSONL. Off by default.")
 
     serve_parser = subparsers.add_parser("serve", help="Serve an OpenAI-compatible RAG chat proxy.")
     serve_parser.add_argument("--host", default="127.0.0.1")
@@ -363,6 +414,92 @@ def _model_bench(args: argparse.Namespace) -> int:
         print(f"rag-bench model-bench failed: {exc}", file=sys.stderr)
         return 1
 
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def _eval_rag(args: argparse.Namespace) -> int:
+    if args.top_k <= 0:
+        print("--top-k must be positive.", file=sys.stderr)
+        return 2
+    if args.max_completion_tokens <= 0:
+        print("--max-completion-tokens must be positive.", file=sys.stderr)
+        return 2
+    if args.max_context_chars <= 0:
+        print("--max-context-chars must be positive.", file=sys.stderr)
+        return 2
+    if args.dictionary_top_k <= 0:
+        print("--dictionary-top-k must be positive.", file=sys.stderr)
+        return 2
+    dictionary_letters = _parse_csv(args.dictionary_letters)
+    if not dictionary_letters:
+        print("--dictionary-letters must include at least one value.", file=sys.stderr)
+        return 2
+    mimo_models = _parse_csv(args.mimo_models)
+    if not mimo_models:
+        print("--mimo-models must include at least one model.", file=sys.stderr)
+        return 2
+    generator_model = args.generator_model or DEFAULT_CHAT_MODEL
+    generator_provider = str(args.generator_provider or "").strip().lower()
+    available_models = _dedupe_preserve_order((generator_model, DEFAULT_MODEL, DEFAULT_CHAT_MODEL, *mimo_models))
+    chat_config = ChatProxyConfig(
+        bench=args.bench,
+        retriever=args.retriever,
+        top_k=args.top_k,
+        groq_keys_path=args.groq_keys_path,
+        model=generator_model,
+        model_id=f"rag-eval-{args.retriever}",
+        available_models=available_models,
+        mimo_enabled=generator_provider == "mimo",
+        mimo_env_file=args.mimo_env_file,
+        mimo_api_key_var=args.mimo_api_key_var,
+        mimo_base_url=args.mimo_base_url,
+        mimo_models=mimo_models,
+        vector_model=args.vector_model,
+        max_completion_tokens=args.max_completion_tokens,
+        temperature=args.temperature,
+        max_context_chars=args.max_context_chars,
+        dictionary_artifact=args.dictionary_artifact,
+        dictionary_source_dir=args.dictionary_source_dir,
+        dictionary_letters=dictionary_letters,
+        dictionary_top_k=args.dictionary_top_k,
+        dictionary_required=args.dictionary_required,
+        enable_dictionary_query_planner=True,
+        enable_structured_evidence=bool(args.structured_evidence_jsonl or args.structured_evidence_md),
+        structured_evidence_jsonl=args.structured_evidence_jsonl,
+        structured_evidence_md=args.structured_evidence_md,
+        backend_id=args.generator_backend_id,
+        backend_kind=args.generator_backend_kind,
+        trusted_private_backends=_parse_csv(args.generator_trusted_private_backend),
+        trusted_private_models=_parse_csv(args.generator_trusted_private_model),
+        available_retrievers=_dedupe_preserve_order((args.retriever, "dictionary-graph")),
+    )
+    config = RagEvalConfig(
+        eval_set=args.eval_set,
+        out_dir=args.out_dir,
+        generator_provider=args.generator_provider,
+        generator_model=generator_model,
+        generator_backend_id=args.generator_backend_id,
+        generator_backend_kind=args.generator_backend_kind,
+        generator_trusted_private_backends=_parse_csv(args.generator_trusted_private_backend),
+        generator_trusted_private_models=_parse_csv(args.generator_trusted_private_model),
+        judge_provider=args.judge_provider,
+        judge_model=args.judge_model,
+        judge_backend_id=args.judge_backend_id,
+        judge_backend_kind=args.judge_backend_kind,
+        judge_trusted_private_backends=_parse_csv(args.judge_trusted_private_backend),
+        judge_trusted_private_models=_parse_csv(args.judge_trusted_private_model),
+        allow_external_judge_public=args.allow_external_judge_public,
+        allow_external_judge_semi_private=args.allow_external_judge_semi_private,
+        disable_llm_judge=args.disable_llm_judge,
+        include_private_outputs=args.include_private_outputs,
+        chat_config=chat_config,
+    )
+    try:
+        summary = run_rag_eval(config)
+    except Exception as exc:  # noqa: BLE001 - CLI should show concise operational errors.
+        print(f"rag-bench eval-rag failed: {exc}", file=sys.stderr)
+        return 1
     print(json.dumps(summary, indent=2))
     return 0
 
