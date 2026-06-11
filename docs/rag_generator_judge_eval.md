@@ -47,6 +47,14 @@ uv run --frozen rag-bench eval-rag \
   --out-dir eval_results/rag_eval/smoke
 ```
 
+For a repeatable no-network smoke using committed redacted templates materialized against a local PB dictionary artifact, run:
+
+```bash
+scripts/run_redacted_rag_eval_smoke.sh
+```
+
+See [`docs/redacted_rag_eval_smoke.md`](redacted_rag_eval_smoke.md) for the fixture layout, expected outputs, and optional public judge command.
+
 The deterministic checks include:
 
 - expected intent vs. actual `query_plan.intent`;

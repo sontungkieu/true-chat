@@ -348,3 +348,58 @@ def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, caps
     assert seen["config"].judge_max_completion_tokens == 3072
     assert seen["config"].include_private_outputs is True
     assert seen["config"].chat_config.enable_structured_evidence is True
+
+
+def test_cli_eval_rag_accepts_redacted_smoke_fixture_benchmark(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+
+    def fake_run_rag_eval(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "eval-out"),
+            "results_path": str(tmp_path / "eval-out" / "results.jsonl"),
+            "summary_path": str(tmp_path / "eval-out" / "summary.md"),
+            "failures_path": str(tmp_path / "eval-out" / "failures.jsonl"),
+            "item_count": 15,
+            "failure_count": 0,
+            "judge_called_count": 0,
+        }
+
+    monkeypatch.setattr(cli, "run_rag_eval", fake_run_rag_eval)
+
+    fixture_dir = Path("tests/fixtures/rag_eval_smoke")
+    pb_artifact = Path("runs/pb_dictionary_base_supp2021_prod_graph")
+    exit_code = cli.main(
+        [
+            "eval-rag",
+            "--bench",
+            "fixture",
+            "--eval-set",
+            str(fixture_dir / "eval_public_smoke.jsonl"),
+            "--out-dir",
+            str(tmp_path / "eval-out"),
+            "--dictionary-artifact",
+            str(pb_artifact),
+            "--dictionary-source-dir",
+            str(fixture_dir / "no_source"),
+            "--dictionary-letters",
+            "T",
+            "--dictionary-required",
+            "--structured-evidence-jsonl",
+            str(fixture_dir / "structured_evidence_public.jsonl"),
+            "--generator-provider",
+            "local",
+            "--generator-model",
+            "heuristic-local",
+            "--disable-llm-judge",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"item_count": 15' in captured.out
+    assert seen["config"].chat_config.bench == "fixture"
+    assert seen["config"].chat_config.dictionary_artifact == pb_artifact
+    assert seen["config"].chat_config.dictionary_required is True
+    assert seen["config"].chat_config.structured_evidence_jsonl == fixture_dir / "structured_evidence_public.jsonl"
+    assert seen["config"].disable_llm_judge is True
