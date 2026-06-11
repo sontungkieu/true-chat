@@ -712,6 +712,37 @@ def test_missing_evidence_smoke_keeps_schema_gap(tmp_path: Path) -> None:
     assert result.heuristic_scores["schema_gap_expected"] is True
 
 
+def test_structured_evidence_doc_type_only_does_not_clear_smoke_gap(tmp_path: Path) -> None:
+    eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "gap", "query": "quy trình xử lý TERM_A là gì"}])
+    item = RagEvalItem(
+        eval_id="gap",
+        query="quy trình xử lý TERM_A là gì",
+        expected_intent="procedure",
+        expected_schema_gaps=["procedure_schema_not_implemented"],
+    )
+    service = _real_public_service(
+        StructuredEvidenceIndex(
+            [
+                StructuredEvidenceDoc.from_mapping(
+                    {
+                        "doc_id": "PROC_B",
+                        "doc_type": "procedure",
+                        "data_tier": "public",
+                        "linked_terms": ["TERM_B"],
+                        "steps": ["STEP_B1"],
+                    }
+                )
+            ]
+        )
+    )
+
+    result = evaluate_rag_item(item, _config(tmp_path, eval_set), service=service)
+
+    assert "PROC_B" not in result.retrieved_doc_ids
+    assert "procedure_schema_not_implemented" in result.query_plan["schema_gaps"]
+    assert result.query_plan["structured_evidence"]["matched_doc_count"] == 0
+
+
 def test_heuristic_metrics_detect_expected_fields() -> None:
     scores = compute_heuristic_scores(
         RagEvalItem(

@@ -166,6 +166,14 @@ Results are written under ignored `runs/model_bench/<timestamp>_<hostname>_<mode
 
 Search behavior is registered centrally as retrieval strategies. The active strategies are `bm25`, `tfidf`, `keyword-match`, `multi-query`, `graph-bm25`, `llm-query-rewrite`, `llm-multi-query`, `image-digits`, `dictionary-graph`, `vector`, `hybrid-rrf`, and `vector-rerank`. Aliases include `lexical -> bm25`, `find -> keyword-match`, `graph -> graph-bm25`, `graph-rag -> graph-bm25`, `img -> image-digits`, `dict -> dictionary-graph`, `dense -> vector`, `hybrid -> hybrid-rrf`, and `rerank -> vector-rerank`. The benchmark CLI, chat proxy, and built-in UI all use the same registry so new search behavior can be added without wiring it separately through each surface.
 
+Run the committed redacted RAG eval smoke after changing dictionary planning, structured evidence, or eval harness behavior:
+
+```bash
+scripts/run_redacted_rag_eval_smoke.sh
+```
+
+The smoke materializes redacted templates against a local PB dictionary artifact, uses `--bench fixture` to avoid BEIR downloads, and writes ignored outputs under `eval_results/rag_eval/`. Set `RAG_EVAL_DICTIONARY_ARTIFACT=/path/to/pb_dictionary_artifact` when the default PB artifact path is not available.
+
 The current image strategy is a lightweight demo over `sklearn.datasets.load_digits`, not a production image index. `/dict` is implemented as a registry-backed local dictionary strategy over prebuilt PB dictionary artifacts or fallback DOCX parsing. Richer `/image` commands should still be implemented as registry-backed retrieval strategies over a local image folder with optional metadata. The chat service only routes command prefixes to strategy ids; strategies still return normal retrieved items for prompting, UI display, and metrics.
 
 Strategy notes:
