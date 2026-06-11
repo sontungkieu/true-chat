@@ -39,6 +39,7 @@ class DictionaryQueryPlan:
     answer_style: str = "grounded_summary"
     schema_gaps: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    structured_evidence: dict[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -54,7 +55,42 @@ class DictionaryQueryPlan:
             "answer_style": self.answer_style,
             "schema_gaps": list(self.schema_gaps),
             "notes": list(self.notes),
+            "structured_evidence": dict(self.structured_evidence),
         }
+
+    def with_structured_evidence(self, metadata: dict[str, Any]) -> "DictionaryQueryPlan":
+        matched_types = set(metadata.get("matched_doc_types") or [])
+        matched_count = int(metadata.get("matched_doc_count") or 0)
+        schema_gaps = list(self.schema_gaps)
+        answer_style = self.answer_style
+        if matched_count > 0:
+            if self.intent == DictionaryQueryIntent.PROCEDURE and "procedure" in matched_types:
+                schema_gaps = [gap for gap in schema_gaps if gap != "procedure_schema_not_implemented"]
+                answer_style = "procedure_grounded"
+            elif self.intent == DictionaryQueryIntent.RULE_APPLICATION and ({"rule", "exception"} & matched_types):
+                schema_gaps = [gap for gap in schema_gaps if gap != "rule_schema_not_implemented"]
+                answer_style = "rule_application_grounded"
+            elif self.intent == DictionaryQueryIntent.EXCEPTION and ({"exception", "rule"} & matched_types):
+                schema_gaps = [gap for gap in schema_gaps if gap != "exception_schema_not_implemented"]
+                answer_style = "exception_grounded"
+            elif self.intent == DictionaryQueryIntent.CASE_BASED and "case" in matched_types:
+                schema_gaps = [gap for gap in schema_gaps if gap != "case_schema_not_implemented"]
+                answer_style = "case_evidence_grounded"
+        return DictionaryQueryPlan(
+            query=self.query,
+            intent=self.intent,
+            confidence=self.confidence,
+            matched_terms=list(self.matched_terms),
+            target_terms=list(self.target_terms),
+            preferred_edge_types=list(self.preferred_edge_types),
+            max_graph_hops=self.max_graph_hops,
+            require_comparison=self.require_comparison,
+            require_citations=self.require_citations,
+            answer_style=answer_style,
+            schema_gaps=schema_gaps,
+            notes=list(self.notes),
+            structured_evidence=dict(metadata),
+        )
 
 
 DEFINITION_EDGES = ("has_alias", "has_concept", "in_category", "is_a")
@@ -238,12 +274,54 @@ def dictionary_plan_prompt_instructions(plan: DictionaryQueryPlan) -> str:
         DictionaryQueryIntent.CASE_BASED,
     }:
         specific = [
-            "Do not invent steps, rules, exceptions, or cases.",
-            "If only dictionary definitions are available, say that procedural/rule/case evidence is not present in the retrieved data.",
+            *_structured_evidence_instructions(plan),
         ]
     else:
         specific = ["Give a concise grounded explanation."]
     return "\n".join(f"- {line}" for line in (*common, *specific))
+
+
+def _structured_evidence_instructions(plan: DictionaryQueryPlan) -> list[str]:
+    matched_types = set(plan.structured_evidence.get("matched_doc_types") or [])
+    matched_count = int(plan.structured_evidence.get("matched_doc_count") or 0)
+    missing = matched_count <= 0
+    if plan.intent == DictionaryQueryIntent.PROCEDURE:
+        return [
+            "Use only retrieved procedure sources for steps.",
+            "Present steps only if they are supported by retrieved procedure evidence.",
+            "If steps are missing or incomplete, say the procedure evidence is incomplete.",
+            "Do not invent steps.",
+        ] if "procedure" in matched_types else _missing_structured_evidence_instructions("procedure")
+    if plan.intent == DictionaryQueryIntent.RULE_APPLICATION:
+        return [
+            "Identify conditions and exceptions from retrieved rule sources.",
+            "Do not invent missing conditions.",
+            "If no rule evidence is present, say only dictionary evidence was retrieved.",
+        ] if ({"rule", "exception"} & matched_types) else _missing_structured_evidence_instructions("rule")
+    if plan.intent == DictionaryQueryIntent.EXCEPTION:
+        return [
+            "Use retrieved exception/rule evidence for exceptions.",
+            "Do not infer exceptions from definitions alone.",
+            "If exception evidence is incomplete, say so.",
+        ] if ({"exception", "rule"} & matched_types) else _missing_structured_evidence_instructions("exception")
+    if plan.intent == DictionaryQueryIntent.CASE_BASED:
+        return [
+            "Use cases only as examples or evidence, not universal rules.",
+            "Distinguish case outcome from general rule.",
+            "Do not generalize beyond cited case evidence.",
+        ] if "case" in matched_types else _missing_structured_evidence_instructions("case")
+    if missing:
+        return _missing_structured_evidence_instructions("structured")
+    return ["Do not invent steps, rules, exceptions, or cases."]
+
+
+def _missing_structured_evidence_instructions(kind: str) -> list[str]:
+    return [
+        f"State clearly that {kind} evidence is not present in the retrieved data.",
+        "If only dictionary definitions are available, say that procedural/rule/case evidence is not present in the retrieved data.",
+        "Do not invent steps, rules, exceptions, or cases.",
+        "Do not fabricate rules, procedures, exceptions, or cases from definitions alone.",
+    ]
 
 
 def annotate_and_rank_dictionary_hits(

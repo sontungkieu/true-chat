@@ -45,6 +45,11 @@ from rag_bench.privacy import (
 from rag_bench.retriever_registry import create_retriever, get_retriever_spec, normalize_retriever_id
 from rag_bench.retrievers import Retriever
 from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
+from rag_bench.structured_evidence import (
+    StructuredEvidenceIndex,
+    load_structured_evidence_jsonl,
+    load_structured_evidence_markdown,
+)
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 
@@ -115,6 +120,9 @@ class ChatProxyConfig:
     dictionary_top_k: int = 5
     dictionary_required: bool = False
     enable_dictionary_query_planner: bool = True
+    enable_structured_evidence: bool = False
+    structured_evidence_jsonl: Path | None = None
+    structured_evidence_md: Path | None = None
     allow_external_semi_private: bool = False
     backend_id: str | None = None
     backend_kind: str | None = None
@@ -159,6 +167,7 @@ class RagChatService:
     started_at_s: float = field(default_factory=time.time)
     retrievers: dict[str, Retriever] = field(default_factory=dict)
     dictionary_status: dict[str, Any] = field(default_factory=dict)
+    structured_evidence_index: StructuredEvidenceIndex | None = None
     privacy_states: dict[str, ConversationPrivacyState] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -179,6 +188,7 @@ class RagChatService:
         dictionary = _load_dictionary(config)
         retrievers = _build_retrievers(config, benchmark, llm=llm, dictionary=dictionary)
         retriever = _default_retriever(config, retrievers)
+        structured_evidence_index = _load_structured_evidence_index(config)
         return cls(
             config=config,
             benchmark=benchmark,
@@ -186,6 +196,7 @@ class RagChatService:
             llm=llm,
             retrievers=retrievers,
             dictionary_status=dictionary.status,
+            structured_evidence_index=structured_evidence_index,
         )
 
     def answer(
@@ -309,6 +320,19 @@ class RagChatService:
             request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
             query_plan = plan_dictionary_query(question) if self.config.enable_dictionary_query_planner else None
             retrieval = retriever.search(Query(query_id="chat-dict", text=question), request_top_k)
+            structured_result = None
+            if query_plan is not None and self.structured_evidence_index is not None:
+                structured_result = self.structured_evidence_index.search(
+                    question,
+                    intent=query_plan.intent.value,
+                    terms=query_plan.target_terms,
+                    top_k=request_top_k,
+                )
+                if structured_result.hits:
+                    query_plan = query_plan.with_structured_evidence(structured_result.to_metadata())
+                    retrieval.hits = merge_planned_dictionary_results(retrieval.hits, [structured_result.hits])
+                else:
+                    query_plan = query_plan.with_structured_evidence(structured_result.to_metadata())
             if query_plan is not None:
                 extra_results = [
                     retriever.search(Query(query_id=f"chat-dict-plan-{index}", text=term), request_top_k).hits
@@ -334,6 +358,8 @@ class RagChatService:
                 "memory": use_memory,
                 **score_filter_metadata,
             }
+            if structured_result is not None:
+                retrieval_metadata["structured_evidence"] = structured_result.to_metadata()
             if query_plan is not None:
                 retrieval_metadata["query_plan"] = query_plan.to_payload()
             if retrieval.hits:
@@ -1362,6 +1388,17 @@ def _load_dictionary(config: ChatProxyConfig) -> DictionaryLoadResult:
         letters=config.dictionary_letters,
         required=config.dictionary_required,
     )
+
+
+def _load_structured_evidence_index(config: ChatProxyConfig) -> StructuredEvidenceIndex | None:
+    if not config.enable_structured_evidence:
+        return None
+    docs = []
+    if config.structured_evidence_jsonl is not None:
+        docs.extend(load_structured_evidence_jsonl(config.structured_evidence_jsonl))
+    if config.structured_evidence_md is not None:
+        docs.extend(load_structured_evidence_markdown(config.structured_evidence_md))
+    return StructuredEvidenceIndex(docs)
 
 
 def _default_retriever(config: ChatProxyConfig, retrievers: dict[str, Retriever]) -> Retriever:

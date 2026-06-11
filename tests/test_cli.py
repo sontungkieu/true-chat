@@ -88,6 +88,11 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "6",
             "--dictionary-required",
             "--no-dictionary-query-planner",
+            "--enable-structured-evidence",
+            "--structured-evidence-jsonl",
+            "fixtures/structured.jsonl",
+            "--structured-evidence-md",
+            "fixtures/structured.md",
             "--max-completion-tokens",
             "96",
             "--enable-mimo",
@@ -141,6 +146,9 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.dictionary_top_k == 6
     assert seen["config"].chat.dictionary_required is True
     assert seen["config"].chat.enable_dictionary_query_planner is False
+    assert seen["config"].chat.enable_structured_evidence is True
+    assert seen["config"].chat.structured_evidence_jsonl == Path("fixtures/structured.jsonl")
+    assert seen["config"].chat.structured_evidence_md == Path("fixtures/structured.md")
     assert seen["config"].chat.max_completion_tokens == 96
     assert seen["config"].chat.mimo_enabled is True
     assert seen["config"].chat.mimo_env_file == Path(".secrets/.env")

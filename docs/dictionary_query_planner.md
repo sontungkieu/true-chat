@@ -72,7 +72,7 @@ The model is still instructed to answer only from retrieved evidence and cite di
 
 ## Schema Gaps
 
-Procedure, rule-application, exception, and case-based questions are recognized, but this task does not add a rule/case/procedure extraction pipeline. For these intents the plan includes schema-gap markers such as:
+Procedure, rule-application, exception, and case-based questions are recognized. When structured evidence sidecars are configured, these gaps are evidence-aware: matching procedure/rule/exception/case evidence clears the corresponding gap and changes the answer style to a grounded structured-evidence mode. Without matching structured evidence, the plan keeps schema-gap markers such as:
 
 ```text
 procedure_schema_not_implemented
@@ -81,7 +81,7 @@ exception_schema_not_implemented
 case_schema_not_implemented
 ```
 
-The prompt tells the model to state the evidence gap when retrieved data only contains dictionary definitions.
+The prompt tells the model to state the evidence gap when retrieved data only contains dictionary definitions. See [`structured_evidence_schema.md`](structured_evidence_schema.md) for the JSONL/Markdown sidecar format and privacy behavior.
 
 ## Response Metadata
 
@@ -119,5 +119,5 @@ This means the planner can compute a plan for private context locally, but gener
 - Entity extraction is intentionally simple and heuristic.
 - Planner-aware ranking is a light post-retrieval boost, not a learned ranker.
 - The planner cannot prove graph edge correctness.
-- Procedure/rule/case support is only safe gap detection until explicit schemas or curated evidence exist.
+- Procedure/rule/case support depends on explicit structured evidence sidecars; it does not extract schemas from arbitrary prose.
 - Non-dictionary benchmark RAG is unchanged unless dictionary mode is selected.

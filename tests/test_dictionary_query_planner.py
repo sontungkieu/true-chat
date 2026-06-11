@@ -67,6 +67,30 @@ def test_procedure_plan_marks_schema_gap_and_prompt_blocks_hallucinated_steps() 
     assert "procedural/rule/case evidence is not present" in instructions
 
 
+def test_procedure_plan_clears_schema_gap_when_structured_evidence_exists() -> None:
+    plan = plan_dictionary_query("quy trình xử lý TERM_A là gì")
+    plan = plan.with_structured_evidence(
+        {"enabled": True, "matched_doc_types": ["procedure"], "matched_doc_count": 1}
+    )
+    instructions = dictionary_plan_prompt_instructions(plan)
+
+    assert plan.intent == DictionaryQueryIntent.PROCEDURE
+    assert "procedure_schema_not_implemented" not in plan.schema_gaps
+    assert plan.structured_evidence["matched_doc_count"] == 1
+    assert plan.answer_style == "procedure_grounded"
+    assert "Present steps only if they are supported" in instructions
+
+
+def test_case_plan_uses_case_evidence_as_example_not_universal_rule() -> None:
+    plan = plan_dictionary_query("case này của TERM_A")
+    plan = plan.with_structured_evidence({"enabled": True, "matched_doc_types": ["case"], "matched_doc_count": 1})
+    instructions = dictionary_plan_prompt_instructions(plan)
+
+    assert plan.intent == DictionaryQueryIntent.CASE_BASED
+    assert "case_schema_not_implemented" not in plan.schema_gaps
+    assert "Use cases only as examples or evidence, not universal rules." in instructions
+
+
 def test_planner_preserves_vietnamese_tone_marks_for_corner_case_terms() -> None:
     japan = plan_dictionary_query("nhật là gì")
     fort_compare = plan_dictionary_query("so sánh pháo đài và pháo dài")

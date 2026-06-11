@@ -14,6 +14,7 @@ from rag_bench.chat_service import (
 )
 from rag_bench.groq_client import GenerationResult
 from rag_bench.privacy import PrivacyRouteError
+from rag_bench.structured_evidence import StructuredEvidenceDoc, StructuredEvidenceIndex
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
 
 
@@ -749,6 +750,165 @@ def test_dictionary_planner_does_not_bypass_private_taint_guard() -> None:
         service.answer([{"role": "user", "content": "/dict TERM_A là gì"}], session_id="private-dict")
 
     assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert llm.calls == 0
+
+
+def test_dictionary_mode_uses_public_structured_procedure_evidence() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "PROC_X",
+                    "doc_type": "procedure",
+                    "title": "Procedure X",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_A"],
+                    "steps": ["STEP_1", "STEP_2"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=PublicDictionaryRetriever(),
+        llm=llm,
+        retrievers={"dictionary-graph": PublicDictionaryRetriever()},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict quy trình xử lý TERM_A là gì"}])
+
+    assert result.response["query_plan"]["intent"] == "procedure"
+    assert result.response["query_plan"]["schema_gaps"] == []
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 1
+    assert result.response["rag"]["retrieval_metadata"]["structured_evidence"]["matched_doc_types"] == ["procedure"]
+    assert "Present steps only if they are supported" in llm.messages[1]["content"]
+    assert result.response["privacy"]["provider_allowed"] is True
+    assert llm.calls == 1
+
+
+def test_dictionary_mode_uses_rule_evidence_with_safe_counts() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "RULE_X",
+                    "doc_type": "rule",
+                    "title": "Rule X",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_A"],
+                    "conditions": ["CONDITION_A"],
+                    "exceptions": ["EXCEPTION_B"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict trường hợp này áp dụng TERM_A không"}])
+    structured_sources = [
+        source for source in result.response["rag"]["retrieved"]
+        if source["metadata"].get("structured_evidence")
+    ]
+
+    assert result.response["query_plan"]["intent"] == "rule_application"
+    assert result.response["query_plan"]["schema_gaps"] == []
+    assert "Identify conditions and exceptions from retrieved rule sources." in llm.messages[1]["content"]
+    assert structured_sources[0]["metadata"]["condition_count"] == 1
+    assert structured_sources[0]["metadata"]["exception_count"] == 1
+
+
+def test_private_structured_evidence_blocks_external_generation() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "PROC_SECRET",
+                    "doc_type": "procedure",
+                    "linked_terms": ["TERM_A"],
+                    "steps": ["SECRET_STEP"],
+                }
+            )
+        ]
+    )
+    retriever = PublicDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer(
+            [{"role": "user", "content": "/dict quy trình xử lý TERM_A là gì"}],
+            session_id="private-structured",
+        )
+
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert service.privacy_states["private-structured"].max_seen_tier.value == "private"
     assert llm.calls == 0
 
 

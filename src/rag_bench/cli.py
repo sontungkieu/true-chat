@@ -185,6 +185,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable deterministic planner metadata and prompt instructions for dictionary-mode chat.",
     )
     serve_parser.add_argument(
+        "--enable-structured-evidence",
+        action="store_true",
+        help="Enable deterministic structured rule/procedure/case evidence sidecars for dictionary-mode chat.",
+    )
+    serve_parser.add_argument(
+        "--structured-evidence-jsonl",
+        type=Path,
+        default=None,
+        help="JSONL sidecar with structured rule/procedure/case evidence.",
+    )
+    serve_parser.add_argument(
+        "--structured-evidence-md",
+        type=Path,
+        default=None,
+        help="Markdown sidecar with structured rule/procedure/case evidence.",
+    )
+    serve_parser.add_argument(
         "--allow-external-semi-private",
         action="store_true",
         help="Allow semi-private RAG context to be sent to external SaaS providers. Private context still requires a trusted private backend.",
@@ -447,6 +464,9 @@ def _serve(args: argparse.Namespace) -> int:
         dictionary_top_k=args.dictionary_top_k,
         dictionary_required=args.dictionary_required,
         enable_dictionary_query_planner=args.dictionary_query_planner,
+        enable_structured_evidence=args.enable_structured_evidence,
+        structured_evidence_jsonl=args.structured_evidence_jsonl,
+        structured_evidence_md=args.structured_evidence_md,
         allow_external_semi_private=args.allow_external_semi_private,
         backend_id=args.private_backend,
         backend_kind=args.private_backend_kind,
