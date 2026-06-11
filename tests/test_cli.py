@@ -277,3 +277,74 @@ def test_cli_model_bench_rejects_invalid_numeric_args(capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "--requests-per-scenario must be positive" in captured.err
+
+
+def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -> None:
+    seen = {}
+    eval_set = tmp_path / "eval.jsonl"
+    eval_set.write_text('{"eval_id":"one","query":"TERM_A"}\n', encoding="utf-8")
+
+    def fake_run_rag_eval(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "eval-out"),
+            "results_path": str(tmp_path / "eval-out" / "results.jsonl"),
+            "summary_path": str(tmp_path / "eval-out" / "summary.md"),
+            "failures_path": str(tmp_path / "eval-out" / "failures.jsonl"),
+            "item_count": 1,
+            "failure_count": 0,
+            "judge_called_count": 0,
+        }
+
+    monkeypatch.setattr(cli, "run_rag_eval", fake_run_rag_eval)
+
+    exit_code = cli.main(
+        [
+            "eval-rag",
+            "--eval-set",
+            str(eval_set),
+            "--out-dir",
+            str(tmp_path / "eval-out"),
+            "--structured-evidence-jsonl",
+            str(tmp_path / "structured.jsonl"),
+            "--generator-provider",
+            "local_small",
+            "--generator-model",
+            "tiny-generator",
+            "--generator-backend-id",
+            "local_eval",
+            "--generator-backend-kind",
+            "local_process",
+            "--generator-trusted-private-backend",
+            "local_eval",
+            "--generator-trusted-private-model",
+            "tiny-generator",
+            "--judge-provider",
+            "mimo",
+            "--judge-model",
+            "mimo-v2.5",
+            "--judge-backend-kind",
+            "external_saas",
+            "--allow-external-judge-public",
+            "--enable-llm-judge",
+            "--judge-max-completion-tokens",
+            "3072",
+            "--include-private-eval-text",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert '"item_count": 1' in captured.out
+    assert seen["config"].generator_provider == "local_small"
+    assert seen["config"].generator_model == "tiny-generator"
+    assert seen["config"].generator_backend_id == "local_eval"
+    assert seen["config"].generator_backend_kind == "local_process"
+    assert seen["config"].judge_provider == "mimo"
+    assert seen["config"].judge_model == "mimo-v2.5"
+    assert seen["config"].judge_backend_kind == "external_saas"
+    assert seen["config"].allow_external_judge_public is True
+    assert seen["config"].disable_llm_judge is False
+    assert seen["config"].judge_max_completion_tokens == 3072
+    assert seen["config"].include_private_outputs is True
+    assert seen["config"].chat_config.enable_structured_evidence is True
