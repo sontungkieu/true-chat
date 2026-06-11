@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from rag_bench.chat_service import (
     ChatProxyConfig,
     ModelRoutedChatClient,
@@ -11,7 +13,12 @@ from rag_bench.chat_service import (
     parse_chat_command,
 )
 from rag_bench.groq_client import GenerationResult
+from rag_bench.privacy import PrivacyRouteError
+from rag_bench.structured_evidence import StructuredEvidenceDoc, StructuredEvidenceIndex
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
+
+
+PUBLIC_METADATA = {"data_tier": "public", "doc_type": "synthetic"}
 
 
 @dataclass
@@ -31,6 +38,8 @@ class FakeRetriever:
                     rank=1,
                     title="Cats",
                     text="Cats purr and chase toys.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
                 )
             ],
             latency_s=0.02,
@@ -56,6 +65,7 @@ class FakeImageRetriever:
                     title="Digit 7",
                     text="A handwritten digit 7 image.",
                     metadata={
+                        "data_tier": "public",
                         "kind": "image",
                         "image_data_url": "data:image/svg+xml,%3Csvg%3E%3C/svg%3E",
                         "label": 7,
@@ -88,6 +98,8 @@ class FakeKeywordRetriever:
                     rank=1,
                     title="BH1 and BH2 domains of Bcl-2",
                     text="BH1 and BH2 domains of Bcl-2 are required for apoptosis inhibition.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
                 ),
                 RetrievalHit(
                     doc_id="noise-doc",
@@ -95,6 +107,8 @@ class FakeKeywordRetriever:
                     rank=2,
                     title="Unrelated",
                     text="Unrelated document.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
                 ),
             ],
             latency_s=0.01,
@@ -120,11 +134,13 @@ class FakeDictionaryRetriever:
                     title="AMONIT",
                     text="AMONIT, thuốc nổ phá.",
                     metadata={
+                        "data_tier": "semi_private",
                         "kind": "dictionary",
                         "headword": "AMONIT",
                         "raw_docx_text": "AMONIT, thuốc nổ phá.",
                         "rich_blocks": [{"type": "paragraph", "runs": [{"text": "AMONIT", "bold": True}]}],
                     },
+                    data_tier="semi_private",
                 )
             ],
             latency_s=0.01,
@@ -231,6 +247,16 @@ class FakeKeywordLLM(FakeLLM):
             total_tokens=15 + completion_tokens,
             estimated_tokens=30,
         )
+
+
+class CountingLLM(FakeLLM):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def generate(self, *args, **kwargs) -> GenerationResult:
+        self.calls += 1
+        return super().generate(*args, **kwargs)
 
 
 def test_rag_chat_service_answers_with_retrieved_context_and_history() -> None:
@@ -591,7 +617,12 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     dictionary_retriever = FakeDictionaryRetriever()
     llm = FakeLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -624,6 +655,413 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     assert lookup["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
 
 
+def test_dictionary_mode_exposes_safe_query_plan_metadata_and_prompt_instructions() -> None:
+    dictionary_retriever = FakeDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "/dict so sánh TERM_A và TERM_B"}],
+        language="vi",
+    )
+
+    assert result.response["query_plan"]["intent"] == "comparison"
+    assert result.response["query_plan"]["schema_gaps"] == []
+    assert result.response["rag"]["retrieval_metadata"]["query_plan"]["target_terms"] == ["TERM_A", "TERM_B"]
+    assert result.response["rag"]["retrieved"][0]["metadata"]["query_plan_intent"] == "comparison"
+    assert "Compare only using the retrieved sources." in llm.messages[1]["content"]
+    assert llm.calls == 1
+
+
+def test_dictionary_planner_public_path_preserves_external_generation() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    dictionary_retriever = PublicDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": dictionary_retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict TERM_A là gì"}])
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["privacy"]["provider_allowed"] is True
+    assert llm.calls == 1
+
+
+def test_dictionary_planner_does_not_bypass_private_taint_guard() -> None:
+    class PrivateDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text="private synthetic dictionary context",
+                metadata={**hit.metadata, "data_tier": "private", "raw_docx_text": "private synthetic dictionary context"},
+                data_tier="private",
+                doc_type="dictionary",
+            )
+            return result
+
+    dictionary_retriever = PrivateDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": dictionary_retriever},
+    )
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer([{"role": "user", "content": "/dict TERM_A là gì"}], session_id="private-dict")
+
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert llm.calls == 0
+
+
+def test_dictionary_mode_uses_public_structured_procedure_evidence() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "PROC_X",
+                    "doc_type": "procedure",
+                    "title": "Procedure X",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_A"],
+                    "steps": ["STEP_1", "STEP_2"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=PublicDictionaryRetriever(),
+        llm=llm,
+        retrievers={"dictionary-graph": PublicDictionaryRetriever()},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict quy trình xử lý TERM_A là gì"}])
+
+    assert result.response["query_plan"]["intent"] == "procedure"
+    assert result.response["query_plan"]["schema_gaps"] == []
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 1
+    assert result.response["rag"]["retrieval_metadata"]["structured_evidence"]["matched_doc_types"] == ["procedure"]
+    assert "Present steps only if they are supported" in llm.messages[1]["content"]
+    assert result.response["privacy"]["provider_allowed"] is True
+    assert llm.calls == 1
+
+
+def test_dictionary_mode_uses_rule_evidence_with_safe_counts() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "RULE_X",
+                    "doc_type": "rule",
+                    "title": "Rule X",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_A"],
+                    "conditions": ["CONDITION_A"],
+                    "exceptions": ["EXCEPTION_B"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict trường hợp này áp dụng TERM_A không"}])
+    structured_sources = [
+        source for source in result.response["rag"]["retrieved"]
+        if source["metadata"].get("structured_evidence")
+    ]
+
+    assert result.response["query_plan"]["intent"] == "rule_application"
+    assert result.response["query_plan"]["schema_gaps"] == []
+    assert "Identify conditions and exceptions from retrieved rule sources." in llm.messages[1]["content"]
+    assert structured_sources[0]["metadata"]["condition_count"] == 1
+    assert structured_sources[0]["metadata"]["exception_count"] == 1
+
+
+def test_unrelated_structured_procedure_does_not_clear_gap_or_enter_prompt() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "PROC_B",
+                    "doc_type": "procedure",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_B"],
+                    "steps": ["STEP_B1"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict quy trình xử lý TERM_A là gì"}])
+
+    assert "procedure_schema_not_implemented" in result.response["query_plan"]["schema_gaps"]
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 0
+    assert result.response["rag"]["retrieval_metadata"]["structured_evidence"]["matched_doc_count"] == 0
+    assert "Do not invent steps" in llm.messages[1]["content"]
+    assert "STEP_B1" not in llm.messages[1]["content"]
+
+
+def test_unrelated_structured_rule_does_not_clear_gap_or_expose_conditions() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "RULE_B",
+                    "doc_type": "rule",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_B"],
+                    "conditions": ["COND_B"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict trường hợp này áp dụng TERM_A không"}])
+
+    assert "rule_schema_not_implemented" in result.response["query_plan"]["schema_gaps"]
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 0
+    assert "Do not invent steps, rules, exceptions, or cases." in llm.messages[1]["content"]
+    assert "COND_B" not in llm.messages[1]["content"]
+
+
+def test_unrelated_structured_case_does_not_clear_gap_or_enter_prompt() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "CASE_B",
+                    "doc_type": "case",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_B"],
+                    "situation": "SITUATION_B",
+                    "outcome": "OUTCOME_B",
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict case tương tự cho TERM_A là gì"}])
+
+    assert result.response["query_plan"]["intent"] == "case_based"
+    assert "case_schema_not_implemented" in result.response["query_plan"]["schema_gaps"]
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 0
+    assert "SITUATION_B" not in llm.messages[1]["content"]
+    assert "OUTCOME_B" not in llm.messages[1]["content"]
+
+
+def test_private_structured_evidence_blocks_external_generation() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "PROC_SECRET",
+                    "doc_type": "procedure",
+                    "linked_terms": ["TERM_A"],
+                    "steps": ["SECRET_STEP"],
+                }
+            )
+        ]
+    )
+    retriever = PublicDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer(
+            [{"role": "user", "content": "/dict quy trình xử lý TERM_A là gì"}],
+            session_id="private-structured",
+        )
+
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert service.privacy_states["private-structured"].max_seen_tier.value == "private"
+    assert llm.calls == 0
+
+
 def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
     class WeakTextRetriever:
         name = "bm25"
@@ -633,7 +1071,17 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
             assert query.text == "pháo binh"
             return RetrievalResult(
                 query=query,
-                hits=[RetrievalHit(doc_id="bench-noise", score=0.0, rank=1, title="Noise", text="No useful context.")],
+                hits=[
+                    RetrievalHit(
+                        doc_id="bench-noise",
+                        score=0.0,
+                        rank=1,
+                        title="Noise",
+                        text="No useful context.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    )
+                ],
                 latency_s=0.02,
             )
 
@@ -654,11 +1102,13 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
                         title="PHÁO BINH",
                         text="PHÁO BINH, lực lượng tác chiến.",
                         metadata={
+                            "data_tier": "semi_private",
                             "kind": "dictionary",
                             "headword": "PHÁO BINH",
                             "dictionary_direct_score": 1.2,
                             "dictionary_match_mode": "strict",
                         },
+                        data_tier="semi_private",
                     )
                 ],
                 latency_s=0.01,
@@ -669,7 +1119,12 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
     dictionary_retriever = DictionaryFallbackRetriever()
     llm = FakeLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
         benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
         retriever=text_retriever,
         llm=llm,
@@ -693,11 +1148,27 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             assert top_k == 6
             hits = [
-                RetrievalHit(doc_id=f"bench-good-{index}", score=0.25, rank=index, title=f"Good {index}", text=f"Useful benchmark {index}.")
+                RetrievalHit(
+                    doc_id=f"bench-good-{index}",
+                    score=0.25,
+                    rank=index,
+                    title=f"Good {index}",
+                    text=f"Useful benchmark {index}.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
+                )
                 for index in range(1, 4)
             ]
             hits.extend(
-                RetrievalHit(doc_id=f"bench-tiny-{index}", score=0.0001, rank=rank, title=f"Tiny {index}", text=f"Tiny benchmark {index}.")
+                RetrievalHit(
+                    doc_id=f"bench-tiny-{index}",
+                    score=0.0001,
+                    rank=rank,
+                    title=f"Tiny {index}",
+                    text=f"Tiny benchmark {index}.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
+                )
                 for rank, index in enumerate(range(1, 4), start=4)
             )
             return RetrievalResult(query=query, hits=hits, latency_s=0.02)
@@ -718,10 +1189,12 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
                         title=f"Dictionary {index}",
                         text=f"Dictionary entry {index}.",
                         metadata={
+                            "data_tier": "semi_private",
                             "kind": "dictionary",
                             "dictionary_direct_score": 1.0,
                             "dictionary_match_mode": "strict",
                         },
+                        data_tier="semi_private",
                     )
                     for index in range(1, 9)
                 ],
@@ -733,7 +1206,12 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
     dictionary_retriever = DictionaryFallbackRetriever()
     llm = FakeLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=6, dictionary_top_k=5, model_id="rag-test"),
+        config=ChatProxyConfig(
+            top_k=6,
+            dictionary_top_k=5,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
         benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
         retriever=text_retriever,
         llm=llm,
@@ -757,6 +1235,8 @@ def test_format_context_distributes_budget_across_all_hits() -> None:
             rank=index,
             title=f"Title {index}",
             text=f"Important context {index}. " + ("x" * 700),
+            metadata=PUBLIC_METADATA,
+            data_tier="public",
         )
         for index in range(1, 7)
     ]
@@ -776,8 +1256,24 @@ def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_rema
             return RetrievalResult(
                 query=query,
                 hits=[
-                    RetrievalHit(doc_id="cited-low", score=0.0, rank=1, title="Cited", text="Cited low score."),
-                    RetrievalHit(doc_id="uncited-low", score=0.0, rank=2, title="Uncited", text="Uncited low score."),
+                    RetrievalHit(
+                        doc_id="cited-low",
+                        score=0.0,
+                        rank=1,
+                        title="Cited",
+                        text="Cited low score.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="uncited-low",
+                        score=0.0,
+                        rank=2,
+                        title="Uncited",
+                        text="Uncited low score.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
                 ],
                 latency_s=0.01,
             )
@@ -814,10 +1310,42 @@ def test_score_controls_filter_sort_prompt_and_display_sources() -> None:
             return RetrievalResult(
                 query=query,
                 hits=[
-                    RetrievalHit(doc_id="low", score=0.2, rank=1, title="Low", text="Low confidence."),
-                    RetrievalHit(doc_id="high", score=2.0, rank=2, title="High", text="High confidence."),
-                    RetrievalHit(doc_id="mid", score=1.0, rank=3, title="Mid", text="Mid confidence."),
-                    RetrievalHit(doc_id="too-high", score=9.0, rank=4, title="Too high", text="Outlier."),
+                    RetrievalHit(
+                        doc_id="low",
+                        score=0.2,
+                        rank=1,
+                        title="Low",
+                        text="Low confidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="high",
+                        score=2.0,
+                        rank=2,
+                        title="High",
+                        text="High confidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="mid",
+                        score=1.0,
+                        rank=3,
+                        title="Mid",
+                        text="Mid confidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="too-high",
+                        score=9.0,
+                        rank=4,
+                        title="Too high",
+                        text="Outlier.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
                 ],
                 latency_s=0.01,
             )

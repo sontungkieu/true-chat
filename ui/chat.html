@@ -746,6 +746,23 @@
       background: #10a37f;
     }
 
+    .privacy-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted-strong);
+      padding: 0 9px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .privacy-badge.private {
+      color: var(--danger);
+      background: rgba(180, 35, 24, 0.08);
+    }
+
     .chat {
       min-height: 0;
       overflow-y: auto;
@@ -2503,6 +2520,7 @@
           </button>
         </div>
         <div class="topbar-right">
+          <div class="privacy-badge" id="privacyBadge" hidden>public</div>
           <div class="status-pill"><span class="status-dot"></span><span data-i18n="proxyReady">Proxy ready</span></div>
         </div>
       </header>
@@ -2640,6 +2658,7 @@
     const importChatsFileInput = document.getElementById("importChatsFile");
     const runtimeVersion = document.getElementById("runtimeVersion");
     const runtimeVersionValue = document.getElementById("runtimeVersionValue");
+    const privacyBadge = document.getElementById("privacyBadge");
     const docTitle = document.getElementById("docTitle");
     const docPanel = document.getElementById("docPanel");
     const docResizeHandle = document.getElementById("docResizeHandle");
@@ -2735,6 +2754,10 @@
         editingQuestion: "Editing question",
         document: "Document",
         noDocumentText: "No document text returned for this source.",
+        privateSourceRedacted: "Private source text is redacted.",
+        privacyPublic: "public",
+        privacySemiPrivate: "semi-private",
+        privacyPrivate: "private / local-only",
         dictionaryCrossRefHint: "Click a highlighted dictionary term, or select text and click it, to open that entry.",
         dictionaryCrossRefResults: "Dictionary matches",
         dictionaryCrossRefLoading: "Searching...",
@@ -2812,6 +2835,10 @@
         editingQuestion: "Đang sửa câu hỏi",
         document: "Tài liệu",
         noDocumentText: "Nguồn này không có nội dung tài liệu.",
+        privateSourceRedacted: "Nội dung nguồn riêng tư đã được ẩn.",
+        privacyPublic: "công khai",
+        privacySemiPrivate: "bán riêng tư",
+        privacyPrivate: "riêng tư / chỉ local",
         dictionaryCrossRefHint: "Bấm một cụm từ điển được bôi vàng, hoặc bôi đen rồi bấm, để mở mục từ đó.",
         dictionaryCrossRefResults: "Kết quả từ điển",
         dictionaryCrossRefLoading: "Đang tìm...",
@@ -3721,6 +3748,7 @@
         title: String(conversation.title || "").slice(0, 120),
         createdAt: Number(conversation.createdAt) || Date.now(),
         updatedAt: Number(conversation.updatedAt) || Date.now(),
+        privacyState: conversation.privacyState && typeof conversation.privacyState === "object" ? conversation.privacyState : null,
         messages
       };
     }
@@ -3767,6 +3795,7 @@
         title: "",
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        privacyState: null,
         messages: []
       };
       state.conversations.unshift(conversation);
@@ -3846,7 +3875,22 @@
 
     function render() {
       renderSidebar();
+      renderPrivacyBadge();
       renderChat();
+    }
+
+    function renderPrivacyBadge() {
+      if (!privacyBadge) return;
+      const tier = String(activeConversation()?.privacyState?.session_taint || "public");
+      privacyBadge.hidden = false;
+      privacyBadge.classList.toggle("private", tier === "private");
+      if (tier === "private") {
+        privacyBadge.textContent = t("privacyPrivate");
+      } else if (tier === "semi_private") {
+        privacyBadge.textContent = t("privacySemiPrivate");
+      } else {
+        privacyBadge.textContent = t("privacyPublic");
+      }
     }
 
     function renderSidebar() {
@@ -4768,6 +4812,11 @@
 
     function renderDocumentText(source) {
       docText.textContent = "";
+      if (source?.redacted) {
+        docText.classList.add("plain");
+        docText.textContent = source.text_redaction_reason ? t("privateSourceRedacted") : t("noDocumentText");
+        return;
+      }
       const blocks = richBlocks(source);
       const crossRefsEnabled = isDictionarySource(source) && Boolean(settings.dictionaryCrossRef);
       const highlightOptions = {
@@ -5297,6 +5346,9 @@
       if (Number.isFinite(meta.output_tokens_per_s)) {
         parts.push(meta.output_tokens_per_s.toFixed(1) + " tok/s");
       }
+      const privacyTier = meta.privacy?.state?.session_taint || meta.privacy?.session_taint;
+      if (privacyTier === "private") parts.push(t("privacyPrivate"));
+      else if (privacyTier === "semi_private") parts.push(t("privacySemiPrivate"));
       return parts.join(" | ");
     }
 
@@ -5413,10 +5465,11 @@
         .map((message) => ({ role: message.role, content: message.content }));
 
       try {
-        const result = await fetchAssistant(apiMessages, activeController.signal, requestOptions);
+        const result = await fetchAssistant(conversation, apiMessages, activeController.signal, requestOptions);
         assistant.content = result.content || t("emptyAnswer");
         assistant.sources = result.sources || [];
         assistant.meta = result.meta || null;
+        conversation.privacyState = result.privacyState || conversation.privacyState || null;
       } catch (error) {
         if (error.name === "AbortError") {
           assistant.content = assistant.content || t("stopped");
@@ -5435,7 +5488,7 @@
       }
     }
 
-    async function fetchAssistant(apiMessages, signal, requestOptions) {
+    async function fetchAssistant(conversation, apiMessages, signal, requestOptions) {
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: apiHeaders(),
@@ -5455,6 +5508,8 @@
           image_rewrite: requestOptions.image_rewrite,
           language: requestOptions.language,
           memory: requestOptions.memory,
+          session_id: conversation.id,
+          privacy_state: conversation.privacyState || undefined,
           stream: true
         })
       });
@@ -5467,10 +5522,10 @@
       }
       const streamed = await readSseResponse(response, signal);
       if (streamed.content && streamed.content.trim()) return streamed;
-      return fetchAssistantJson(apiMessages, signal, requestOptions);
+      return fetchAssistantJson(conversation, apiMessages, signal, requestOptions);
     }
 
-    async function fetchAssistantJson(apiMessages, signal, requestOptions) {
+    async function fetchAssistantJson(conversation, apiMessages, signal, requestOptions) {
       const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: apiHeaders(),
@@ -5490,6 +5545,8 @@
           image_rewrite: requestOptions.image_rewrite,
           language: requestOptions.language,
           memory: requestOptions.memory,
+          session_id: conversation.id,
+          privacy_state: conversation.privacyState || undefined,
           stream: false
         })
       });
@@ -5581,6 +5638,7 @@
         const result = resultFromContentAndRag(content, rag);
         pending.sources = result.sources || [];
         pending.meta = result.meta || null;
+        conversation.privacyState = result.privacyState || conversation.privacyState || null;
       }
       saveState();
       renderChat();
@@ -5589,6 +5647,9 @@
     async function responseError(response) {
       try {
         const data = await response.json();
+        if (data.detail && typeof data.detail === "object") {
+          return data.detail.message || JSON.stringify(data.detail);
+        }
         return data.detail || response.statusText || "Request failed";
       } catch (_) {
         return response.statusText || "Request failed";
@@ -5604,13 +5665,15 @@
       return {
         content,
         sources: rag?.retrieved || [],
+        privacyState: rag?.privacy?.state || null,
         meta: rag
           ? {
               key_alias: rag.key_alias,
               rejected_aliases: rag.rejected_aliases || [],
               retry_count: rag.retry_count,
               scheduled_wait_s: rag.scheduled_wait_s,
-              output_tokens_per_s: rag.output_tokens_per_s
+              output_tokens_per_s: rag.output_tokens_per_s,
+              privacy: rag.privacy || null
             }
           : null
       };

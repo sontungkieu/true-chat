@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZipFile
 
+from rag_bench.privacy import DataTier, privacy_fields_from_metadata
 from rag_bench.types import Document
 
 
@@ -55,7 +56,14 @@ class DictionaryEntry:
             "aliases": self.aliases,
             "concepts": self.concepts,
         }
-        return Document(doc_id=self.id, title=self.headword, text=plain, metadata=metadata)
+        privacy = privacy_fields_from_metadata(
+            metadata,
+            default_tier=DataTier.SEMI_PRIVATE,
+            doc_type="dictionary",
+            source_id=self.source_set,
+        )
+        metadata.update({key: value for key, value in privacy.items() if value is not None})
+        return Document(doc_id=self.id, title=self.headword, text=plain, metadata=metadata, **privacy)
 
 
 @dataclass(frozen=True)

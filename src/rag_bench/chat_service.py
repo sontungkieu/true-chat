@@ -17,11 +17,39 @@ from rag_bench.dictionary import (
     DictionaryLoadResult,
     load_dictionary_documents,
 )
+from rag_bench.dictionary_query_planner import (
+    DictionaryQueryPlan,
+    annotate_and_rank_dictionary_hits,
+    dictionary_plan_prompt_instructions,
+    merge_planned_dictionary_results,
+    plan_dictionary_query,
+)
 from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.prompts import SYSTEM_PROMPT
+from rag_bench.privacy import (
+    BackendDescriptor,
+    BackendKind,
+    ConversationPrivacyState,
+    DataTier,
+    PrivateBackendPolicy,
+    PrivacyDecision,
+    PrivacyRouteError,
+    classify_backend,
+    data_tier_for_hit,
+    enforce_privacy_route,
+    include_private_source_text_from_env,
+    max_data_tier,
+    normalize_data_tier,
+    safe_source_payload,
+)
 from rag_bench.retriever_registry import create_retriever, get_retriever_spec, normalize_retriever_id
 from rag_bench.retrievers import Retriever
 from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
+from rag_bench.structured_evidence import (
+    StructuredEvidenceIndex,
+    load_structured_evidence_jsonl,
+    load_structured_evidence_markdown,
+)
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 
@@ -91,6 +119,19 @@ class ChatProxyConfig:
     dictionary_letters: tuple[str, ...] = DEFAULT_DICTIONARY_LETTERS
     dictionary_top_k: int = 5
     dictionary_required: bool = False
+    enable_dictionary_query_planner: bool = True
+    enable_structured_evidence: bool = False
+    structured_evidence_jsonl: Path | None = None
+    structured_evidence_md: Path | None = None
+    allow_external_semi_private: bool = False
+    backend_id: str | None = None
+    backend_kind: str | None = None
+    backend_base_url: str | None = None
+    trusted_private_backends: tuple[str, ...] = ()
+    trusted_private_models: tuple[str, ...] = ()
+    backend_model_allowlist: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    trusted_local_models: tuple[str, ...] = ()
+    include_private_source_text: bool = field(default_factory=include_private_source_text_from_env)
 
 
 @dataclass(frozen=True)
@@ -126,6 +167,8 @@ class RagChatService:
     started_at_s: float = field(default_factory=time.time)
     retrievers: dict[str, Retriever] = field(default_factory=dict)
     dictionary_status: dict[str, Any] = field(default_factory=dict)
+    structured_evidence_index: StructuredEvidenceIndex | None = None
+    privacy_states: dict[str, ConversationPrivacyState] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.retrievers:
@@ -145,6 +188,7 @@ class RagChatService:
         dictionary = _load_dictionary(config)
         retrievers = _build_retrievers(config, benchmark, llm=llm, dictionary=dictionary)
         retriever = _default_retriever(config, retrievers)
+        structured_evidence_index = _load_structured_evidence_index(config)
         return cls(
             config=config,
             benchmark=benchmark,
@@ -152,6 +196,7 @@ class RagChatService:
             llm=llm,
             retrievers=retrievers,
             dictionary_status=dictionary.status,
+            structured_evidence_index=structured_evidence_index,
         )
 
     def answer(
@@ -171,8 +216,19 @@ class RagChatService:
         score_min: float | None = None,
         score_max: float | None = None,
         sort_by_score: bool | None = None,
+        session_id: str | None = None,
+        privacy_state: dict[str, Any] | None = None,
+        reset_privacy: bool = False,
     ) -> ChatServiceResult:
         response_model, generation_model = self.resolve_request_model(request_model)
+        backend = self._backend_for_model(generation_model)
+        session_state = self._privacy_state_for_request(
+            session_id=session_id,
+            privacy_state=privacy_state,
+            reset=reset_privacy,
+            messages=messages,
+        )
+        user_message_tier = _messages_data_tier(messages)
         question = last_user_text(messages)
         response_language = _normalize_response_language(language)
         score_controls = _normalize_retrieval_score_controls(score_min, score_max, sort_by_score)
@@ -188,7 +244,16 @@ class RagChatService:
             question = command[1] or question
 
         if mode == "image":
-            image_query, rewrite_metadata = self._image_query(question, generation_model, image_rewrite=image_rewrite)
+            image_query, rewrite_metadata = self._image_query(
+                question,
+                generation_model,
+                image_rewrite=self._privacy_allowed_image_rewrite(
+                    image_rewrite=image_rewrite,
+                    backend=backend,
+                    session_state=session_state,
+                    user_message_tier=user_message_tier,
+                ),
+            )
             retriever = self.resolve_request_retriever("image-digits")
             request_image_top_k = _clamp_top_k(image_top_k if image_top_k is not None else top_k, fallback=self.config.image_top_k)
             retrieval = retriever.search(Query(query_id="chat-img", text=image_query), request_image_top_k)
@@ -197,6 +262,14 @@ class RagChatService:
                 score_controls,
                 max_hits=request_image_top_k,
             )
+            privacy_decision = self._record_no_generation_privacy(
+                session_state,
+                retrieval.hits,
+                backend=backend,
+                user_message_tier=user_message_tier,
+            )
+            if image_rewrite and not rewrite_metadata.get("image_query_rewrite"):
+                rewrite_metadata.setdefault("image_query_rewrite_privacy_blocked", True)
             generation = GenerationResult(
                 answer=_format_image_answer(image_query, retrieval.hits, language=response_language),
                 key_alias=None,
@@ -231,6 +304,8 @@ class RagChatService:
                 response_model=response_model,
                 generation_model=generation_model,
                 score_controls=score_controls,
+                privacy_decision=privacy_decision,
+                session_state=session_state,
             )
             return ChatServiceResult(
                 response=response,
@@ -243,12 +318,36 @@ class RagChatService:
         if mode == "dictionary":
             retriever = self.resolve_request_retriever("dictionary-graph")
             request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
+            query_plan = plan_dictionary_query(question) if self.config.enable_dictionary_query_planner else None
             retrieval = retriever.search(Query(query_id="chat-dict", text=question), request_top_k)
+            structured_result = None
+            if query_plan is not None and self.structured_evidence_index is not None:
+                structured_result = self.structured_evidence_index.search(
+                    question,
+                    intent=query_plan.intent.value,
+                    terms=query_plan.target_terms,
+                    top_k=request_top_k,
+                )
+                if structured_result.hits:
+                    query_plan = query_plan.with_structured_evidence(structured_result.to_metadata())
+                    retrieval.hits = merge_planned_dictionary_results(retrieval.hits, [structured_result.hits])
+                else:
+                    query_plan = query_plan.with_structured_evidence(structured_result.to_metadata())
+            if query_plan is not None:
+                extra_results = [
+                    retriever.search(Query(query_id=f"chat-dict-plan-{index}", text=term), request_top_k).hits
+                    for index, term in enumerate(query_plan.target_terms[:3], 1)
+                    if term and term.strip().lower() != question.strip().lower()
+                ]
+                if extra_results:
+                    retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
             retrieval, score_filter_metadata = _apply_retrieval_score_controls(
                 retrieval,
                 score_controls,
                 max_hits=request_top_k,
             )
+            if query_plan is not None:
+                retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
             retrieval_metadata = {
                 **retrieval.metadata,
                 "command": "/dict" if command and command[0] == "dict" else None,
@@ -259,7 +358,17 @@ class RagChatService:
                 "memory": use_memory,
                 **score_filter_metadata,
             }
+            if structured_result is not None:
+                retrieval_metadata["structured_evidence"] = structured_result.to_metadata()
+            if query_plan is not None:
+                retrieval_metadata["query_plan"] = query_plan.to_payload()
             if retrieval.hits:
+                privacy_decision = self._enforce_generation_privacy(
+                    backend=backend,
+                    session_state=session_state,
+                    hits=retrieval.hits,
+                    user_message_tier=user_message_tier,
+                )
                 prompt_messages = build_dictionary_rag_messages(
                     messages,
                     retrieval.hits,
@@ -267,6 +376,7 @@ class RagChatService:
                     max_context_chars=self.config.max_context_chars,
                     history_messages=history_messages,
                     language=response_language,
+                    query_plan=query_plan,
                 )
                 generation = self.llm.generate(
                     prompt_messages,
@@ -278,6 +388,12 @@ class RagChatService:
                     raise RuntimeError(generation.error)
                 answer = _format_dictionary_answer(retrieval.hits, generation.answer)
             else:
+                privacy_decision = self._record_no_generation_privacy(
+                    session_state,
+                    retrieval.hits,
+                    backend=backend,
+                    user_message_tier=user_message_tier,
+                )
                 generation = GenerationResult(
                     answer="",
                     key_alias=None,
@@ -301,6 +417,8 @@ class RagChatService:
                 response_model=response_model,
                 generation_model=generation_model,
                 score_controls=score_controls,
+                privacy_decision=privacy_decision,
+                session_state=session_state,
             )
             return ChatServiceResult(
                 response=response,
@@ -311,14 +429,34 @@ class RagChatService:
             )
 
         retriever = self.resolve_text_request_retriever(request_retriever)
+        retriever, retriever_privacy_metadata = self._safe_text_retriever_for_privacy(
+            retriever,
+            backend=backend,
+            session_state=session_state,
+            user_message_tier=user_message_tier,
+        )
         request_top_k = _clamp_top_k(top_k, fallback=self.config.top_k)
         if retriever.name == "keyword-match":
-            retrieval = self._keyword_search(
-                retriever,
-                question,
-                request_top_k,
-                generation_model=generation_model,
-            )
+            if self._llm_tool_blocked(
+                backend=backend,
+                session_state=session_state,
+                user_message_tier=user_message_tier,
+            ):
+                retrieval = retriever.search(Query(query_id="chat-keyword", text=question), request_top_k)
+                retrieval.metadata.update(
+                    {
+                        "keyword_llm_calls": 0,
+                        "keyword_llm_privacy_blocked": True,
+                        "keyword_query_variants": [question],
+                    }
+                )
+            else:
+                retrieval = self._keyword_search(
+                    retriever,
+                    question,
+                    request_top_k,
+                    generation_model=generation_model,
+                )
         else:
             retrieval = retriever.search(Query(query_id="chat", text=question), request_top_k)
         retrieval, score_filter_metadata = _apply_retrieval_score_controls(
@@ -346,6 +484,12 @@ class RagChatService:
             dictionary_fallback.hits if dictionary_fallback else [],
             max_hits=request_top_k,
         )
+        privacy_decision = self._enforce_generation_privacy(
+            backend=backend,
+            session_state=session_state,
+            hits=prompt_hits,
+            user_message_tier=user_message_tier,
+        )
         prompt_messages = build_chat_rag_messages(
             messages,
             prompt_hits,
@@ -363,7 +507,7 @@ class RagChatService:
             raise RuntimeError(generation.error)
 
         combined_hits = list(prompt_hits)
-        retrieval_metadata = {**retrieval.metadata, **score_filter_metadata}
+        retrieval_metadata = {**retriever_privacy_metadata, **retrieval.metadata, **score_filter_metadata}
         if dictionary_fallback is not None:
             retrieval_metadata.update(
                 {
@@ -421,6 +565,8 @@ class RagChatService:
             response_model=response_model,
             generation_model=generation_model,
             score_controls=score_controls,
+            privacy_decision=privacy_decision,
+            session_state=session_state,
         )
         return ChatServiceResult(
             response=response,
@@ -443,17 +589,26 @@ class RagChatService:
         response_model: str | None = None,
         generation_model: str | None = None,
         score_controls: RetrievalScoreControls | None = None,
+        privacy_decision: PrivacyDecision | None = None,
+        session_state: ConversationPrivacyState | None = None,
     ) -> dict[str, Any]:
         created = int(time.time())
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         response_model = response_model or self.config.model_id
         generation_model = generation_model or self.config.model
         retriever = retriever or self.retriever
+        privacy_payload = (
+            privacy_decision.to_payload(session_state=session_state)
+            if privacy_decision is not None
+            else ({"state": session_state.to_payload()} if session_state is not None else {})
+        )
         return {
             "id": completion_id,
             "object": "chat.completion",
             "created": created,
             "model": response_model,
+            "privacy": privacy_payload,
+            **({"query_plan": retrieval_metadata["query_plan"]} if isinstance(retrieval_metadata, dict) and "query_plan" in retrieval_metadata else {}),
             "choices": [
                 {
                     "index": 0,
@@ -476,7 +631,7 @@ class RagChatService:
                 "retrieval_latency_s": retrieval_latency_s,
                 "retrieval_metadata": retrieval_metadata or {},
                 "retrieved": [
-                    _hit_source_payload(hit)
+                    _hit_source_payload(hit, include_private_text=self.config.include_private_source_text)
                     for hit in _filter_retrieved_for_display(
                         hits,
                         answer,
@@ -491,6 +646,7 @@ class RagChatService:
                 "output_tokens_per_s": generation.output_tokens_per_s,
                 "rate_limited": generation.rate_limited,
                 "key_rate_limits": self.llm.rate_limit_snapshot(),
+                "privacy": privacy_payload,
             },
         }
 
@@ -559,7 +715,17 @@ class RagChatService:
 
     def available_generation_models(self) -> tuple[str, ...]:
         mimo_models = self.config.mimo_models if self.config.mimo_enabled else ()
-        return _dedupe_preserve_order((self.config.model, *self.config.available_models, *mimo_models))
+        backend_models = tuple(model for models in self.config.backend_model_allowlist.values() for model in models)
+        return _dedupe_preserve_order(
+            (
+                self.config.model,
+                *self.config.available_models,
+                *mimo_models,
+                *self.config.trusted_private_models,
+                *self.config.trusted_local_models,
+                *backend_models,
+            )
+        )
 
     def available_retriever_ids(self) -> tuple[str, ...]:
         return tuple(self.retrievers.keys())
@@ -596,6 +762,182 @@ class RagChatService:
             if candidate.name != "image-digits":
                 return candidate
         raise ValueError("Text mode requires a non-image retriever.")
+
+    def _privacy_state_for_request(
+        self,
+        *,
+        session_id: str | None,
+        privacy_state: dict[str, Any] | None,
+        reset: bool,
+        messages: list[dict[str, Any]],
+    ) -> ConversationPrivacyState:
+        requested_session = str(session_id or (privacy_state or {}).get("session_id") or "__default__")
+        if reset:
+            previous = self.privacy_states.get(requested_session)
+            if previous and previous.private_seen and _messages_have_history(messages):
+                decision = PrivacyDecision(
+                    effective_tier=previous.max_seen_tier,
+                    provider_allowed=False,
+                    selected_provider=None,
+                    selected_model=None,
+                    backend_id=None,
+                    backend_kind=BackendKind.UNKNOWN,
+                    external_blocked=True,
+                    reason="reset_privacy_requires_clean_new_session",
+                    redaction_required=True,
+                    provider_requested="",
+                    model_requested=None,
+                )
+                previous.update(previous.max_seen_tier, external_blocked=True, reason=decision.reason)
+                raise PrivacyRouteError(decision)
+            state = ConversationPrivacyState(session_id=requested_session)
+            self.privacy_states[requested_session] = state
+            return state
+        if requested_session in self.privacy_states:
+            return self.privacy_states[requested_session]
+        state = ConversationPrivacyState.from_mapping(privacy_state, session_id=requested_session)
+        self.privacy_states[requested_session] = state
+        return state
+
+    def _backend_for_model(self, model: str | None) -> BackendDescriptor:
+        model_id = str(model or "")
+        provider = "mimo" if self.config.mimo_enabled and model_id in set(self.config.mimo_models) else "groq"
+        backend_id = self.config.backend_id or provider
+        return classify_backend(
+            provider=provider,
+            model=model_id,
+            backend_id=backend_id,
+            backend_kind=self.config.backend_kind,
+            base_url=self.config.backend_base_url or (self.config.mimo_base_url if provider == "mimo" else None),
+        )
+
+    def _private_backend_policy(self) -> PrivateBackendPolicy:
+        return PrivateBackendPolicy.from_values(
+            trusted_private_backends=self.config.trusted_private_backends,
+            trusted_private_models=self.config.trusted_private_models,
+            backend_model_allowlist=self.config.backend_model_allowlist,
+            trusted_local_models=self.config.trusted_local_models,
+        )
+
+    def _enforce_generation_privacy(
+        self,
+        *,
+        backend: BackendDescriptor,
+        session_state: ConversationPrivacyState,
+        hits: list[RetrievalHit],
+        user_message_tier: DataTier,
+    ) -> PrivacyDecision:
+        decision = enforce_privacy_route(
+            backend.provider,
+            backend.model,
+            session_state,
+            hits,
+            allow_external_semi_private=self.config.allow_external_semi_private,
+            private_backend_policy=self._private_backend_policy(),
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
+            base_url=backend.base_url,
+            user_message_tier=user_message_tier,
+        )
+        if not decision.provider_allowed:
+            raise PrivacyRouteError(decision)
+        return decision
+
+    def _record_no_generation_privacy(
+        self,
+        session_state: ConversationPrivacyState,
+        hits: list[RetrievalHit],
+        *,
+        backend: BackendDescriptor,
+        user_message_tier: DataTier,
+    ) -> PrivacyDecision:
+        effective_tier = max_data_tier(session_state.max_seen_tier, user_message_tier, *(data_tier_for_hit(hit) for hit in hits))
+        session_state.update(effective_tier, external_blocked=False, reason="no_llm_generation")
+        return PrivacyDecision(
+            effective_tier=effective_tier,
+            provider_allowed=True,
+            selected_provider=None,
+            selected_model=None,
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
+            external_blocked=False,
+            reason="no_llm_generation",
+            redaction_required=effective_tier == DataTier.PRIVATE,
+            provider_requested=backend.provider,
+            model_requested=backend.model,
+        )
+
+    def _llm_tool_blocked(
+        self,
+        *,
+        backend: BackendDescriptor,
+        session_state: ConversationPrivacyState,
+        user_message_tier: DataTier,
+    ) -> bool:
+        decision = enforce_privacy_route(
+            backend.provider,
+            backend.model,
+            session_state,
+            (),
+            allow_external_semi_private=self.config.allow_external_semi_private,
+            private_backend_policy=self._private_backend_policy(),
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
+            base_url=backend.base_url,
+            user_message_tier=user_message_tier,
+        )
+        return not decision.provider_allowed
+
+    def _privacy_allowed_image_rewrite(
+        self,
+        *,
+        image_rewrite: bool | None,
+        backend: BackendDescriptor,
+        session_state: ConversationPrivacyState,
+        user_message_tier: DataTier,
+    ) -> bool:
+        if not image_rewrite:
+            return False
+        return not self._llm_tool_blocked(
+            backend=backend,
+            session_state=session_state,
+            user_message_tier=user_message_tier,
+        )
+
+    def _safe_text_retriever_for_privacy(
+        self,
+        retriever: Retriever,
+        *,
+        backend: BackendDescriptor,
+        session_state: ConversationPrivacyState,
+        user_message_tier: DataTier,
+    ) -> tuple[Retriever, dict[str, Any]]:
+        spec = get_retriever_spec(retriever.name)
+        if not spec.uses_llm:
+            return retriever, {}
+        decision = enforce_privacy_route(
+            backend.provider,
+            backend.model,
+            session_state,
+            (),
+            allow_external_semi_private=self.config.allow_external_semi_private,
+            private_backend_policy=self._private_backend_policy(),
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
+            base_url=backend.base_url,
+            user_message_tier=user_message_tier,
+        )
+        if decision.provider_allowed:
+            return retriever, {}
+        fallback = self.retrievers.get("bm25")
+        if fallback is None or fallback.name == retriever.name:
+            raise PrivacyRouteError(decision)
+        return fallback, {
+            "retriever_privacy_fallback": True,
+            "requested_retriever": retriever.name,
+            "selected_retriever": fallback.name,
+            "privacy_reason": decision.reason,
+        }
 
     def _image_query(self, text: str, generation_model: str, *, image_rewrite: bool | None) -> tuple[str, dict[str, Any]]:
         query = _strip_command_prefix(text) or "digit image"
@@ -774,6 +1116,12 @@ def _merge_positive_keyword_hits(results: list[RetrievalResult], *, top_k: int) 
             title=hits_by_doc_id[doc_id].title,
             text=hits_by_doc_id[doc_id].text,
             metadata=hits_by_doc_id[doc_id].metadata,
+            data_tier=hits_by_doc_id[doc_id].data_tier,
+            doc_type=hits_by_doc_id[doc_id].doc_type,
+            source_id=hits_by_doc_id[doc_id].source_id,
+            allowed_llm=hits_by_doc_id[doc_id].allowed_llm,
+            allowed_embedding=hits_by_doc_id[doc_id].allowed_embedding,
+            redaction_policy=hits_by_doc_id[doc_id].redaction_policy,
         )
         for rank, doc_id in enumerate(ranked[:top_k], 1)
     ]
@@ -811,6 +1159,12 @@ def _merge_text_and_dictionary_hits(
             title=hit.title,
             text=hit.text,
             metadata=hit.metadata,
+            data_tier=hit.data_tier,
+            doc_type=hit.doc_type,
+            source_id=hit.source_id,
+            allowed_llm=hit.allowed_llm,
+            allowed_embedding=hit.allowed_embedding,
+            redaction_policy=hit.redaction_policy,
         )
         for rank, hit in enumerate(merged, 1)
     ]
@@ -1036,6 +1390,17 @@ def _load_dictionary(config: ChatProxyConfig) -> DictionaryLoadResult:
     )
 
 
+def _load_structured_evidence_index(config: ChatProxyConfig) -> StructuredEvidenceIndex | None:
+    if not config.enable_structured_evidence:
+        return None
+    docs = []
+    if config.structured_evidence_jsonl is not None:
+        docs.extend(load_structured_evidence_jsonl(config.structured_evidence_jsonl))
+    if config.structured_evidence_md is not None:
+        docs.extend(load_structured_evidence_markdown(config.structured_evidence_md))
+    return StructuredEvidenceIndex(docs)
+
+
 def _default_retriever(config: ChatProxyConfig, retrievers: dict[str, Retriever]) -> Retriever:
     retriever_id = normalize_retriever_id(config.retriever)
     try:
@@ -1106,15 +1471,27 @@ def build_dictionary_rag_messages(
     max_context_chars: int,
     history_messages: int,
     language: str | None = None,
+    query_plan: DictionaryQueryPlan | None = None,
 ) -> list[dict[str, str]]:
     context = _format_context(hits, max_context_chars=max_context_chars)
     history = _format_history(messages[:-1], history_messages=history_messages)
     response_language = _normalize_response_language(language)
     language_instruction = _language_instruction(response_language)
+    plan_instruction = dictionary_plan_prompt_instructions(query_plan) if query_plan is not None else ""
+    plan_summary = ""
+    if query_plan is not None:
+        target_terms = ", ".join(query_plan.target_terms) if query_plan.target_terms else "not detected"
+        plan_summary = (
+            f"Detected dictionary task: {query_plan.intent.value}\n"
+            f"Target terms: {target_terms}\n"
+            f"Answer style: {query_plan.answer_style}\n\n"
+            f"Task instructions:\n{plan_instruction}\n\n"
+        )
     user_prompt = (
         f"Recent conversation:\n{history}\n\n"
         f"Dictionary question:\n{query}\n\n"
         f"Retrieved dictionary entries:\n{context}\n\n"
+        f"{plan_summary}"
         "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
         "Do not invent content not supported by the retrieved dictionary entries."
     )
@@ -1129,6 +1506,24 @@ def build_dictionary_rag_messages(
         },
         {"role": "user", "content": user_prompt},
     ]
+
+
+def _messages_data_tier(messages: list[dict[str, Any]]) -> DataTier:
+    tiers: list[DataTier] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("data_tier") not in (None, ""):
+            tiers.append(normalize_data_tier(message.get("data_tier")))
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("data_tier") not in (None, ""):
+            tiers.append(normalize_data_tier(metadata.get("data_tier")))
+        attachments = message.get("attachments")
+        if isinstance(attachments, list):
+            for attachment in attachments:
+                if isinstance(attachment, dict) and attachment.get("data_tier") not in (None, ""):
+                    tiers.append(normalize_data_tier(attachment.get("data_tier")))
+    return max_data_tier(*tiers)
 
 
 def last_user_text(messages: list[dict[str, Any]]) -> str:
@@ -1325,16 +1720,24 @@ def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in metadata.items() if key in allowed_keys}
 
 
-def _hit_source_payload(hit: RetrievalHit) -> dict[str, Any]:
-    return {
-        "doc_id": hit.doc_id,
-        "rank": hit.rank,
-        "score": hit.score,
-        "title": hit.title,
-        "text": hit.text,
-        "metadata": hit.metadata,
-        **_flatten_hit_metadata(hit.metadata),
-    }
+def _hit_source_payload(hit: RetrievalHit, *, include_private_text: bool = False) -> dict[str, Any]:
+    tier = data_tier_for_hit(hit)
+    flattened = _flatten_hit_metadata(hit.metadata)
+    if tier == DataTier.PRIVATE:
+        flattened = {
+            key: value
+            for key, value in flattened.items()
+            if key
+            not in {
+                "raw_docx_text",
+                "rich_blocks",
+                "source",
+                "dictionary_evidence_text",
+            }
+        }
+    payload = safe_source_payload(hit, include_private_text=include_private_text, extra=flattened)
+    payload["data_tier"] = tier.value
+    return payload
 
 
 def _format_history(messages: list[dict[str, Any]], *, history_messages: int) -> str:
@@ -1350,6 +1753,12 @@ def _format_history(messages: list[dict[str, Any]], *, history_messages: int) ->
         if content:
             lines.append(f"{role}: {content}")
     return "\n".join(lines) if lines else "No prior conversation."
+
+
+def _messages_have_history(messages: list[dict[str, Any]]) -> bool:
+    if len(messages) > 1:
+        return True
+    return any(str(message.get("role", "")).strip().lower() in {"assistant", "system"} for message in messages)
 
 
 def _content_to_text(content: Any) -> str:

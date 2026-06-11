@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from rag_bench.chat_service import DEFAULT_PROXY_MODEL_ID, RagChatService
+from rag_bench.privacy import PrivacyRouteError
 from rag_bench.ui_loader import render_chat_page
 
 
@@ -120,7 +121,20 @@ def create_app(service: RagChatService, *, api_key: str | None = None) -> FastAP
                     payload.get("sort_by_score", payload.get("retrieval_sort_by_score")),
                     "sort_by_score",
                 ),
+                session_id=_optional_string(payload.get("session_id"), "session_id"),
+                privacy_state=payload.get("privacy_state") if isinstance(payload.get("privacy_state"), dict) else None,
+                reset_privacy=bool(
+                    _optional_bool(payload.get("reset_privacy", payload.get("privacy_reset")), "reset_privacy") or False
+                ),
             )
+        except PrivacyRouteError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "message": exc.decision.reason,
+                    "privacy": exc.decision.to_payload(),
+                },
+            ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         except RuntimeError as exc:
@@ -226,6 +240,15 @@ def _optional_bool(value: Any, name: str) -> bool | None:
         if normalized in {"0", "false", "no", "off"}:
             return False
     raise ValueError(f"{name} must be a boolean")
+
+
+def _optional_string(value: Any, name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+    normalized = value.strip()
+    return normalized or None
 
 
 def _optional_language(value: Any) -> str | None:

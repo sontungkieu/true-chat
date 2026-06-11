@@ -87,6 +87,12 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "--dictionary-top-k",
             "6",
             "--dictionary-required",
+            "--no-dictionary-query-planner",
+            "--enable-structured-evidence",
+            "--structured-evidence-jsonl",
+            "fixtures/structured.jsonl",
+            "--structured-evidence-md",
+            "fixtures/structured.md",
             "--max-completion-tokens",
             "96",
             "--enable-mimo",
@@ -108,6 +114,18 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "20",
             "--rate-limit-scope",
             "shared",
+            "--private-backend",
+            "office_llm_server",
+            "--private-backend-kind",
+            "self_hosted_private",
+            "--private-backend-base-url",
+            "http://10.0.0.5:8000/v1",
+            "--trusted-private-models",
+            "qwen2.5-32b",
+            "--private-backend-model",
+            "office_llm_server:qwen2.5-32b,llama-3.1-70b",
+            "--trusted-local-models",
+            "legacy-local",
         ]
     )
 
@@ -127,6 +145,10 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.dictionary_letters == ("A", "B")
     assert seen["config"].chat.dictionary_top_k == 6
     assert seen["config"].chat.dictionary_required is True
+    assert seen["config"].chat.enable_dictionary_query_planner is False
+    assert seen["config"].chat.enable_structured_evidence is True
+    assert seen["config"].chat.structured_evidence_jsonl == Path("fixtures/structured.jsonl")
+    assert seen["config"].chat.structured_evidence_md == Path("fixtures/structured.md")
     assert seen["config"].chat.max_completion_tokens == 96
     assert seen["config"].chat.mimo_enabled is True
     assert seen["config"].chat.mimo_env_file == Path(".secrets/.env")
@@ -140,6 +162,15 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.key_tokens_per_minute == 5000
     assert seen["config"].chat.key_requests_per_minute == 20
     assert seen["config"].chat.rate_limit_scope == "shared"
+    assert seen["config"].chat.backend_id == "office_llm_server"
+    assert seen["config"].chat.backend_kind == "self_hosted_private"
+    assert seen["config"].chat.backend_base_url == "http://10.0.0.5:8000/v1"
+    assert seen["config"].chat.trusted_private_backends == ("office_llm_server",)
+    assert seen["config"].chat.trusted_private_models == ("qwen2.5-32b", "legacy-local")
+    assert seen["config"].chat.backend_model_allowlist == {
+        "office_llm_server": ("qwen2.5-32b", "llama-3.1-70b")
+    }
+    assert seen["config"].chat.trusted_local_models == ("legacy-local",)
 
 
 def test_cli_serve_defaults_use_qwen_and_long_completion(monkeypatch) -> None:
