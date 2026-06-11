@@ -179,6 +179,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--dictionary-top-k", type=int, default=5, help="Default number of dictionary entries.")
     serve_parser.add_argument("--dictionary-required", action="store_true", help="Fail startup if dictionary data is unavailable.")
     serve_parser.add_argument(
+        "--dictionary-query-planner",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable deterministic planner metadata and prompt instructions for dictionary-mode chat.",
+    )
+    serve_parser.add_argument(
         "--allow-external-semi-private",
         action="store_true",
         help="Allow semi-private RAG context to be sent to external SaaS providers. Private context still requires a trusted private backend.",
@@ -440,6 +446,7 @@ def _serve(args: argparse.Namespace) -> int:
         dictionary_letters=dictionary_letters,
         dictionary_top_k=args.dictionary_top_k,
         dictionary_required=args.dictionary_required,
+        enable_dictionary_query_planner=args.dictionary_query_planner,
         allow_external_semi_private=args.allow_external_semi_private,
         backend_id=args.private_backend,
         backend_kind=args.private_backend_kind,

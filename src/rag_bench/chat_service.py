@@ -17,6 +17,13 @@ from rag_bench.dictionary import (
     DictionaryLoadResult,
     load_dictionary_documents,
 )
+from rag_bench.dictionary_query_planner import (
+    DictionaryQueryPlan,
+    annotate_and_rank_dictionary_hits,
+    dictionary_plan_prompt_instructions,
+    merge_planned_dictionary_results,
+    plan_dictionary_query,
+)
 from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.prompts import SYSTEM_PROMPT
 from rag_bench.privacy import (
@@ -107,6 +114,7 @@ class ChatProxyConfig:
     dictionary_letters: tuple[str, ...] = DEFAULT_DICTIONARY_LETTERS
     dictionary_top_k: int = 5
     dictionary_required: bool = False
+    enable_dictionary_query_planner: bool = True
     allow_external_semi_private: bool = False
     backend_id: str | None = None
     backend_kind: str | None = None
@@ -299,12 +307,23 @@ class RagChatService:
         if mode == "dictionary":
             retriever = self.resolve_request_retriever("dictionary-graph")
             request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
+            query_plan = plan_dictionary_query(question) if self.config.enable_dictionary_query_planner else None
             retrieval = retriever.search(Query(query_id="chat-dict", text=question), request_top_k)
+            if query_plan is not None:
+                extra_results = [
+                    retriever.search(Query(query_id=f"chat-dict-plan-{index}", text=term), request_top_k).hits
+                    for index, term in enumerate(query_plan.target_terms[:3], 1)
+                    if term and term.strip().lower() != question.strip().lower()
+                ]
+                if extra_results:
+                    retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
             retrieval, score_filter_metadata = _apply_retrieval_score_controls(
                 retrieval,
                 score_controls,
                 max_hits=request_top_k,
             )
+            if query_plan is not None:
+                retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
             retrieval_metadata = {
                 **retrieval.metadata,
                 "command": "/dict" if command and command[0] == "dict" else None,
@@ -315,6 +334,8 @@ class RagChatService:
                 "memory": use_memory,
                 **score_filter_metadata,
             }
+            if query_plan is not None:
+                retrieval_metadata["query_plan"] = query_plan.to_payload()
             if retrieval.hits:
                 privacy_decision = self._enforce_generation_privacy(
                     backend=backend,
@@ -329,6 +350,7 @@ class RagChatService:
                     max_context_chars=self.config.max_context_chars,
                     history_messages=history_messages,
                     language=response_language,
+                    query_plan=query_plan,
                 )
                 generation = self.llm.generate(
                     prompt_messages,
@@ -560,6 +582,7 @@ class RagChatService:
             "created": created,
             "model": response_model,
             "privacy": privacy_payload,
+            **({"query_plan": retrieval_metadata["query_plan"]} if isinstance(retrieval_metadata, dict) and "query_plan" in retrieval_metadata else {}),
             "choices": [
                 {
                     "index": 0,
@@ -1411,15 +1434,27 @@ def build_dictionary_rag_messages(
     max_context_chars: int,
     history_messages: int,
     language: str | None = None,
+    query_plan: DictionaryQueryPlan | None = None,
 ) -> list[dict[str, str]]:
     context = _format_context(hits, max_context_chars=max_context_chars)
     history = _format_history(messages[:-1], history_messages=history_messages)
     response_language = _normalize_response_language(language)
     language_instruction = _language_instruction(response_language)
+    plan_instruction = dictionary_plan_prompt_instructions(query_plan) if query_plan is not None else ""
+    plan_summary = ""
+    if query_plan is not None:
+        target_terms = ", ".join(query_plan.target_terms) if query_plan.target_terms else "not detected"
+        plan_summary = (
+            f"Detected dictionary task: {query_plan.intent.value}\n"
+            f"Target terms: {target_terms}\n"
+            f"Answer style: {query_plan.answer_style}\n\n"
+            f"Task instructions:\n{plan_instruction}\n\n"
+        )
     user_prompt = (
         f"Recent conversation:\n{history}\n\n"
         f"Dictionary question:\n{query}\n\n"
         f"Retrieved dictionary entries:\n{context}\n\n"
+        f"{plan_summary}"
         "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
         "Do not invent content not supported by the retrieved dictionary entries."
     )

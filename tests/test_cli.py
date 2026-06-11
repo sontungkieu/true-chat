@@ -87,6 +87,7 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "--dictionary-top-k",
             "6",
             "--dictionary-required",
+            "--no-dictionary-query-planner",
             "--max-completion-tokens",
             "96",
             "--enable-mimo",
@@ -139,6 +140,7 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.dictionary_letters == ("A", "B")
     assert seen["config"].chat.dictionary_top_k == 6
     assert seen["config"].chat.dictionary_required is True
+    assert seen["config"].chat.enable_dictionary_query_planner is False
     assert seen["config"].chat.max_completion_tokens == 96
     assert seen["config"].chat.mimo_enabled is True
     assert seen["config"].chat.mimo_env_file == Path(".secrets/.env")

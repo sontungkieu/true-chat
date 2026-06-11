@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from rag_bench.chat_service import (
     ChatProxyConfig,
     ModelRoutedChatClient,
@@ -11,6 +13,7 @@ from rag_bench.chat_service import (
     parse_chat_command,
 )
 from rag_bench.groq_client import GenerationResult
+from rag_bench.privacy import PrivacyRouteError
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
 
 
@@ -243,6 +246,16 @@ class FakeKeywordLLM(FakeLLM):
             total_tokens=15 + completion_tokens,
             estimated_tokens=30,
         )
+
+
+class CountingLLM(FakeLLM):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def generate(self, *args, **kwargs) -> GenerationResult:
+        self.calls += 1
+        return super().generate(*args, **kwargs)
 
 
 def test_rag_chat_service_answers_with_retrieved_context_and_history() -> None:
@@ -639,6 +652,104 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     assert lookup["object"] == "dictionary.lookup"
     assert lookup["retriever"] == "dictionary-graph"
     assert lookup["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
+
+
+def test_dictionary_mode_exposes_safe_query_plan_metadata_and_prompt_instructions() -> None:
+    dictionary_retriever = FakeDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "/dict so sánh TERM_A và TERM_B"}],
+        language="vi",
+    )
+
+    assert result.response["query_plan"]["intent"] == "comparison"
+    assert result.response["query_plan"]["schema_gaps"] == []
+    assert result.response["rag"]["retrieval_metadata"]["query_plan"]["target_terms"] == ["TERM_A", "TERM_B"]
+    assert result.response["rag"]["retrieved"][0]["metadata"]["query_plan_intent"] == "comparison"
+    assert "Compare only using the retrieved sources." in llm.messages[1]["content"]
+    assert llm.calls == 1
+
+
+def test_dictionary_planner_public_path_preserves_external_generation() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    dictionary_retriever = PublicDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": dictionary_retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict TERM_A là gì"}])
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["privacy"]["provider_allowed"] is True
+    assert llm.calls == 1
+
+
+def test_dictionary_planner_does_not_bypass_private_taint_guard() -> None:
+    class PrivateDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text="private synthetic dictionary context",
+                metadata={**hit.metadata, "data_tier": "private", "raw_docx_text": "private synthetic dictionary context"},
+                data_tier="private",
+                doc_type="dictionary",
+            )
+            return result
+
+    dictionary_retriever = PrivateDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": dictionary_retriever},
+    )
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer([{"role": "user", "content": "/dict TERM_A là gì"}], session_id="private-dict")
+
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert llm.calls == 0
 
 
 def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
