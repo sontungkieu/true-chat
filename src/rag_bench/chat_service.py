@@ -20,10 +20,14 @@ from rag_bench.dictionary import (
 from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.prompts import SYSTEM_PROMPT
 from rag_bench.privacy import (
+    BackendDescriptor,
+    BackendKind,
     ConversationPrivacyState,
     DataTier,
+    PrivateBackendPolicy,
     PrivacyDecision,
     PrivacyRouteError,
+    classify_backend,
     data_tier_for_hit,
     enforce_privacy_route,
     include_private_source_text_from_env,
@@ -104,6 +108,12 @@ class ChatProxyConfig:
     dictionary_top_k: int = 5
     dictionary_required: bool = False
     allow_external_semi_private: bool = False
+    backend_id: str | None = None
+    backend_kind: str | None = None
+    backend_base_url: str | None = None
+    trusted_private_backends: tuple[str, ...] = ()
+    trusted_private_models: tuple[str, ...] = ()
+    backend_model_allowlist: dict[str, tuple[str, ...]] = field(default_factory=dict)
     trusted_local_models: tuple[str, ...] = ()
     include_private_source_text: bool = field(default_factory=include_private_source_text_from_env)
 
@@ -192,11 +202,12 @@ class RagChatService:
         reset_privacy: bool = False,
     ) -> ChatServiceResult:
         response_model, generation_model = self.resolve_request_model(request_model)
-        provider_name = self._provider_for_model(generation_model)
+        backend = self._backend_for_model(generation_model)
         session_state = self._privacy_state_for_request(
             session_id=session_id,
             privacy_state=privacy_state,
             reset=reset_privacy,
+            messages=messages,
         )
         user_message_tier = _messages_data_tier(messages)
         question = last_user_text(messages)
@@ -219,8 +230,7 @@ class RagChatService:
                 generation_model,
                 image_rewrite=self._privacy_allowed_image_rewrite(
                     image_rewrite=image_rewrite,
-                    provider=provider_name,
-                    model=generation_model,
+                    backend=backend,
                     session_state=session_state,
                     user_message_tier=user_message_tier,
                 ),
@@ -236,8 +246,7 @@ class RagChatService:
             privacy_decision = self._record_no_generation_privacy(
                 session_state,
                 retrieval.hits,
-                provider=provider_name,
-                model=generation_model,
+                backend=backend,
                 user_message_tier=user_message_tier,
             )
             if image_rewrite and not rewrite_metadata.get("image_query_rewrite"):
@@ -308,8 +317,7 @@ class RagChatService:
             }
             if retrieval.hits:
                 privacy_decision = self._enforce_generation_privacy(
-                    provider=provider_name,
-                    model=generation_model,
+                    backend=backend,
                     session_state=session_state,
                     hits=retrieval.hits,
                     user_message_tier=user_message_tier,
@@ -335,8 +343,7 @@ class RagChatService:
                 privacy_decision = self._record_no_generation_privacy(
                     session_state,
                     retrieval.hits,
-                    provider=provider_name,
-                    model=generation_model,
+                    backend=backend,
                     user_message_tier=user_message_tier,
                 )
                 generation = GenerationResult(
@@ -376,16 +383,14 @@ class RagChatService:
         retriever = self.resolve_text_request_retriever(request_retriever)
         retriever, retriever_privacy_metadata = self._safe_text_retriever_for_privacy(
             retriever,
-            provider=provider_name,
-            model=generation_model,
+            backend=backend,
             session_state=session_state,
             user_message_tier=user_message_tier,
         )
         request_top_k = _clamp_top_k(top_k, fallback=self.config.top_k)
         if retriever.name == "keyword-match":
             if self._llm_tool_blocked(
-                provider=provider_name,
-                model=generation_model,
+                backend=backend,
                 session_state=session_state,
                 user_message_tier=user_message_tier,
             ):
@@ -432,8 +437,7 @@ class RagChatService:
             max_hits=request_top_k,
         )
         privacy_decision = self._enforce_generation_privacy(
-            provider=provider_name,
-            model=generation_model,
+            backend=backend,
             session_state=session_state,
             hits=prompt_hits,
             user_message_tier=user_message_tier,
@@ -662,7 +666,17 @@ class RagChatService:
 
     def available_generation_models(self) -> tuple[str, ...]:
         mimo_models = self.config.mimo_models if self.config.mimo_enabled else ()
-        return _dedupe_preserve_order((self.config.model, *self.config.available_models, *mimo_models, *self.config.trusted_local_models))
+        backend_models = tuple(model for models in self.config.backend_model_allowlist.values() for model in models)
+        return _dedupe_preserve_order(
+            (
+                self.config.model,
+                *self.config.available_models,
+                *mimo_models,
+                *self.config.trusted_private_models,
+                *self.config.trusted_local_models,
+                *backend_models,
+            )
+        )
 
     def available_retriever_ids(self) -> tuple[str, ...]:
         return tuple(self.retrievers.keys())
@@ -706,9 +720,27 @@ class RagChatService:
         session_id: str | None,
         privacy_state: dict[str, Any] | None,
         reset: bool,
+        messages: list[dict[str, Any]],
     ) -> ConversationPrivacyState:
         requested_session = str(session_id or (privacy_state or {}).get("session_id") or "__default__")
         if reset:
+            previous = self.privacy_states.get(requested_session)
+            if previous and previous.private_seen and _messages_have_history(messages):
+                decision = PrivacyDecision(
+                    effective_tier=previous.max_seen_tier,
+                    provider_allowed=False,
+                    selected_provider=None,
+                    selected_model=None,
+                    backend_id=None,
+                    backend_kind=BackendKind.UNKNOWN,
+                    external_blocked=True,
+                    reason="reset_privacy_requires_clean_new_session",
+                    redaction_required=True,
+                    provider_requested="",
+                    model_requested=None,
+                )
+                previous.update(previous.max_seen_tier, external_blocked=True, reason=decision.reason)
+                raise PrivacyRouteError(decision)
             state = ConversationPrivacyState(session_id=requested_session)
             self.privacy_states[requested_session] = state
             return state
@@ -718,30 +750,44 @@ class RagChatService:
         self.privacy_states[requested_session] = state
         return state
 
-    def _provider_for_model(self, model: str | None) -> str:
+    def _backend_for_model(self, model: str | None) -> BackendDescriptor:
         model_id = str(model or "")
-        if model_id in set(self.config.trusted_local_models):
-            return "local"
-        if self.config.mimo_enabled and model_id in set(self.config.mimo_models):
-            return "mimo"
-        return "groq"
+        provider = "mimo" if self.config.mimo_enabled and model_id in set(self.config.mimo_models) else "groq"
+        backend_id = self.config.backend_id or provider
+        return classify_backend(
+            provider=provider,
+            model=model_id,
+            backend_id=backend_id,
+            backend_kind=self.config.backend_kind,
+            base_url=self.config.backend_base_url or (self.config.mimo_base_url if provider == "mimo" else None),
+        )
+
+    def _private_backend_policy(self) -> PrivateBackendPolicy:
+        return PrivateBackendPolicy.from_values(
+            trusted_private_backends=self.config.trusted_private_backends,
+            trusted_private_models=self.config.trusted_private_models,
+            backend_model_allowlist=self.config.backend_model_allowlist,
+            trusted_local_models=self.config.trusted_local_models,
+        )
 
     def _enforce_generation_privacy(
         self,
         *,
-        provider: str,
-        model: str | None,
+        backend: BackendDescriptor,
         session_state: ConversationPrivacyState,
         hits: list[RetrievalHit],
         user_message_tier: DataTier,
     ) -> PrivacyDecision:
         decision = enforce_privacy_route(
-            provider,
-            model,
+            backend.provider,
+            backend.model,
             session_state,
             hits,
             allow_external_semi_private=self.config.allow_external_semi_private,
-            trusted_local_models=set(self.config.trusted_local_models),
+            private_backend_policy=self._private_backend_policy(),
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
+            base_url=backend.base_url,
             user_message_tier=user_message_tier,
         )
         if not decision.provider_allowed:
@@ -753,8 +799,7 @@ class RagChatService:
         session_state: ConversationPrivacyState,
         hits: list[RetrievalHit],
         *,
-        provider: str,
-        model: str | None,
+        backend: BackendDescriptor,
         user_message_tier: DataTier,
     ) -> PrivacyDecision:
         effective_tier = max_data_tier(session_state.max_seen_tier, user_message_tier, *(data_tier_for_hit(hit) for hit in hits))
@@ -764,28 +809,32 @@ class RagChatService:
             provider_allowed=True,
             selected_provider=None,
             selected_model=None,
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
             external_blocked=False,
             reason="no_llm_generation",
             redaction_required=effective_tier == DataTier.PRIVATE,
-            provider_requested=provider,
-            model_requested=model,
+            provider_requested=backend.provider,
+            model_requested=backend.model,
         )
 
     def _llm_tool_blocked(
         self,
         *,
-        provider: str,
-        model: str | None,
+        backend: BackendDescriptor,
         session_state: ConversationPrivacyState,
         user_message_tier: DataTier,
     ) -> bool:
         decision = enforce_privacy_route(
-            provider,
-            model,
+            backend.provider,
+            backend.model,
             session_state,
             (),
             allow_external_semi_private=self.config.allow_external_semi_private,
-            trusted_local_models=set(self.config.trusted_local_models),
+            private_backend_policy=self._private_backend_policy(),
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
+            base_url=backend.base_url,
             user_message_tier=user_message_tier,
         )
         return not decision.provider_allowed
@@ -794,16 +843,14 @@ class RagChatService:
         self,
         *,
         image_rewrite: bool | None,
-        provider: str,
-        model: str | None,
+        backend: BackendDescriptor,
         session_state: ConversationPrivacyState,
         user_message_tier: DataTier,
     ) -> bool:
         if not image_rewrite:
             return False
         return not self._llm_tool_blocked(
-            provider=provider,
-            model=model,
+            backend=backend,
             session_state=session_state,
             user_message_tier=user_message_tier,
         )
@@ -812,8 +859,7 @@ class RagChatService:
         self,
         retriever: Retriever,
         *,
-        provider: str,
-        model: str | None,
+        backend: BackendDescriptor,
         session_state: ConversationPrivacyState,
         user_message_tier: DataTier,
     ) -> tuple[Retriever, dict[str, Any]]:
@@ -821,12 +867,15 @@ class RagChatService:
         if not spec.uses_llm:
             return retriever, {}
         decision = enforce_privacy_route(
-            provider,
-            model,
+            backend.provider,
+            backend.model,
             session_state,
             (),
             allow_external_semi_private=self.config.allow_external_semi_private,
-            trusted_local_models=set(self.config.trusted_local_models),
+            private_backend_policy=self._private_backend_policy(),
+            backend_id=backend.backend_id,
+            backend_kind=backend.kind,
+            base_url=backend.base_url,
             user_message_tier=user_message_tier,
         )
         if decision.provider_allowed:
@@ -1632,6 +1681,12 @@ def _format_history(messages: list[dict[str, Any]], *, history_messages: int) ->
         if content:
             lines.append(f"{role}: {content}")
     return "\n".join(lines) if lines else "No prior conversation."
+
+
+def _messages_have_history(messages: list[dict[str, Any]]) -> bool:
+    if len(messages) > 1:
+        return True
+    return any(str(message.get("role", "")).strip().lower() in {"assistant", "system"} for message in messages)
 
 
 def _content_to_text(content: Any) -> str:

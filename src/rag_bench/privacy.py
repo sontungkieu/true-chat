@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
+from urllib.parse import urlparse
 
 
 class DataTier(str, Enum):
@@ -13,6 +14,21 @@ class DataTier(str, Enum):
     PRIVATE = "private"
 
 
+class BackendKind(str, Enum):
+    LOCAL_PROCESS = "local_process"
+    SELF_HOSTED_PRIVATE = "self_hosted_private"
+    PRIVATE_LAN = "private_lan"
+    PRIVATE_VPC = "private_vpc"
+    EXTERNAL_SAAS = "external_saas"
+    UNKNOWN = "unknown"
+
+
+PRIVATE_CAPABLE_BACKEND_KINDS = {
+    BackendKind.LOCAL_PROCESS,
+    BackendKind.SELF_HOSTED_PRIVATE,
+    BackendKind.PRIVATE_LAN,
+    BackendKind.PRIVATE_VPC,
+}
 _TIER_ORDER = {
     DataTier.PUBLIC: 0,
     DataTier.SEMI_PRIVATE: 1,
@@ -65,25 +81,119 @@ def is_private_tier(tier: Any) -> bool:
 
 
 def is_local_provider(provider: str | None, model: str | None = None) -> bool:
-    provider_key = str(provider or "").strip().lower()
-    model_key = str(model or "").strip().lower()
-    if provider_key in _LOCAL_PROVIDERS:
-        return True
-    if provider_key in _EXTERNAL_PROVIDERS:
-        return False
-    return (
-        model_key.startswith("local/")
-        or model_key.endswith("-local")
-        or "localhost" in model_key
-        or "127.0.0.1" in model_key
-    )
+    return classify_backend(provider=provider, model=model).kind == BackendKind.LOCAL_PROCESS
 
 
 def is_external_provider(provider: str | None, model: str | None = None) -> bool:
+    return classify_backend(provider=provider, model=model).kind == BackendKind.EXTERNAL_SAAS
+
+
+def normalize_backend_kind(value: Any) -> BackendKind:
+    if isinstance(value, BackendKind):
+        return value
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "local": BackendKind.LOCAL_PROCESS,
+        "localhost": BackendKind.LOCAL_PROCESS,
+        "local_process": BackendKind.LOCAL_PROCESS,
+        "self_hosted": BackendKind.SELF_HOSTED_PRIVATE,
+        "self_hosted_private": BackendKind.SELF_HOSTED_PRIVATE,
+        "private_lan": BackendKind.PRIVATE_LAN,
+        "lan": BackendKind.PRIVATE_LAN,
+        "private_vpc": BackendKind.PRIVATE_VPC,
+        "vpc": BackendKind.PRIVATE_VPC,
+        "external": BackendKind.EXTERNAL_SAAS,
+        "external_saas": BackendKind.EXTERNAL_SAAS,
+        "saas": BackendKind.EXTERNAL_SAAS,
+        "unknown": BackendKind.UNKNOWN,
+        "": BackendKind.UNKNOWN,
+    }
+    return aliases.get(normalized, BackendKind.UNKNOWN)
+
+
+@dataclass(frozen=True)
+class BackendDescriptor:
+    backend_id: str
+    provider: str
+    kind: BackendKind
+    base_url: str | None = None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
+class PrivateBackendPolicy:
+    trusted_private_backends: set[str]
+    trusted_private_models: set[str]
+    backend_model_allowlist: dict[str, set[str]]
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        trusted_private_backends: Sequence[str] | set[str] = (),
+        trusted_private_models: Sequence[str] | set[str] = (),
+        backend_model_allowlist: dict[str, Sequence[str] | set[str]] | None = None,
+        trusted_local_models: Sequence[str] | set[str] = (),
+    ) -> "PrivateBackendPolicy":
+        return cls(
+            trusted_private_backends=_normalized_set(trusted_private_backends),
+            trusted_private_models=_normalized_set((*trusted_private_models, *trusted_local_models)),
+            backend_model_allowlist={
+                str(backend_id).strip(): _normalized_set(models)
+                for backend_id, models in (backend_model_allowlist or {}).items()
+                if str(backend_id).strip()
+            },
+        )
+
+    def is_private_allowed(self, backend: BackendDescriptor) -> bool:
+        backend_id = str(backend.backend_id or "").strip()
+        model = str(backend.model or "").strip()
+        if not backend_id or backend_id not in self.trusted_private_backends:
+            return False
+        if backend.kind not in PRIVATE_CAPABLE_BACKEND_KINDS:
+            return False
+        allowed_for_backend = self.backend_model_allowlist.get(backend_id)
+        if allowed_for_backend is not None:
+            return model in allowed_for_backend
+        return bool(model and model in self.trusted_private_models)
+
+    def model_is_trusted_somewhere(self, model: str | None) -> bool:
+        model_id = str(model or "").strip()
+        if not model_id:
+            return False
+        return model_id in self.trusted_private_models or any(
+            model_id in models for models in self.backend_model_allowlist.values()
+        )
+
+
+def classify_backend(
+    *,
+    provider: str | None,
+    model: str | None = None,
+    backend_id: str | None = None,
+    backend_kind: BackendKind | str | None = None,
+    base_url: str | None = None,
+) -> BackendDescriptor:
     provider_key = str(provider or "").strip().lower()
-    if provider_key in _EXTERNAL_PROVIDERS:
-        return True
-    return not is_local_provider(provider, model)
+    resolved_backend_id = str(backend_id or provider_key or "unknown").strip()
+    explicit_kind = normalize_backend_kind(backend_kind)
+    if explicit_kind != BackendKind.UNKNOWN:
+        kind = explicit_kind
+    elif provider_key in _EXTERNAL_PROVIDERS:
+        kind = BackendKind.EXTERNAL_SAAS
+    elif provider_key in _LOCAL_PROVIDERS:
+        kind = BackendKind.LOCAL_PROCESS
+    elif _is_localhost_url(base_url):
+        kind = BackendKind.LOCAL_PROCESS
+    else:
+        kind = BackendKind.UNKNOWN
+    return BackendDescriptor(
+        backend_id=resolved_backend_id,
+        provider=provider_key or str(provider or ""),
+        kind=kind,
+        base_url=base_url,
+        model=model,
+    )
 
 
 def infer_data_tier_from_path(value: Any, *, default: DataTier = DataTier.PUBLIC) -> DataTier:
@@ -198,6 +308,8 @@ class PrivacyDecision:
     provider_allowed: bool
     selected_provider: str | None
     selected_model: str | None
+    backend_id: str | None
+    backend_kind: BackendKind
     external_blocked: bool
     reason: str
     redaction_required: bool
@@ -212,6 +324,8 @@ class PrivacyDecision:
             "model_requested": self.model_requested,
             "provider_selected": self.selected_provider,
             "model_selected": self.selected_model,
+            "backend_id": self.backend_id,
+            "backend_kind": self.backend_kind.value,
             "provider_allowed": self.provider_allowed,
             "external_blocked": self.external_blocked,
             "reason": self.reason,
@@ -235,7 +349,11 @@ def enforce_privacy_route(
     retrieved_hits: Sequence[Any],
     *,
     allow_external_semi_private: bool,
-    trusted_local_models: set[str],
+    private_backend_policy: PrivateBackendPolicy | None = None,
+    backend_id: str | None = None,
+    backend_kind: BackendKind | str | None = None,
+    base_url: str | None = None,
+    trusted_local_models: set[str] | None = None,
     user_message_tier: Any = None,
     attached_file_tier: Any = None,
     memory_tier: Any = None,
@@ -250,9 +368,17 @@ def enforce_privacy_route(
         memory_tier,
         tool_output_tier,
     )
-    model_key = str(requested_model or "").strip()
-    provider_is_local = is_local_provider(requested_provider, requested_model) or model_key in trusted_local_models
-    provider_is_external = not provider_is_local and is_external_provider(requested_provider, requested_model)
+    policy = private_backend_policy or PrivateBackendPolicy.from_values(trusted_local_models=trusted_local_models or set())
+    backend = classify_backend(
+        provider=requested_provider,
+        model=requested_model,
+        backend_id=backend_id,
+        backend_kind=backend_kind,
+        base_url=base_url,
+    )
+    provider_is_external = backend.kind == BackendKind.EXTERNAL_SAAS
+    backend_is_private_capable = backend.kind in PRIVATE_CAPABLE_BACKEND_KINDS
+    private_backend_allowed = policy.is_private_allowed(backend)
     reason = "public_allows_requested_provider"
     provider_allowed = True
     external_blocked = False
@@ -264,24 +390,37 @@ def enforce_privacy_route(
         external_blocked = True
         selected_provider = None
         selected_model = None
-        reason = "semi_private_requires_local_or_approved_external_provider"
+        reason = "semi_private_requires_private_backend_or_approved_external_saas"
     elif effective_tier == DataTier.PRIVATE:
-        if provider_is_external or not provider_is_local:
+        if provider_is_external:
             provider_allowed = False
             external_blocked = True
             selected_provider = None
             selected_model = None
-            reason = "session_taint_private_requires_local_provider"
-        elif trusted_local_models and model_key not in trusted_local_models:
+            reason = "private_taint_blocks_external_saas_backend"
+        elif not backend_is_private_capable:
             provider_allowed = False
             external_blocked = True
             selected_provider = None
             selected_model = None
-            reason = "private_requires_trusted_local_model"
+            reason = "private_taint_requires_private_capable_backend"
+        elif not private_backend_allowed:
+            provider_allowed = False
+            external_blocked = True
+            selected_provider = None
+            selected_model = None
+            if policy.model_is_trusted_somewhere(requested_model):
+                reason = "private_taint_requires_trusted_private_backend"
+            else:
+                reason = "private_taint_requires_trusted_private_model"
         else:
-            reason = "private_uses_trusted_local_provider"
+            reason = "private_uses_trusted_private_backend"
     elif effective_tier == DataTier.SEMI_PRIVATE:
-        reason = "semi_private_external_allowed_by_config" if provider_is_external else "semi_private_uses_local_provider"
+        reason = (
+            "semi_private_external_saas_allowed_by_config"
+            if provider_is_external
+            else "semi_private_uses_private_or_local_backend"
+        )
 
     session_state.update(effective_tier, external_blocked=external_blocked, reason=reason)
     return PrivacyDecision(
@@ -289,6 +428,8 @@ def enforce_privacy_route(
         provider_allowed=provider_allowed,
         selected_provider=selected_provider,
         selected_model=selected_model,
+        backend_id=backend.backend_id,
+        backend_kind=backend.kind,
         external_blocked=external_blocked,
         reason=reason,
         redaction_required=effective_tier == DataTier.PRIVATE,
@@ -307,8 +448,8 @@ def data_tier_for_hit(hit: Any) -> DataTier:
             if hit.get(key) not in (None, ""):
                 return normalize_data_tier(hit.get(key))
     if isinstance(metadata, dict):
-        return infer_data_tier_from_metadata(metadata)
-    return DataTier.PUBLIC
+        return infer_data_tier_from_metadata(metadata, default=DataTier.PRIVATE)
+    return DataTier.PRIVATE
 
 
 def safe_source_payload(
@@ -400,3 +541,15 @@ def _string_list_or_none(value: Any) -> list[str] | None:
         return None
     items = [str(item).strip() for item in value if str(item).strip()]
     return items or None
+
+
+def _normalized_set(values: Sequence[str] | set[str]) -> set[str]:
+    return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _is_localhost_url(value: str | None) -> bool:
+    if not value:
+        return False
+    parsed = urlparse(str(value))
+    host = (parsed.hostname or "").strip().lower()
+    return host in {"localhost", "127.0.0.1", "::1"}

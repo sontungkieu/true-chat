@@ -14,6 +14,9 @@ from rag_bench.groq_client import GenerationResult
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
 
 
+PUBLIC_METADATA = {"data_tier": "public", "doc_type": "synthetic"}
+
+
 @dataclass
 class FakeRetriever:
     name: str = "bm25"
@@ -31,6 +34,8 @@ class FakeRetriever:
                     rank=1,
                     title="Cats",
                     text="Cats purr and chase toys.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
                 )
             ],
             latency_s=0.02,
@@ -56,6 +61,7 @@ class FakeImageRetriever:
                     title="Digit 7",
                     text="A handwritten digit 7 image.",
                     metadata={
+                        "data_tier": "public",
                         "kind": "image",
                         "image_data_url": "data:image/svg+xml,%3Csvg%3E%3C/svg%3E",
                         "label": 7,
@@ -88,6 +94,8 @@ class FakeKeywordRetriever:
                     rank=1,
                     title="BH1 and BH2 domains of Bcl-2",
                     text="BH1 and BH2 domains of Bcl-2 are required for apoptosis inhibition.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
                 ),
                 RetrievalHit(
                     doc_id="noise-doc",
@@ -95,6 +103,8 @@ class FakeKeywordRetriever:
                     rank=2,
                     title="Unrelated",
                     text="Unrelated document.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
                 ),
             ],
             latency_s=0.01,
@@ -120,11 +130,13 @@ class FakeDictionaryRetriever:
                     title="AMONIT",
                     text="AMONIT, thuốc nổ phá.",
                     metadata={
+                        "data_tier": "semi_private",
                         "kind": "dictionary",
                         "headword": "AMONIT",
                         "raw_docx_text": "AMONIT, thuốc nổ phá.",
                         "rich_blocks": [{"type": "paragraph", "runs": [{"text": "AMONIT", "bold": True}]}],
                     },
+                    data_tier="semi_private",
                 )
             ],
             latency_s=0.01,
@@ -638,7 +650,17 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
             assert query.text == "pháo binh"
             return RetrievalResult(
                 query=query,
-                hits=[RetrievalHit(doc_id="bench-noise", score=0.0, rank=1, title="Noise", text="No useful context.")],
+                hits=[
+                    RetrievalHit(
+                        doc_id="bench-noise",
+                        score=0.0,
+                        rank=1,
+                        title="Noise",
+                        text="No useful context.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    )
+                ],
                 latency_s=0.02,
             )
 
@@ -659,11 +681,13 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
                         title="PHÁO BINH",
                         text="PHÁO BINH, lực lượng tác chiến.",
                         metadata={
+                            "data_tier": "semi_private",
                             "kind": "dictionary",
                             "headword": "PHÁO BINH",
                             "dictionary_direct_score": 1.2,
                             "dictionary_match_mode": "strict",
                         },
+                        data_tier="semi_private",
                     )
                 ],
                 latency_s=0.01,
@@ -703,11 +727,27 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             assert top_k == 6
             hits = [
-                RetrievalHit(doc_id=f"bench-good-{index}", score=0.25, rank=index, title=f"Good {index}", text=f"Useful benchmark {index}.")
+                RetrievalHit(
+                    doc_id=f"bench-good-{index}",
+                    score=0.25,
+                    rank=index,
+                    title=f"Good {index}",
+                    text=f"Useful benchmark {index}.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
+                )
                 for index in range(1, 4)
             ]
             hits.extend(
-                RetrievalHit(doc_id=f"bench-tiny-{index}", score=0.0001, rank=rank, title=f"Tiny {index}", text=f"Tiny benchmark {index}.")
+                RetrievalHit(
+                    doc_id=f"bench-tiny-{index}",
+                    score=0.0001,
+                    rank=rank,
+                    title=f"Tiny {index}",
+                    text=f"Tiny benchmark {index}.",
+                    metadata=PUBLIC_METADATA,
+                    data_tier="public",
+                )
                 for rank, index in enumerate(range(1, 4), start=4)
             )
             return RetrievalResult(query=query, hits=hits, latency_s=0.02)
@@ -728,10 +768,12 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
                         title=f"Dictionary {index}",
                         text=f"Dictionary entry {index}.",
                         metadata={
+                            "data_tier": "semi_private",
                             "kind": "dictionary",
                             "dictionary_direct_score": 1.0,
                             "dictionary_match_mode": "strict",
                         },
+                        data_tier="semi_private",
                     )
                     for index in range(1, 9)
                 ],
@@ -772,6 +814,8 @@ def test_format_context_distributes_budget_across_all_hits() -> None:
             rank=index,
             title=f"Title {index}",
             text=f"Important context {index}. " + ("x" * 700),
+            metadata=PUBLIC_METADATA,
+            data_tier="public",
         )
         for index in range(1, 7)
     ]
@@ -791,8 +835,24 @@ def test_uncited_zero_score_sources_are_hidden_but_cited_zero_score_sources_rema
             return RetrievalResult(
                 query=query,
                 hits=[
-                    RetrievalHit(doc_id="cited-low", score=0.0, rank=1, title="Cited", text="Cited low score."),
-                    RetrievalHit(doc_id="uncited-low", score=0.0, rank=2, title="Uncited", text="Uncited low score."),
+                    RetrievalHit(
+                        doc_id="cited-low",
+                        score=0.0,
+                        rank=1,
+                        title="Cited",
+                        text="Cited low score.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="uncited-low",
+                        score=0.0,
+                        rank=2,
+                        title="Uncited",
+                        text="Uncited low score.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
                 ],
                 latency_s=0.01,
             )
@@ -829,10 +889,42 @@ def test_score_controls_filter_sort_prompt_and_display_sources() -> None:
             return RetrievalResult(
                 query=query,
                 hits=[
-                    RetrievalHit(doc_id="low", score=0.2, rank=1, title="Low", text="Low confidence."),
-                    RetrievalHit(doc_id="high", score=2.0, rank=2, title="High", text="High confidence."),
-                    RetrievalHit(doc_id="mid", score=1.0, rank=3, title="Mid", text="Mid confidence."),
-                    RetrievalHit(doc_id="too-high", score=9.0, rank=4, title="Too high", text="Outlier."),
+                    RetrievalHit(
+                        doc_id="low",
+                        score=0.2,
+                        rank=1,
+                        title="Low",
+                        text="Low confidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="high",
+                        score=2.0,
+                        rank=2,
+                        title="High",
+                        text="High confidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="mid",
+                        score=1.0,
+                        rank=3,
+                        title="Mid",
+                        text="Mid confidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
+                    RetrievalHit(
+                        doc_id="too-high",
+                        score=9.0,
+                        rank=4,
+                        title="Too high",
+                        text="Outlier.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    ),
                 ],
                 latency_s=0.01,
             )

@@ -7,9 +7,13 @@ import pytest
 from rag_bench.chat_service import ChatProxyConfig, RagChatService, _hit_source_payload
 from rag_bench.groq_client import GenerationResult
 from rag_bench.privacy import (
+    BackendKind,
     ConversationPrivacyState,
     DataTier,
+    PrivateBackendPolicy,
     PrivacyRouteError,
+    data_tier_for_hit,
+    enforce_privacy_route,
     max_data_tier,
     normalize_data_tier,
 )
@@ -18,29 +22,31 @@ from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
 @dataclass
 class TieredRetriever:
-    tier: str = "public"
+    tier: str | None = "public"
     name: str = "bm25"
     build_time_s: float = 0.0
     calls: int = 0
 
     def search(self, query: Query, top_k: int) -> RetrievalResult:
         self.calls += 1
+        metadata = {
+            "doc_type": "synthetic",
+            "raw_docx_text": "sensitive synthetic raw text",
+            "rich_blocks": [{"text": "sensitive synthetic rich text"}],
+            "dictionary_evidence_text": "sensitive synthetic evidence",
+        }
+        if self.tier is not None:
+            metadata["data_tier"] = self.tier
         return RetrievalResult(
             query=query,
             hits=[
                 RetrievalHit(
-                    doc_id=f"{self.tier}-doc",
+                    doc_id=f"{self.tier or 'untyped'}-doc",
                     score=1.0,
                     rank=1,
-                    title=f"{self.tier} title",
-                    text=f"{self.tier} synthetic context",
-                    metadata={
-                        "data_tier": self.tier,
-                        "doc_type": "synthetic",
-                        "raw_docx_text": "sensitive synthetic raw text",
-                        "rich_blocks": [{"text": "sensitive synthetic rich text"}],
-                        "dictionary_evidence_text": "sensitive synthetic evidence",
-                    },
+                    title=f"{self.tier or 'untyped'} title",
+                    text=f"{self.tier or 'untyped'} synthetic context",
+                    metadata=metadata,
                     data_tier=self.tier,
                     doc_type="synthetic",
                 )
@@ -74,14 +80,31 @@ class FakeLLM:
         return {}
 
 
-def _service(retriever, *, allow_external_semi_private=False) -> tuple[RagChatService, FakeLLM]:
+def _service(
+    retriever,
+    *,
+    allow_external_semi_private: bool = False,
+    trusted_private_backend: bool = False,
+    trusted_models: tuple[str, ...] = ("local-safe",),
+) -> tuple[RagChatService, FakeLLM]:
     llm = FakeLLM()
+    backend_kwargs = (
+        {
+            "backend_id": "local_test",
+            "backend_kind": "local_process",
+            "trusted_private_backends": ("local_test",),
+            "trusted_private_models": trusted_models,
+        }
+        if trusted_private_backend
+        else {}
+    )
     service = RagChatService(
         config=ChatProxyConfig(
             model_id="rag-test",
             top_k=1,
             trusted_local_models=("local-safe",),
             allow_external_semi_private=allow_external_semi_private,
+            **backend_kwargs,
         ),
         benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
         retriever=retriever,
@@ -105,14 +128,14 @@ def test_private_hit_blocks_external_provider_before_generation() -> None:
         service.answer([{"role": "user", "content": "question"}], session_id="chat-a")
 
     assert llm.calls == 0
-    assert error.value.decision.reason == "session_taint_private_requires_local_provider"
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
     assert service.privacy_states["chat-a"].max_seen_tier == DataTier.PRIVATE
     assert service.privacy_states["chat-a"].private_seen is True
 
 
 def test_session_taint_persists_when_history_is_disabled() -> None:
     retriever = TieredRetriever(tier="private")
-    service, llm = _service(retriever)
+    service, llm = _service(retriever, trusted_private_backend=True)
 
     first = service.answer(
         [{"role": "user", "content": "private question"}],
@@ -207,3 +230,190 @@ def test_external_llm_rewrite_retriever_falls_back_before_call_in_private_sessio
     assert llm_retriever.calls == 0
     assert bm25_retriever.calls == 1
     assert llm.calls == 0
+
+
+def test_external_saas_with_trusted_model_name_is_blocked_for_private_taint() -> None:
+    state = ConversationPrivacyState(session_id="chat-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    policy = PrivateBackendPolicy.from_values(trusted_private_models={"qwen-private-trusted"})
+
+    decision = enforce_privacy_route(
+        "groq",
+        "qwen-private-trusted",
+        state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=policy,
+        backend_id="groq",
+        backend_kind=BackendKind.EXTERNAL_SAAS,
+    )
+
+    assert decision.provider_allowed is False
+    assert decision.reason == "private_taint_blocks_external_saas_backend"
+
+
+def test_self_hosted_trusted_backend_and_model_allows_private_taint() -> None:
+    state = ConversationPrivacyState(session_id="chat-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    policy = PrivateBackendPolicy.from_values(
+        trusted_private_backends={"office_llm_server"},
+        trusted_private_models={"qwen2.5-32b"},
+    )
+
+    decision = enforce_privacy_route(
+        "openai-compatible",
+        "qwen2.5-32b",
+        state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=policy,
+        backend_id="office_llm_server",
+        backend_kind=BackendKind.SELF_HOSTED_PRIVATE,
+    )
+
+    assert decision.provider_allowed is True
+    assert decision.reason == "private_uses_trusted_private_backend"
+
+
+def test_private_capable_backend_with_untrusted_model_is_blocked() -> None:
+    state = ConversationPrivacyState(session_id="chat-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    policy = PrivateBackendPolicy.from_values(
+        trusted_private_backends={"office_llm_server"},
+        trusted_private_models={"qwen2.5-32b"},
+    )
+
+    decision = enforce_privacy_route(
+        "openai-compatible",
+        "llama-unreviewed",
+        state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=policy,
+        backend_id="office_llm_server",
+        backend_kind=BackendKind.SELF_HOSTED_PRIVATE,
+    )
+
+    assert decision.provider_allowed is False
+    assert decision.reason == "private_taint_requires_trusted_private_model"
+
+
+def test_api_key_or_backend_id_alone_does_not_trust_external_saas() -> None:
+    state = ConversationPrivacyState(session_id="chat-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    policy = PrivateBackendPolicy.from_values(
+        trusted_private_backends={"groq"},
+        trusted_private_models={"qwen-private-trusted"},
+    )
+
+    decision = enforce_privacy_route(
+        "groq",
+        "qwen-private-trusted",
+        state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=policy,
+        backend_id="groq",
+        backend_kind=BackendKind.EXTERNAL_SAAS,
+    )
+
+    assert decision.provider_allowed is False
+    assert decision.reason == "private_taint_blocks_external_saas_backend"
+
+
+def test_unknown_backend_is_blocked_for_private_taint() -> None:
+    state = ConversationPrivacyState(session_id="chat-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    policy = PrivateBackendPolicy.from_values(
+        trusted_private_backends={"mystery"},
+        trusted_private_models={"qwen-private-trusted"},
+    )
+
+    decision = enforce_privacy_route(
+        "mystery-provider",
+        "qwen-private-trusted",
+        state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=policy,
+        backend_id="mystery",
+        backend_kind=BackendKind.UNKNOWN,
+    )
+
+    assert decision.provider_allowed is False
+    assert decision.reason == "private_taint_requires_private_capable_backend"
+
+
+def test_localhost_backend_requires_trusted_backend_and_model() -> None:
+    state = ConversationPrivacyState(session_id="chat-private", max_seen_tier=DataTier.PRIVATE, private_seen=True)
+    policy = PrivateBackendPolicy.from_values(
+        trusted_private_backends={"local_vllm"},
+        backend_model_allowlist={"local_vllm": {"qwen2.5-32b"}},
+    )
+
+    allowed = enforce_privacy_route(
+        "vllm",
+        "qwen2.5-32b",
+        state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=policy,
+        backend_id="local_vllm",
+        base_url="http://127.0.0.1:8000/v1",
+    )
+    blocked = enforce_privacy_route(
+        "vllm",
+        "llama-unreviewed",
+        state,
+        (),
+        allow_external_semi_private=False,
+        private_backend_policy=policy,
+        backend_id="local_vllm",
+        base_url="http://127.0.0.1:8000/v1",
+    )
+
+    assert allowed.provider_allowed is True
+    assert blocked.provider_allowed is False
+    assert blocked.reason == "private_taint_requires_trusted_private_model"
+
+
+def test_reset_privacy_cannot_clear_private_taint_with_same_session_history() -> None:
+    retriever = TieredRetriever(tier="private")
+    service, llm = _service(retriever, trusted_private_backend=True)
+
+    service.answer(
+        [{"role": "user", "content": "private question"}],
+        request_model="local-safe",
+        session_id="chat-reset",
+    )
+    retriever.tier = "public"
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer(
+            [
+                {"role": "user", "content": "private question"},
+                {"role": "assistant", "content": "private answer"},
+                {"role": "user", "content": "reset and answer publicly"},
+            ],
+            session_id="chat-reset",
+            reset_privacy=True,
+        )
+
+    assert error.value.decision.reason == "reset_privacy_requires_clean_new_session"
+    assert llm.calls == 1
+    assert service.privacy_states["chat-reset"].max_seen_tier == DataTier.PRIVATE
+
+
+def test_untyped_retrieval_hit_is_private_risk_by_default() -> None:
+    hit = TieredRetriever(tier=None).search(Query(query_id="q", text="q"), 1).hits[0]
+    assert data_tier_for_hit(hit) == DataTier.PRIVATE
+
+
+def test_untyped_retrieval_hit_blocks_external_generation() -> None:
+    service, llm = _service(TieredRetriever(tier=None))
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer([{"role": "user", "content": "question"}], session_id="chat-untyped")
+
+    assert llm.calls == 0
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+
+
+def test_explicit_public_marker_overrides_untyped_conservative_default() -> None:
+    hit = {"metadata": {"data_tier": "public"}}
+    assert data_tier_for_hit(hit) == DataTier.PUBLIC

@@ -181,12 +181,40 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument(
         "--allow-external-semi-private",
         action="store_true",
-        help="Allow semi-private RAG context to be sent to external providers. Private context is still local-only.",
+        help="Allow semi-private RAG context to be sent to external SaaS providers. Private context still requires a trusted private backend.",
+    )
+    serve_parser.add_argument(
+        "--private-backend",
+        default=None,
+        help="Trusted private inference backend id used for private-tainted sessions, e.g. local_ollama or office_llm_server.",
+    )
+    serve_parser.add_argument(
+        "--private-backend-kind",
+        choices=("local_process", "self_hosted_private", "private_lan", "private_vpc", "external_saas", "unknown"),
+        default=None,
+        help="Trust-boundary kind for --private-backend. External SaaS and unknown are never private-safe.",
+    )
+    serve_parser.add_argument(
+        "--private-backend-base-url",
+        default=None,
+        help="Optional base URL for the selected private backend. Used only for conservative backend classification metadata.",
+    )
+    serve_parser.add_argument(
+        "--trusted-private-models",
+        default="",
+        help="Comma-separated model ids allowed inside trusted private backends.",
+    )
+    serve_parser.add_argument(
+        "--private-backend-model",
+        action="append",
+        default=[],
+        metavar="BACKEND:MODEL[,MODEL...]",
+        help="Per-backend model allowlist. Repeat for multiple backends.",
     )
     serve_parser.add_argument(
         "--trusted-local-models",
         default="",
-        help="Comma-separated local model ids allowed for private-tainted sessions.",
+        help="Deprecated alias for --trusted-private-models. Model names alone do not make external SaaS private-safe.",
     )
     serve_parser.add_argument("--allow-large-bench", action="store_true", help="Allow large benchmarks such as HotpotQA.")
     serve_parser.add_argument("--history-messages", type=int, default=6)
@@ -342,7 +370,13 @@ def _serve(args: argparse.Namespace) -> int:
     if not dictionary_letters:
         print("--dictionary-letters must include at least one value.", file=sys.stderr)
         return 2
-    trusted_local_models = tuple(item.strip() for item in args.trusted_local_models.split(",") if item.strip())
+    trusted_local_models = _parse_csv(args.trusted_local_models)
+    trusted_private_models = _dedupe_preserve_order((*_parse_csv(args.trusted_private_models), *trusted_local_models))
+    try:
+        backend_model_allowlist = _parse_backend_model_allowlist(args.private_backend_model)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     if args.history_messages < 0:
         print("--history-messages must be non-negative.", file=sys.stderr)
         return 2
@@ -407,6 +441,12 @@ def _serve(args: argparse.Namespace) -> int:
         dictionary_top_k=args.dictionary_top_k,
         dictionary_required=args.dictionary_required,
         allow_external_semi_private=args.allow_external_semi_private,
+        backend_id=args.private_backend,
+        backend_kind=args.private_backend_kind,
+        backend_base_url=args.private_backend_base_url,
+        trusted_private_backends=(args.private_backend,) if args.private_backend else (),
+        trusted_private_models=trusted_private_models,
+        backend_model_allowlist=backend_model_allowlist,
         trusted_local_models=trusted_local_models,
         allow_large_bench=args.allow_large_bench,
         available_retrievers=available_retrievers or DEFAULT_CHAT_RETRIEVERS,
@@ -437,6 +477,23 @@ def _dedupe_preserve_order(values: tuple[str, ...]) -> tuple[str, ...]:
             seen.add(value)
             result.append(value)
     return tuple(result)
+
+
+def _parse_csv(value: str | None) -> tuple[str, ...]:
+    return tuple(item.strip() for item in str(value or "").split(",") if item.strip())
+
+
+def _parse_backend_model_allowlist(values: list[str]) -> dict[str, tuple[str, ...]]:
+    allowlist: dict[str, list[str]] = {}
+    for raw in values:
+        backend, sep, models_text = str(raw or "").partition(":")
+        backend_id = backend.strip()
+        models = _parse_csv(models_text)
+        if not sep or not backend_id or not models:
+            raise ValueError("--private-backend-model must use BACKEND:MODEL[,MODEL...]")
+        allowlist.setdefault(backend_id, [])
+        allowlist[backend_id].extend(models)
+    return {backend_id: _dedupe_preserve_order(tuple(models)) for backend_id, models in allowlist.items()}
 
 
 def _parse_concurrency(value: str | None) -> tuple[int, ...] | None:

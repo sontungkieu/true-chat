@@ -214,7 +214,7 @@ uv run --frozen python scripts/build_dictionary_graph.py \
   --run-name private_dictionary_local_graph
 ```
 
-If a private source set is used with `--provider mimo` or `--provider groq`, or with a local model not listed through `--trusted-model`, the builder exits before provider calls. `--validate-only` and `--export-only` remain allowed for local artifact work because they do not send document text to a model.
+If a private source set is used with `--provider mimo` or `--provider groq`, or with a private/local inference model not listed through `--trusted-model`, the builder exits before provider calls. `--validate-only` and `--export-only` remain allowed for local artifact work because they do not send document text to a model.
 
 Useful production modes:
 
@@ -236,7 +236,7 @@ uv run --frozen python scripts/build_dictionary_graph.py \
   --run-name pb_dictionary_abcdf_prod_graph --force-reextract
 ```
 
-`--quality-pass weak` is the default. It sends weak non-deterministic edges to the selected provider for a critic pass when such edges exist; private source sets therefore still require a trusted local model unless the pass is disabled or the run is `--export-only`/`--validate-only`. `--quality-pass all` audits all non-deterministic relation edges, and `--quality-pass none` disables the critic pass. Resume keys include source hashes, prompt version, model, batch size, and raw batch validity, so reruns reuse valid `raw_batches/` unless `--force-reextract` is set. Outputs are written under ignored `runs/`:
+`--quality-pass weak` is the default. It sends weak non-deterministic edges to the selected provider for a critic pass when such edges exist; private source sets therefore still require a trusted private/local model unless the pass is disabled or the run is `--export-only`/`--validate-only`. `--quality-pass all` audits all non-deterministic relation edges, and `--quality-pass none` disables the critic pass. Resume keys include source hashes, prompt version, model, batch size, and raw batch validity, so reruns reuse valid `raw_batches/` unless `--force-reextract` is set. Outputs are written under ignored `runs/`:
 
 To build a unified dictionary from the base files plus the 2021 supplement, use repeatable source sets. Source-set mode namespaces entry ids as `base:B-0001` and `supp2021:B-0001`, preventing collisions while preserving the original local id in source metadata:
 
@@ -334,7 +334,7 @@ uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --bench scifact --ret
 
 The built-in UI defaults to Qwen3 32B, Vietnamese output, Dictionary mode, memory off, dictionary cross-reference on, and a 4096-token completion cap. Existing browser settings are migrated once to these defaults by the settings schema version.
 
-Runtime privacy routing is session-level. Public benchmark sources can use local or external providers, semi-private domain/dictionary context uses local providers unless `--allow-external-semi-private` is explicitly set, and private-tainted sessions require trusted local model ids from `--trusted-local-models`. The taint is monotonic per `session_id`: disabling Memory only removes prior turns from the prompt and does not clear a previous private taint. Start a new chat/session or send an explicit privacy reset to get a clean state. Private source payload text, raw DOCX text, rich blocks, and graph evidence text are redacted by default; see [`docs/privacy_runtime_policy.md`](docs/privacy_runtime_policy.md).
+Runtime privacy routing is session-level. Public benchmark sources can use private or external providers, semi-private domain/dictionary context uses private-capable backends unless `--allow-external-semi-private` is explicitly set, and private-tainted sessions require both a trusted private backend and a trusted private model. Configure a private boundary with `--private-backend`, `--private-backend-kind local_process|self_hosted_private|private_lan|private_vpc`, `--trusted-private-models`, and optionally `--private-backend-model BACKEND:MODEL[,MODEL...]`; `--trusted-local-models` remains only a deprecated alias for trusted private model ids and does not make Groq, MiMo, or another external SaaS backend private-safe. The taint is monotonic per `session_id`: disabling Memory only removes prior turns from the prompt and does not clear a previous private taint, and `reset_privacy=true` is rejected when old same-session history is still present. Start a new chat/session to get a clean state. Private source payload text, raw DOCX text, rich blocks, and graph evidence text are redacted by default; see [`docs/privacy_runtime_policy.md`](docs/privacy_runtime_policy.md).
 
 Expose additional search strategies in the built-in UI:
 
