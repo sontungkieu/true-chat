@@ -170,6 +170,7 @@ class RagEvalConfig:
     allow_external_judge_public: bool = False
     allow_external_judge_semi_private: bool = False
     disable_llm_judge: bool = True
+    judge_max_completion_tokens: int = 2048
     include_private_outputs: bool = False
     chat_config: ChatProxyConfig = field(default_factory=ChatProxyConfig)
 
@@ -348,8 +349,10 @@ def evaluate_rag_item(
                         judge_messages,
                         model=config.judge_model,
                         temperature=0.0,
-                        max_completion_tokens=512,
+                        max_completion_tokens=config.judge_max_completion_tokens,
                     )
+                    if judge_generation.error:
+                        raise ValueError(f"judge generation failed: {judge_generation.error}")
                     judge_scores = _parse_judge_json(judge_generation.answer)
                     judge_skipped = False
                     judge_skip_reason = None

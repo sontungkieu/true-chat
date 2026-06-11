@@ -68,6 +68,7 @@ MIMO_API_KEY=... uv run --frozen rag-bench eval-rag \
   --judge-provider mimo \
   --judge-model mimo-v2.5 \
   --judge-backend-kind external_saas \
+  --judge-max-completion-tokens 2048 \
   --allow-external-judge-public \
   --enable-llm-judge \
   --out-dir eval_results/rag_eval/public_mimo

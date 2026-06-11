@@ -169,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--allow-external-judge-semi-private", action="store_true")
     eval_parser.add_argument("--disable-llm-judge", dest="disable_llm_judge", action="store_true", default=True)
     eval_parser.add_argument("--enable-llm-judge", dest="disable_llm_judge", action="store_false")
+    eval_parser.add_argument("--judge-max-completion-tokens", type=int, default=2048)
     eval_parser.add_argument("--include-private-outputs", action="store_true", help="Write private query/answer text to result JSONL. Off by default.")
 
     serve_parser = subparsers.add_parser("serve", help="Serve an OpenAI-compatible RAG chat proxy.")
@@ -425,6 +426,9 @@ def _eval_rag(args: argparse.Namespace) -> int:
     if args.max_completion_tokens <= 0:
         print("--max-completion-tokens must be positive.", file=sys.stderr)
         return 2
+    if args.judge_max_completion_tokens <= 0:
+        print("--judge-max-completion-tokens must be positive.", file=sys.stderr)
+        return 2
     if args.max_context_chars <= 0:
         print("--max-context-chars must be positive.", file=sys.stderr)
         return 2
@@ -492,6 +496,7 @@ def _eval_rag(args: argparse.Namespace) -> int:
         allow_external_judge_public=args.allow_external_judge_public,
         allow_external_judge_semi_private=args.allow_external_judge_semi_private,
         disable_llm_judge=args.disable_llm_judge,
+        judge_max_completion_tokens=args.judge_max_completion_tokens,
         include_private_outputs=args.include_private_outputs,
         chat_config=chat_config,
     )

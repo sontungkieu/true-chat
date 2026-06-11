@@ -327,6 +327,8 @@ def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, caps
             "external_saas",
             "--allow-external-judge-public",
             "--enable-llm-judge",
+            "--judge-max-completion-tokens",
+            "3072",
         ]
     )
 
@@ -342,4 +344,5 @@ def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, caps
     assert seen["config"].judge_backend_kind == "external_saas"
     assert seen["config"].allow_external_judge_public is True
     assert seen["config"].disable_llm_judge is False
+    assert seen["config"].judge_max_completion_tokens == 3072
     assert seen["config"].chat_config.enable_structured_evidence is True
