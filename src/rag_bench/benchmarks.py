@@ -80,6 +80,10 @@ def _load_ir_dataset_benchmark(spec: BenchmarkSpec, *, limit: int | None = None)
             doc_id=str(doc.doc_id),
             title=str(getattr(doc, "title", "") or ""),
             text=str(getattr(doc, "text", "") or ""),
+            metadata={"data_tier": "public", "doc_type": "benchmark", "source_id": spec.dataset_id},
+            data_tier="public",
+            doc_type="benchmark",
+            source_id=spec.dataset_id,
         )
         for doc in dataset.docs_iter()
     ]
@@ -133,6 +137,10 @@ def _load_hf_scifact_benchmark(
             doc_id=str(row.get("_id", "")),
             title=str(row.get("title", "") or ""),
             text=str(row.get("text", "") or ""),
+            metadata={"data_tier": "public", "doc_type": "benchmark", "source_id": spec.dataset_id},
+            data_tier="public",
+            doc_type="benchmark",
+            source_id=spec.dataset_id,
         )
         for row in pq.read_table(corpus_path).to_pylist()
     ]

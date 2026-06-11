@@ -10,6 +10,12 @@ class Document:
     text: str
     title: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    data_tier: str | None = None
+    doc_type: str | None = None
+    source_id: str | None = None
+    allowed_llm: list[str] | None = None
+    allowed_embedding: list[str] | None = None
+    redaction_policy: str | None = None
 
     @property
     def display_text(self) -> str:
@@ -33,6 +39,12 @@ class RetrievalHit:
     title: str = ""
     text: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    data_tier: str | None = None
+    doc_type: str | None = None
+    source_id: str | None = None
+    allowed_llm: list[str] | None = None
+    allowed_embedding: list[str] | None = None
+    redaction_policy: str | None = None
 
 
 @dataclass

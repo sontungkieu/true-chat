@@ -334,6 +334,8 @@ uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 --bench scifact --ret
 
 The built-in UI defaults to Qwen3 32B, Vietnamese output, Dictionary mode, memory off, dictionary cross-reference on, and a 4096-token completion cap. Existing browser settings are migrated once to these defaults by the settings schema version.
 
+Runtime privacy routing is session-level. Public benchmark sources can use local or external providers, semi-private domain/dictionary context uses local providers unless `--allow-external-semi-private` is explicitly set, and private-tainted sessions require trusted local model ids from `--trusted-local-models`. The taint is monotonic per `session_id`: disabling Memory only removes prior turns from the prompt and does not clear a previous private taint. Start a new chat/session or send an explicit privacy reset to get a clean state. Private source payload text, raw DOCX text, rich blocks, and graph evidence text are redacted by default; see [`docs/privacy_runtime_policy.md`](docs/privacy_runtime_policy.md).
+
 Expose additional search strategies in the built-in UI:
 
 ```bash

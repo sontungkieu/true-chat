@@ -19,6 +19,18 @@ from rag_bench.dictionary import (
 )
 from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.prompts import SYSTEM_PROMPT
+from rag_bench.privacy import (
+    ConversationPrivacyState,
+    DataTier,
+    PrivacyDecision,
+    PrivacyRouteError,
+    data_tier_for_hit,
+    enforce_privacy_route,
+    include_private_source_text_from_env,
+    max_data_tier,
+    normalize_data_tier,
+    safe_source_payload,
+)
 from rag_bench.retriever_registry import create_retriever, get_retriever_spec, normalize_retriever_id
 from rag_bench.retrievers import Retriever
 from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
@@ -91,6 +103,9 @@ class ChatProxyConfig:
     dictionary_letters: tuple[str, ...] = DEFAULT_DICTIONARY_LETTERS
     dictionary_top_k: int = 5
     dictionary_required: bool = False
+    allow_external_semi_private: bool = False
+    trusted_local_models: tuple[str, ...] = ()
+    include_private_source_text: bool = field(default_factory=include_private_source_text_from_env)
 
 
 @dataclass(frozen=True)
@@ -126,6 +141,7 @@ class RagChatService:
     started_at_s: float = field(default_factory=time.time)
     retrievers: dict[str, Retriever] = field(default_factory=dict)
     dictionary_status: dict[str, Any] = field(default_factory=dict)
+    privacy_states: dict[str, ConversationPrivacyState] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.retrievers:
@@ -171,8 +187,18 @@ class RagChatService:
         score_min: float | None = None,
         score_max: float | None = None,
         sort_by_score: bool | None = None,
+        session_id: str | None = None,
+        privacy_state: dict[str, Any] | None = None,
+        reset_privacy: bool = False,
     ) -> ChatServiceResult:
         response_model, generation_model = self.resolve_request_model(request_model)
+        provider_name = self._provider_for_model(generation_model)
+        session_state = self._privacy_state_for_request(
+            session_id=session_id,
+            privacy_state=privacy_state,
+            reset=reset_privacy,
+        )
+        user_message_tier = _messages_data_tier(messages)
         question = last_user_text(messages)
         response_language = _normalize_response_language(language)
         score_controls = _normalize_retrieval_score_controls(score_min, score_max, sort_by_score)
@@ -188,7 +214,17 @@ class RagChatService:
             question = command[1] or question
 
         if mode == "image":
-            image_query, rewrite_metadata = self._image_query(question, generation_model, image_rewrite=image_rewrite)
+            image_query, rewrite_metadata = self._image_query(
+                question,
+                generation_model,
+                image_rewrite=self._privacy_allowed_image_rewrite(
+                    image_rewrite=image_rewrite,
+                    provider=provider_name,
+                    model=generation_model,
+                    session_state=session_state,
+                    user_message_tier=user_message_tier,
+                ),
+            )
             retriever = self.resolve_request_retriever("image-digits")
             request_image_top_k = _clamp_top_k(image_top_k if image_top_k is not None else top_k, fallback=self.config.image_top_k)
             retrieval = retriever.search(Query(query_id="chat-img", text=image_query), request_image_top_k)
@@ -197,6 +233,15 @@ class RagChatService:
                 score_controls,
                 max_hits=request_image_top_k,
             )
+            privacy_decision = self._record_no_generation_privacy(
+                session_state,
+                retrieval.hits,
+                provider=provider_name,
+                model=generation_model,
+                user_message_tier=user_message_tier,
+            )
+            if image_rewrite and not rewrite_metadata.get("image_query_rewrite"):
+                rewrite_metadata.setdefault("image_query_rewrite_privacy_blocked", True)
             generation = GenerationResult(
                 answer=_format_image_answer(image_query, retrieval.hits, language=response_language),
                 key_alias=None,
@@ -231,6 +276,8 @@ class RagChatService:
                 response_model=response_model,
                 generation_model=generation_model,
                 score_controls=score_controls,
+                privacy_decision=privacy_decision,
+                session_state=session_state,
             )
             return ChatServiceResult(
                 response=response,
@@ -260,6 +307,13 @@ class RagChatService:
                 **score_filter_metadata,
             }
             if retrieval.hits:
+                privacy_decision = self._enforce_generation_privacy(
+                    provider=provider_name,
+                    model=generation_model,
+                    session_state=session_state,
+                    hits=retrieval.hits,
+                    user_message_tier=user_message_tier,
+                )
                 prompt_messages = build_dictionary_rag_messages(
                     messages,
                     retrieval.hits,
@@ -278,6 +332,13 @@ class RagChatService:
                     raise RuntimeError(generation.error)
                 answer = _format_dictionary_answer(retrieval.hits, generation.answer)
             else:
+                privacy_decision = self._record_no_generation_privacy(
+                    session_state,
+                    retrieval.hits,
+                    provider=provider_name,
+                    model=generation_model,
+                    user_message_tier=user_message_tier,
+                )
                 generation = GenerationResult(
                     answer="",
                     key_alias=None,
@@ -301,6 +362,8 @@ class RagChatService:
                 response_model=response_model,
                 generation_model=generation_model,
                 score_controls=score_controls,
+                privacy_decision=privacy_decision,
+                session_state=session_state,
             )
             return ChatServiceResult(
                 response=response,
@@ -311,14 +374,36 @@ class RagChatService:
             )
 
         retriever = self.resolve_text_request_retriever(request_retriever)
+        retriever, retriever_privacy_metadata = self._safe_text_retriever_for_privacy(
+            retriever,
+            provider=provider_name,
+            model=generation_model,
+            session_state=session_state,
+            user_message_tier=user_message_tier,
+        )
         request_top_k = _clamp_top_k(top_k, fallback=self.config.top_k)
         if retriever.name == "keyword-match":
-            retrieval = self._keyword_search(
-                retriever,
-                question,
-                request_top_k,
-                generation_model=generation_model,
-            )
+            if self._llm_tool_blocked(
+                provider=provider_name,
+                model=generation_model,
+                session_state=session_state,
+                user_message_tier=user_message_tier,
+            ):
+                retrieval = retriever.search(Query(query_id="chat-keyword", text=question), request_top_k)
+                retrieval.metadata.update(
+                    {
+                        "keyword_llm_calls": 0,
+                        "keyword_llm_privacy_blocked": True,
+                        "keyword_query_variants": [question],
+                    }
+                )
+            else:
+                retrieval = self._keyword_search(
+                    retriever,
+                    question,
+                    request_top_k,
+                    generation_model=generation_model,
+                )
         else:
             retrieval = retriever.search(Query(query_id="chat", text=question), request_top_k)
         retrieval, score_filter_metadata = _apply_retrieval_score_controls(
@@ -346,6 +431,13 @@ class RagChatService:
             dictionary_fallback.hits if dictionary_fallback else [],
             max_hits=request_top_k,
         )
+        privacy_decision = self._enforce_generation_privacy(
+            provider=provider_name,
+            model=generation_model,
+            session_state=session_state,
+            hits=prompt_hits,
+            user_message_tier=user_message_tier,
+        )
         prompt_messages = build_chat_rag_messages(
             messages,
             prompt_hits,
@@ -363,7 +455,7 @@ class RagChatService:
             raise RuntimeError(generation.error)
 
         combined_hits = list(prompt_hits)
-        retrieval_metadata = {**retrieval.metadata, **score_filter_metadata}
+        retrieval_metadata = {**retriever_privacy_metadata, **retrieval.metadata, **score_filter_metadata}
         if dictionary_fallback is not None:
             retrieval_metadata.update(
                 {
@@ -421,6 +513,8 @@ class RagChatService:
             response_model=response_model,
             generation_model=generation_model,
             score_controls=score_controls,
+            privacy_decision=privacy_decision,
+            session_state=session_state,
         )
         return ChatServiceResult(
             response=response,
@@ -443,17 +537,25 @@ class RagChatService:
         response_model: str | None = None,
         generation_model: str | None = None,
         score_controls: RetrievalScoreControls | None = None,
+        privacy_decision: PrivacyDecision | None = None,
+        session_state: ConversationPrivacyState | None = None,
     ) -> dict[str, Any]:
         created = int(time.time())
         completion_id = f"chatcmpl-{uuid.uuid4().hex}"
         response_model = response_model or self.config.model_id
         generation_model = generation_model or self.config.model
         retriever = retriever or self.retriever
+        privacy_payload = (
+            privacy_decision.to_payload(session_state=session_state)
+            if privacy_decision is not None
+            else ({"state": session_state.to_payload()} if session_state is not None else {})
+        )
         return {
             "id": completion_id,
             "object": "chat.completion",
             "created": created,
             "model": response_model,
+            "privacy": privacy_payload,
             "choices": [
                 {
                     "index": 0,
@@ -476,7 +578,7 @@ class RagChatService:
                 "retrieval_latency_s": retrieval_latency_s,
                 "retrieval_metadata": retrieval_metadata or {},
                 "retrieved": [
-                    _hit_source_payload(hit)
+                    _hit_source_payload(hit, include_private_text=self.config.include_private_source_text)
                     for hit in _filter_retrieved_for_display(
                         hits,
                         answer,
@@ -491,6 +593,7 @@ class RagChatService:
                 "output_tokens_per_s": generation.output_tokens_per_s,
                 "rate_limited": generation.rate_limited,
                 "key_rate_limits": self.llm.rate_limit_snapshot(),
+                "privacy": privacy_payload,
             },
         }
 
@@ -559,7 +662,7 @@ class RagChatService:
 
     def available_generation_models(self) -> tuple[str, ...]:
         mimo_models = self.config.mimo_models if self.config.mimo_enabled else ()
-        return _dedupe_preserve_order((self.config.model, *self.config.available_models, *mimo_models))
+        return _dedupe_preserve_order((self.config.model, *self.config.available_models, *mimo_models, *self.config.trusted_local_models))
 
     def available_retriever_ids(self) -> tuple[str, ...]:
         return tuple(self.retrievers.keys())
@@ -596,6 +699,147 @@ class RagChatService:
             if candidate.name != "image-digits":
                 return candidate
         raise ValueError("Text mode requires a non-image retriever.")
+
+    def _privacy_state_for_request(
+        self,
+        *,
+        session_id: str | None,
+        privacy_state: dict[str, Any] | None,
+        reset: bool,
+    ) -> ConversationPrivacyState:
+        requested_session = str(session_id or (privacy_state or {}).get("session_id") or "__default__")
+        if reset:
+            state = ConversationPrivacyState(session_id=requested_session)
+            self.privacy_states[requested_session] = state
+            return state
+        if requested_session in self.privacy_states:
+            return self.privacy_states[requested_session]
+        state = ConversationPrivacyState.from_mapping(privacy_state, session_id=requested_session)
+        self.privacy_states[requested_session] = state
+        return state
+
+    def _provider_for_model(self, model: str | None) -> str:
+        model_id = str(model or "")
+        if model_id in set(self.config.trusted_local_models):
+            return "local"
+        if self.config.mimo_enabled and model_id in set(self.config.mimo_models):
+            return "mimo"
+        return "groq"
+
+    def _enforce_generation_privacy(
+        self,
+        *,
+        provider: str,
+        model: str | None,
+        session_state: ConversationPrivacyState,
+        hits: list[RetrievalHit],
+        user_message_tier: DataTier,
+    ) -> PrivacyDecision:
+        decision = enforce_privacy_route(
+            provider,
+            model,
+            session_state,
+            hits,
+            allow_external_semi_private=self.config.allow_external_semi_private,
+            trusted_local_models=set(self.config.trusted_local_models),
+            user_message_tier=user_message_tier,
+        )
+        if not decision.provider_allowed:
+            raise PrivacyRouteError(decision)
+        return decision
+
+    def _record_no_generation_privacy(
+        self,
+        session_state: ConversationPrivacyState,
+        hits: list[RetrievalHit],
+        *,
+        provider: str,
+        model: str | None,
+        user_message_tier: DataTier,
+    ) -> PrivacyDecision:
+        effective_tier = max_data_tier(session_state.max_seen_tier, user_message_tier, *(data_tier_for_hit(hit) for hit in hits))
+        session_state.update(effective_tier, external_blocked=False, reason="no_llm_generation")
+        return PrivacyDecision(
+            effective_tier=effective_tier,
+            provider_allowed=True,
+            selected_provider=None,
+            selected_model=None,
+            external_blocked=False,
+            reason="no_llm_generation",
+            redaction_required=effective_tier == DataTier.PRIVATE,
+            provider_requested=provider,
+            model_requested=model,
+        )
+
+    def _llm_tool_blocked(
+        self,
+        *,
+        provider: str,
+        model: str | None,
+        session_state: ConversationPrivacyState,
+        user_message_tier: DataTier,
+    ) -> bool:
+        decision = enforce_privacy_route(
+            provider,
+            model,
+            session_state,
+            (),
+            allow_external_semi_private=self.config.allow_external_semi_private,
+            trusted_local_models=set(self.config.trusted_local_models),
+            user_message_tier=user_message_tier,
+        )
+        return not decision.provider_allowed
+
+    def _privacy_allowed_image_rewrite(
+        self,
+        *,
+        image_rewrite: bool | None,
+        provider: str,
+        model: str | None,
+        session_state: ConversationPrivacyState,
+        user_message_tier: DataTier,
+    ) -> bool:
+        if not image_rewrite:
+            return False
+        return not self._llm_tool_blocked(
+            provider=provider,
+            model=model,
+            session_state=session_state,
+            user_message_tier=user_message_tier,
+        )
+
+    def _safe_text_retriever_for_privacy(
+        self,
+        retriever: Retriever,
+        *,
+        provider: str,
+        model: str | None,
+        session_state: ConversationPrivacyState,
+        user_message_tier: DataTier,
+    ) -> tuple[Retriever, dict[str, Any]]:
+        spec = get_retriever_spec(retriever.name)
+        if not spec.uses_llm:
+            return retriever, {}
+        decision = enforce_privacy_route(
+            provider,
+            model,
+            session_state,
+            (),
+            allow_external_semi_private=self.config.allow_external_semi_private,
+            trusted_local_models=set(self.config.trusted_local_models),
+            user_message_tier=user_message_tier,
+        )
+        if decision.provider_allowed:
+            return retriever, {}
+        fallback = self.retrievers.get("bm25")
+        if fallback is None or fallback.name == retriever.name:
+            raise PrivacyRouteError(decision)
+        return fallback, {
+            "retriever_privacy_fallback": True,
+            "requested_retriever": retriever.name,
+            "selected_retriever": fallback.name,
+            "privacy_reason": decision.reason,
+        }
 
     def _image_query(self, text: str, generation_model: str, *, image_rewrite: bool | None) -> tuple[str, dict[str, Any]]:
         query = _strip_command_prefix(text) or "digit image"
@@ -774,6 +1018,12 @@ def _merge_positive_keyword_hits(results: list[RetrievalResult], *, top_k: int) 
             title=hits_by_doc_id[doc_id].title,
             text=hits_by_doc_id[doc_id].text,
             metadata=hits_by_doc_id[doc_id].metadata,
+            data_tier=hits_by_doc_id[doc_id].data_tier,
+            doc_type=hits_by_doc_id[doc_id].doc_type,
+            source_id=hits_by_doc_id[doc_id].source_id,
+            allowed_llm=hits_by_doc_id[doc_id].allowed_llm,
+            allowed_embedding=hits_by_doc_id[doc_id].allowed_embedding,
+            redaction_policy=hits_by_doc_id[doc_id].redaction_policy,
         )
         for rank, doc_id in enumerate(ranked[:top_k], 1)
     ]
@@ -811,6 +1061,12 @@ def _merge_text_and_dictionary_hits(
             title=hit.title,
             text=hit.text,
             metadata=hit.metadata,
+            data_tier=hit.data_tier,
+            doc_type=hit.doc_type,
+            source_id=hit.source_id,
+            allowed_llm=hit.allowed_llm,
+            allowed_embedding=hit.allowed_embedding,
+            redaction_policy=hit.redaction_policy,
         )
         for rank, hit in enumerate(merged, 1)
     ]
@@ -1131,6 +1387,24 @@ def build_dictionary_rag_messages(
     ]
 
 
+def _messages_data_tier(messages: list[dict[str, Any]]) -> DataTier:
+    tiers: list[DataTier] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("data_tier") not in (None, ""):
+            tiers.append(normalize_data_tier(message.get("data_tier")))
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("data_tier") not in (None, ""):
+            tiers.append(normalize_data_tier(metadata.get("data_tier")))
+        attachments = message.get("attachments")
+        if isinstance(attachments, list):
+            for attachment in attachments:
+                if isinstance(attachment, dict) and attachment.get("data_tier") not in (None, ""):
+                    tiers.append(normalize_data_tier(attachment.get("data_tier")))
+    return max_data_tier(*tiers)
+
+
 def last_user_text(messages: list[dict[str, Any]]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
@@ -1325,16 +1599,24 @@ def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in metadata.items() if key in allowed_keys}
 
 
-def _hit_source_payload(hit: RetrievalHit) -> dict[str, Any]:
-    return {
-        "doc_id": hit.doc_id,
-        "rank": hit.rank,
-        "score": hit.score,
-        "title": hit.title,
-        "text": hit.text,
-        "metadata": hit.metadata,
-        **_flatten_hit_metadata(hit.metadata),
-    }
+def _hit_source_payload(hit: RetrievalHit, *, include_private_text: bool = False) -> dict[str, Any]:
+    tier = data_tier_for_hit(hit)
+    flattened = _flatten_hit_metadata(hit.metadata)
+    if tier == DataTier.PRIVATE:
+        flattened = {
+            key: value
+            for key, value in flattened.items()
+            if key
+            not in {
+                "raw_docx_text",
+                "rich_blocks",
+                "source",
+                "dictionary_evidence_text",
+            }
+        }
+    payload = safe_source_payload(hit, include_private_text=include_private_text, extra=flattened)
+    payload["data_tier"] = tier.value
+    return payload
 
 
 def _format_history(messages: list[dict[str, Any]], *, history_messages: int) -> str:

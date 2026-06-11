@@ -281,9 +281,11 @@ class GraphBm25Retriever:
                 title=self._documents[index].title,
                 text=self._documents[index].text,
                 metadata={
+                    **self._documents[index].metadata,
                     "bm25_score": float(bm25_scores[index]),
                     "graph_score": float(graph_scores[index]),
                 },
+                **_hit_privacy_kwargs_from_doc(self._documents[index]),
             )
             for rank, (index, score) in enumerate(ranked, 1)
         ]
@@ -582,6 +584,7 @@ class DictionaryGraphRetriever:
                     title=doc.title,
                     text=doc.text,
                     metadata=metadata,
+                    **_hit_privacy_kwargs_from_doc(doc),
                 )
             )
         return RetrievalResult(
@@ -771,6 +774,7 @@ class DictionaryGraphRetriever:
                     title=doc.title,
                     text=doc.text,
                     metadata=metadata,
+                    **_hit_privacy_kwargs_from_doc(doc),
                 )
             )
         return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
@@ -905,6 +909,8 @@ class VectorRerankRetriever:
                 rank=rank,
                 title=hit.title,
                 text=hit.text,
+                metadata=hit.metadata,
+                **_hit_privacy_kwargs_from_hit(hit),
             )
             for rank, (hit, score) in enumerate(pairs[:top_k], 1)
         ]
@@ -1093,7 +1099,13 @@ class ImageDigitsRetriever:
                         "dataset": item["dataset"],
                         "width": item["width"],
                         "height": item["height"],
+                        "data_tier": "public",
+                        "doc_type": "image",
+                        "source_id": "sklearn-digits",
                     },
+                    data_tier="public",
+                    doc_type="image",
+                    source_id="sklearn-digits",
                 )
             )
         return RetrievalResult(
@@ -1152,7 +1164,38 @@ def _rank_scores(scores: np.ndarray, top_k: int) -> list[int]:
 
 
 def _hit_from_doc(doc: Document, score: float, rank: int) -> RetrievalHit:
-    return RetrievalHit(doc_id=doc.doc_id, score=score, rank=rank, title=doc.title, text=doc.text, metadata=dict(doc.metadata))
+    return RetrievalHit(
+        doc_id=doc.doc_id,
+        score=score,
+        rank=rank,
+        title=doc.title,
+        text=doc.text,
+        metadata=dict(doc.metadata),
+        **_hit_privacy_kwargs_from_doc(doc),
+    )
+
+
+def _hit_privacy_kwargs_from_doc(doc: Document) -> dict[str, Any]:
+    return {
+        "data_tier": doc.data_tier or doc.metadata.get("data_tier"),
+        "doc_type": doc.doc_type or doc.metadata.get("doc_type") or doc.metadata.get("kind"),
+        "source_id": doc.source_id or doc.metadata.get("source_id") or doc.metadata.get("source_set"),
+        "allowed_llm": doc.allowed_llm or doc.metadata.get("allowed_llm"),
+        "allowed_embedding": doc.allowed_embedding or doc.metadata.get("allowed_embedding"),
+        "redaction_policy": doc.redaction_policy or doc.metadata.get("redaction_policy"),
+    }
+
+
+def _hit_privacy_kwargs_from_hit(hit: RetrievalHit) -> dict[str, Any]:
+    metadata = hit.metadata or {}
+    return {
+        "data_tier": hit.data_tier or metadata.get("data_tier"),
+        "doc_type": hit.doc_type or metadata.get("doc_type") or metadata.get("kind"),
+        "source_id": hit.source_id or metadata.get("source_id") or metadata.get("source_set"),
+        "allowed_llm": hit.allowed_llm or metadata.get("allowed_llm"),
+        "allowed_embedding": hit.allowed_embedding or metadata.get("allowed_embedding"),
+        "redaction_policy": hit.redaction_policy or metadata.get("redaction_policy"),
+    }
 
 
 def _candidate_k(top_k: int, min_candidates: int, candidate_multiplier: int) -> int:
@@ -1179,6 +1222,7 @@ def _rrf_merge(results: list[RetrievalResult], *, top_k: int, rrf_k: int) -> lis
                 title=hits_by_doc_id[doc_id].title,
                 text=hits_by_doc_id[doc_id].text,
                 metadata=hits_by_doc_id[doc_id].metadata,
+                **_hit_privacy_kwargs_from_hit(hits_by_doc_id[doc_id]),
             )
         for rank, doc_id in enumerate(ranked[:top_k], 1)
     ]
@@ -1243,6 +1287,7 @@ def _dictionary_merge(
             title=hits_by_doc_id[doc_id].title,
             text=hits_by_doc_id[doc_id].text,
             metadata={**hits_by_doc_id[doc_id].metadata, "dictionary_match_mode": hits_by_doc_id[doc_id].metadata.get("dictionary_match_mode") or "lexical"},
+            **_hit_privacy_kwargs_from_hit(hits_by_doc_id[doc_id]),
         )
         for rank, doc_id in enumerate(ranked[:top_k], 1)
     ]

@@ -591,7 +591,12 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     dictionary_retriever = FakeDictionaryRetriever()
     llm = FakeLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
         benchmark=BenchmarkData(
             name="fixture",
             dataset_id="fixture/test",
@@ -669,7 +674,12 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
     dictionary_retriever = DictionaryFallbackRetriever()
     llm = FakeLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
         benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
         retriever=text_retriever,
         llm=llm,
@@ -733,7 +743,12 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
     dictionary_retriever = DictionaryFallbackRetriever()
     llm = FakeLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=6, dictionary_top_k=5, model_id="rag-test"),
+        config=ChatProxyConfig(
+            top_k=6,
+            dictionary_top_k=5,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
         benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
         retriever=text_retriever,
         llm=llm,

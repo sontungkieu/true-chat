@@ -35,6 +35,9 @@ class FakeService:
         self.seen_score_min = None
         self.seen_score_max = None
         self.seen_sort_by_score = None
+        self.seen_session_id = None
+        self.seen_privacy_state = None
+        self.seen_reset_privacy = None
 
     def answer(
         self,
@@ -53,6 +56,9 @@ class FakeService:
         score_min=None,
         score_max=None,
         sort_by_score=None,
+        session_id=None,
+        privacy_state=None,
+        reset_privacy=False,
     ):
         self.seen_messages = messages
         self.seen_model = request_model
@@ -68,6 +74,9 @@ class FakeService:
         self.seen_score_min = score_min
         self.seen_score_max = score_max
         self.seen_sort_by_score = sort_by_score
+        self.seen_session_id = session_id
+        self.seen_privacy_state = privacy_state
+        self.seen_reset_privacy = reset_privacy
         response = {
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -91,6 +100,12 @@ class FakeService:
                 "retrieved": [{"doc_id": "doc-1", "rank": 1, "text": "Document text"}],
                 "rejected_aliases": ["bad-key"],
                 "output_tokens_per_s": 200.0,
+                "privacy": {
+                    "state": {
+                        "session_id": session_id or "__default__",
+                        "session_taint": "public",
+                    }
+                },
             },
         }
         return ChatServiceResult(
@@ -405,6 +420,8 @@ def test_chat_completion_non_stream() -> None:
             "score_min": 0.25,
             "score_max": 2.5,
             "sort_by_score": True,
+            "session_id": "chat-fixture",
+            "privacy_state": {"session_id": "chat-fixture", "session_taint": "public"},
         },
     )
 
@@ -427,6 +444,9 @@ def test_chat_completion_non_stream() -> None:
     assert service.seen_score_min == 0.25
     assert service.seen_score_max == 2.5
     assert service.seen_sort_by_score is True
+    assert service.seen_session_id == "chat-fixture"
+    assert service.seen_privacy_state == {"session_id": "chat-fixture", "session_taint": "public"}
+    assert service.seen_reset_privacy is False
 
 
 def test_chat_completion_accepts_qwen_model_choice() -> None:

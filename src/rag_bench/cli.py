@@ -178,6 +178,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--dictionary-letters", default="A,B,C,D", help="Comma-separated fallback DOCX letters.")
     serve_parser.add_argument("--dictionary-top-k", type=int, default=5, help="Default number of dictionary entries.")
     serve_parser.add_argument("--dictionary-required", action="store_true", help="Fail startup if dictionary data is unavailable.")
+    serve_parser.add_argument(
+        "--allow-external-semi-private",
+        action="store_true",
+        help="Allow semi-private RAG context to be sent to external providers. Private context is still local-only.",
+    )
+    serve_parser.add_argument(
+        "--trusted-local-models",
+        default="",
+        help="Comma-separated local model ids allowed for private-tainted sessions.",
+    )
     serve_parser.add_argument("--allow-large-bench", action="store_true", help="Allow large benchmarks such as HotpotQA.")
     serve_parser.add_argument("--history-messages", type=int, default=6)
     serve_parser.add_argument(
@@ -332,6 +342,7 @@ def _serve(args: argparse.Namespace) -> int:
     if not dictionary_letters:
         print("--dictionary-letters must include at least one value.", file=sys.stderr)
         return 2
+    trusted_local_models = tuple(item.strip() for item in args.trusted_local_models.split(",") if item.strip())
     if args.history_messages < 0:
         print("--history-messages must be non-negative.", file=sys.stderr)
         return 2
@@ -395,6 +406,8 @@ def _serve(args: argparse.Namespace) -> int:
         dictionary_letters=dictionary_letters,
         dictionary_top_k=args.dictionary_top_k,
         dictionary_required=args.dictionary_required,
+        allow_external_semi_private=args.allow_external_semi_private,
+        trusted_local_models=trusted_local_models,
         allow_large_bench=args.allow_large_bench,
         available_retrievers=available_retrievers or DEFAULT_CHAT_RETRIEVERS,
         key_tokens_per_minute=args.key_tpm,
