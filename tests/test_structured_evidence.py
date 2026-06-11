@@ -178,6 +178,62 @@ def test_structured_evidence_search_returns_intent_and_term_matches_with_privacy
     assert result.hits[0].metadata["query_plan_role"] == "procedure_evidence"
 
 
+def test_structured_evidence_search_rejects_unrelated_procedure_intent_match() -> None:
+    doc = StructuredEvidenceDoc.from_mapping(
+        {
+            "doc_id": "PROC_B",
+            "doc_type": "procedure",
+            "data_tier": "public",
+            "linked_terms": ["TERM_B"],
+            "steps": ["STEP_B1"],
+        }
+    )
+    index = StructuredEvidenceIndex([doc])
+
+    result = index.search("quy trình xử lý TERM_A là gì", intent="procedure", terms=["TERM_A"], top_k=5)
+
+    assert result.matched_doc_count == 0
+    assert result.matched_doc_types == ()
+    assert result.hits == []
+
+
+def test_structured_evidence_search_uses_lexical_title_when_linked_terms_missing() -> None:
+    doc = StructuredEvidenceDoc.from_mapping(
+        {
+            "doc_id": "PROC_LEX",
+            "doc_type": "procedure",
+            "data_tier": "public",
+            "title": "Procedure for TERM_A",
+            "steps": ["STEP_A1"],
+        }
+    )
+    index = StructuredEvidenceIndex([doc])
+
+    result = index.search("quy trình TERM_A", intent="procedure", terms=["TERM_A"], top_k=5)
+
+    assert result.matched_doc_count == 1
+    assert result.hits[0].doc_id == "PROC_LEX"
+    assert result.hits[0].metadata["doc_type"] == "procedure"
+
+
+def test_structured_evidence_search_doc_type_alone_is_insufficient() -> None:
+    doc = StructuredEvidenceDoc.from_mapping(
+        {
+            "doc_id": "PROC_RANDOM",
+            "doc_type": "procedure",
+            "data_tier": "public",
+            "title": "Unrelated title",
+            "steps": ["STEP_X"],
+        }
+    )
+    index = StructuredEvidenceIndex([doc])
+
+    result = index.search("quy trình TERM_A", intent="procedure", terms=["TERM_A"], top_k=5)
+
+    assert result.matched_doc_count == 0
+    assert result.hits == []
+
+
 def test_untyped_structured_evidence_is_private_risk_and_redacted() -> None:
     doc = StructuredEvidenceDoc.from_mapping(
         {

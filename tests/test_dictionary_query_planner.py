@@ -81,6 +81,37 @@ def test_procedure_plan_clears_schema_gap_when_structured_evidence_exists() -> N
     assert "Present steps only if they are supported" in instructions
 
 
+def test_procedure_gap_remains_when_structured_evidence_has_no_relevant_hit() -> None:
+    plan = plan_dictionary_query("quy trình xử lý TERM_A là gì")
+    plan = plan.with_structured_evidence({"enabled": True, "matched_doc_types": [], "matched_doc_count": 0})
+    instructions = dictionary_plan_prompt_instructions(plan)
+
+    assert plan.intent == DictionaryQueryIntent.PROCEDURE
+    assert "procedure_schema_not_implemented" in plan.schema_gaps
+    assert "Do not invent steps" in instructions
+    assert "procedural/rule/case evidence is not present" in instructions
+
+
+def test_rule_gap_remains_when_structured_evidence_has_no_relevant_hit() -> None:
+    plan = plan_dictionary_query("trường hợp này áp dụng TERM_A không")
+    plan = plan.with_structured_evidence({"enabled": True, "matched_doc_types": [], "matched_doc_count": 0})
+    instructions = dictionary_plan_prompt_instructions(plan)
+
+    assert plan.intent == DictionaryQueryIntent.RULE_APPLICATION
+    assert "rule_schema_not_implemented" in plan.schema_gaps
+    assert "Do not invent steps, rules, exceptions, or cases." in instructions
+
+
+def test_case_gap_remains_when_structured_evidence_has_no_relevant_hit() -> None:
+    plan = plan_dictionary_query("case tương tự cho TERM_A là gì")
+    plan = plan.with_structured_evidence({"enabled": True, "matched_doc_types": [], "matched_doc_count": 0})
+    instructions = dictionary_plan_prompt_instructions(plan)
+
+    assert plan.intent == DictionaryQueryIntent.CASE_BASED
+    assert "case_schema_not_implemented" in plan.schema_gaps
+    assert "Do not fabricate rules, procedures, exceptions, or cases" in instructions
+
+
 def test_case_plan_uses_case_evidence_as_example_not_universal_rule() -> None:
     plan = plan_dictionary_query("case này của TERM_A")
     plan = plan.with_structured_evidence({"enabled": True, "matched_doc_types": ["case"], "matched_doc_count": 1})

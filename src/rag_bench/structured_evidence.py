@@ -179,29 +179,52 @@ class StructuredEvidenceIndex:
         started = time.perf_counter()
         desired_types = _doc_types_for_intent(intent)
         term_keys = {_key(term) for term in terms if _key(term)}
-        query_keys = set(_tokens(query))
+        query_keys = set(_content_tokens(query))
+        query_candidate_keys = term_keys | query_keys
+        query_norm = _key(query)
         scored: list[tuple[float, StructuredEvidenceDoc, str]] = []
         for doc in self.docs:
-            score = 0.0
             role = f"{doc.doc_type.value}_evidence"
+            doc_term_keys = {_key(term) for term in doc.linked_terms}
+            exact_term_matches = term_keys & doc_term_keys
+            doc_entry_keys = {_key(entry_id) for entry_id in doc.source_entry_ids}
+            source_entry_matches = query_candidate_keys & doc_entry_keys
+            doc_id_key = _key(doc.doc_id)
+            source_id_key = _key(doc.source_id or "")
+            id_candidates = {key for key in (doc_id_key, source_id_key) if key}
+            safe_text = _safe_lexical_text(doc)
+            title_overlap = query_keys & set(_content_tokens(doc.title or doc.doc_id))
+            field_overlap = query_keys & set(_content_tokens(safe_text))
+            has_term_match = bool(exact_term_matches)
+            has_source_entry_match = bool(source_entry_matches)
+            has_id_match = bool(id_candidates and (query_norm in id_candidates or term_keys & id_candidates))
+            has_title_lexical_match = bool(title_overlap)
+            has_field_lexical_match = len(field_overlap) >= 2 or bool(term_keys and _terms_in_text(term_keys, safe_text))
+            if not (
+                has_term_match
+                or has_source_entry_match
+                or has_id_match
+                or has_title_lexical_match
+                or has_field_lexical_match
+            ):
+                continue
+
+            score = 0.0
+            if has_term_match:
+                score += 3.0 + min(len(exact_term_matches), 3) * 0.4
+            if has_source_entry_match:
+                score += 2.2 + min(len(source_entry_matches), 3) * 0.3
+            if has_id_match:
+                score += 1.8
+            if has_title_lexical_match:
+                score += 1.0 + min(len(title_overlap), 4) * 0.15
+            if has_field_lexical_match:
+                score += 0.7 + min(len(field_overlap), 6) * 0.08
             if desired_types and doc.doc_type in desired_types:
                 score += 2.0
             elif desired_types:
                 score -= 0.4
-            doc_term_keys = {_key(term) for term in doc.linked_terms}
-            exact_term_matches = term_keys & doc_term_keys
-            if exact_term_matches:
-                score += 3.0 + min(len(exact_term_matches), 3) * 0.4
-            elif term_keys and any(term in _key(doc.display_text()) for term in term_keys):
-                score += 1.0
-            doc_tokens = set(_tokens(doc.display_text()))
-            overlap = query_keys & doc_tokens
-            if overlap:
-                score += min(len(overlap), 8) * 0.08
-            if doc.source_entry_ids and term_keys & {_key(entry_id) for entry_id in doc.source_entry_ids}:
-                score += 0.8
-            if score > 0:
-                scored.append((score, doc, role))
+            scored.append((score, doc, role))
         scored.sort(key=lambda item: (-item[0], item[1].doc_type.value, item[1].doc_id))
         hits = [doc.to_hit(score=score, rank=rank, role=role) for rank, (score, doc, role) in enumerate(scored[:top_k], 1)]
         matched_doc_types = tuple(sorted({hit.metadata["structured_doc_type"] for hit in hits}))
@@ -387,6 +410,99 @@ def _key(value: str) -> str:
 
 def _tokens(value: str) -> list[str]:
     return re.findall(r"\w+", _key(value), flags=re.UNICODE)
+
+
+_LEXICAL_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "ap",
+    "are",
+    "as",
+    "case",
+    "cases",
+    "cach",
+    "cac",
+    "cho",
+    "conditions",
+    "co",
+    "cua",
+    "do",
+    "does",
+    "evidence",
+    "exception",
+    "exceptions",
+    "for",
+    "gi",
+    "how",
+    "is",
+    "la",
+    "nay",
+    "of",
+    "outcome",
+    "procedure",
+    "procedures",
+    "quy",
+    "reasoning",
+    "rule",
+    "rules",
+    "situation",
+    "step",
+    "steps",
+    "the",
+    "this",
+    "to",
+    "trinh",
+    "truong",
+    "tuong",
+    "unrelated",
+    "what",
+    "xu",
+}
+
+
+def _content_tokens(value: str) -> list[str]:
+    return [token for token in _tokens(value) if token not in _LEXICAL_STOPWORDS and len(token) > 1]
+
+
+def _safe_lexical_text(doc: StructuredEvidenceDoc) -> str:
+    values: list[str] = [
+        doc.title or "",
+        doc.source_id or "",
+        *doc.linked_terms,
+        *doc.source_entry_ids,
+        *doc.conditions,
+        *doc.exceptions,
+        *doc.steps,
+        doc.situation or "",
+        doc.outcome or "",
+        *doc.reasoning_steps,
+        *doc.evidence_spans,
+    ]
+    for key, value in doc.metadata.items():
+        if key in {
+            "structured_evidence",
+            "doc_type",
+            "structured_doc_type",
+            "data_tier",
+            "source_path",
+            "raw_docx_text",
+            "raw_text",
+            "text",
+        }:
+            continue
+        if isinstance(value, str):
+            values.append(value)
+        elif isinstance(value, (int, float, bool)):
+            values.append(str(value))
+        elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+            values.extend(str(item) for item in value if isinstance(item, (str, int, float, bool)))
+    return " ".join(value for value in values if value)
+
+
+def _terms_in_text(term_keys: set[str], text: str) -> bool:
+    text_key = _key(text)
+    return any(term and term in text_key for term in term_keys)
 
 
 def _markdown_doc_id(doc_type: str, title: str, index: int) -> str:

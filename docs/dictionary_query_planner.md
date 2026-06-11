@@ -72,7 +72,7 @@ The model is still instructed to answer only from retrieved evidence and cite di
 
 ## Schema Gaps
 
-Procedure, rule-application, exception, and case-based questions are recognized. When structured evidence sidecars are configured, these gaps are evidence-aware: matching procedure/rule/exception/case evidence clears the corresponding gap and changes the answer style to a grounded structured-evidence mode. Without matching structured evidence, the plan keeps schema-gap markers such as:
+Procedure, rule-application, exception, and case-based questions are recognized. When structured evidence sidecars are configured, these gaps are evidence-aware: relevant returned procedure/rule/exception/case evidence clears the corresponding gap and changes the answer style to a grounded structured-evidence mode. A matching sidecar `doc_type` is only a retrieval boost, not sufficient relevance by itself. Without relevant structured evidence, the plan keeps schema-gap markers such as:
 
 ```text
 procedure_schema_not_implemented

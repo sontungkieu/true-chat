@@ -140,7 +140,10 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             schema_gaps=["rule_schema_not_implemented"],
             notes=["Rule application needs explicit rule evidence."],
         )
-    if _has_any(normalized, ("case nay", "tinh huong nay", "truong hop nay", "scenario", "this case")):
+    if _has_any(
+        normalized,
+        ("case nay", "case tuong tu", "similar case", "tinh huong nay", "truong hop nay", "scenario", "this case"),
+    ):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.CASE_BASED,

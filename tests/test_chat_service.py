@@ -861,6 +861,156 @@ def test_dictionary_mode_uses_rule_evidence_with_safe_counts() -> None:
     assert structured_sources[0]["metadata"]["exception_count"] == 1
 
 
+def test_unrelated_structured_procedure_does_not_clear_gap_or_enter_prompt() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "PROC_B",
+                    "doc_type": "procedure",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_B"],
+                    "steps": ["STEP_B1"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict quy trình xử lý TERM_A là gì"}])
+
+    assert "procedure_schema_not_implemented" in result.response["query_plan"]["schema_gaps"]
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 0
+    assert result.response["rag"]["retrieval_metadata"]["structured_evidence"]["matched_doc_count"] == 0
+    assert "Do not invent steps" in llm.messages[1]["content"]
+    assert "STEP_B1" not in llm.messages[1]["content"]
+
+
+def test_unrelated_structured_rule_does_not_clear_gap_or_expose_conditions() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "RULE_B",
+                    "doc_type": "rule",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_B"],
+                    "conditions": ["COND_B"],
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict trường hợp này áp dụng TERM_A không"}])
+
+    assert "rule_schema_not_implemented" in result.response["query_plan"]["schema_gaps"]
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 0
+    assert "Do not invent steps, rules, exceptions, or cases." in llm.messages[1]["content"]
+    assert "COND_B" not in llm.messages[1]["content"]
+
+
+def test_unrelated_structured_case_does_not_clear_gap_or_enter_prompt() -> None:
+    class PublicDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            result = super().search(query, top_k)
+            hit = result.hits[0]
+            result.hits[0] = RetrievalHit(
+                doc_id=hit.doc_id,
+                score=hit.score,
+                rank=hit.rank,
+                title=hit.title,
+                text=hit.text,
+                metadata={**hit.metadata, "data_tier": "public"},
+                data_tier="public",
+                doc_type="dictionary",
+            )
+            return result
+
+    structured_index = StructuredEvidenceIndex(
+        [
+            StructuredEvidenceDoc.from_mapping(
+                {
+                    "doc_id": "CASE_B",
+                    "doc_type": "case",
+                    "data_tier": "public",
+                    "linked_terms": ["TERM_B"],
+                    "situation": "SITUATION_B",
+                    "outcome": "OUTCOME_B",
+                }
+            )
+        ]
+    )
+    llm = CountingLLM()
+    retriever = PublicDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+        structured_evidence_index=structured_index,
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict case tương tự cho TERM_A là gì"}])
+
+    assert result.response["query_plan"]["intent"] == "case_based"
+    assert "case_schema_not_implemented" in result.response["query_plan"]["schema_gaps"]
+    assert result.response["query_plan"]["structured_evidence"]["matched_doc_count"] == 0
+    assert "SITUATION_B" not in llm.messages[1]["content"]
+    assert "OUTCOME_B" not in llm.messages[1]["content"]
+
+
 def test_private_structured_evidence_blocks_external_generation() -> None:
     class PublicDictionaryRetriever(FakeDictionaryRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:

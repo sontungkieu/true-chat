@@ -86,10 +86,13 @@ These edges are runtime/artifact-side metadata and do not require rewriting the 
 
 `StructuredEvidenceIndex.search(...)` ranks docs by:
 
-- doc type needed by query intent;
 - exact linked-term matches;
 - source entry id matches;
-- lexical overlap over title and safe structured fields.
+- exact/normalized doc id or source id matches;
+- lexical overlap over title and safe structured fields;
+- doc type needed by query intent as a boost only after one of the relevance signals above exists.
+
+A matching `doc_type` alone is not sufficient to return a hit. For example, a `procedure` sidecar linked only to `TERM_B` must not be returned for a `TERM_A` procedure query simply because the query intent is procedural.
 
 It returns normal `RetrievalHit` objects with preserved `data_tier`, `doc_type`, `source_id`, and safe metadata such as:
 
@@ -118,7 +121,7 @@ user query
 -> answer with citations
 ```
 
-If procedure/rule/exception/case evidence is found, the planner clears the matching schema gap and uses an evidence-aware answer style. If evidence is missing, the gap remains explicit and the prompt tells the model not to invent unsupported steps, rules, exceptions, or cases.
+If relevant procedure/rule/exception/case evidence is found, the planner clears the matching schema gap and uses an evidence-aware answer style. If no relevant structured evidence is returned, the gap remains explicit and the prompt tells the model not to invent unsupported steps, rules, exceptions, or cases.
 
 ## Runtime Configuration
 
