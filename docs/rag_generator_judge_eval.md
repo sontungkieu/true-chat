@@ -108,7 +108,11 @@ Outputs default under `eval_results/rag_eval/<timestamp>/`, which is ignored by 
 - `summary.md`: aggregate counts and heuristic pass/fail table.
 - `failures.jsonl`: rows with failed required heuristics or failing judge verdicts.
 
-Private query and answer text are redacted in output by default. Use `--include-private-outputs` only for local/private debugging where the output directory is protected.
+Private query and answer text are redacted in output by default. This remains true even though `eval_results/` is ignored by git, because ignored local files can still be copied, synced, or inspected accidentally.
+
+For private eval items, persisted output keeps safe metadata such as eval ids, doc ids, data tiers, query-plan intent, schema-gap names, heuristic booleans, numeric judge scores, and judge verdicts. It redacts private free-form text by default, including judge errors, provider exception messages, raw query/answer text, and judge `issues` strings. Private external judges are blocked before judge prompts are built, so private query/evidence/answer text is not serialized for a blocked SaaS judge.
+
+Use `--include-private-eval-text` only for protected local/private debugging where the output directory is controlled. This flag may write private query, answer, evidence, judge error, and judge issue text to disk.
 
 ## Limitations
 

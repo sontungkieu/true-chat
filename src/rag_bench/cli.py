@@ -170,7 +170,18 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--disable-llm-judge", dest="disable_llm_judge", action="store_true", default=True)
     eval_parser.add_argument("--enable-llm-judge", dest="disable_llm_judge", action="store_false")
     eval_parser.add_argument("--judge-max-completion-tokens", type=int, default=2048)
-    eval_parser.add_argument("--include-private-outputs", action="store_true", help="Write private query/answer text to result JSONL. Off by default.")
+    eval_parser.add_argument(
+        "--include-private-eval-text",
+        dest="include_private_outputs",
+        action="store_true",
+        help="Dangerous: write private query/answer/judge text to eval outputs for protected local debugging only.",
+    )
+    eval_parser.add_argument(
+        "--include-private-outputs",
+        dest="include_private_outputs",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
 
     serve_parser = subparsers.add_parser("serve", help="Serve an OpenAI-compatible RAG chat proxy.")
     serve_parser.add_argument("--host", default="127.0.0.1")

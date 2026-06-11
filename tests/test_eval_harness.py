@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rag_bench import eval_harness as eval_harness_module
 from rag_bench.chat_service import ChatProxyConfig, RagChatService
 from rag_bench.eval_harness import (
     RagEvalConfig,
@@ -38,6 +39,49 @@ class FakeJudge:
                     "overall": 1.0,
                     "issues": [],
                     "verdict": "pass",
+                }
+            ),
+            key_alias="judge",
+            attempted_aliases=["judge"],
+            latency_s=0.01,
+            retry_count=0,
+        )
+
+
+@dataclass
+class ErrorJudge:
+    message: str
+    calls: int = 0
+    messages: list[list[dict[str, str]]] = field(default_factory=list)
+
+    def generate(self, messages, *, model=None, temperature=0.0, max_completion_tokens=512):
+        self.calls += 1
+        self.messages.append(messages)
+        raise RuntimeError(self.message)
+
+
+@dataclass
+class IssueJudge:
+    issue: str
+    verdict: str = "partial"
+    calls: int = 0
+    messages: list[list[dict[str, str]]] = field(default_factory=list)
+
+    def generate(self, messages, *, model=None, temperature=0.0, max_completion_tokens=512):
+        self.calls += 1
+        self.messages.append(messages)
+        return GenerationResult(
+            answer=json.dumps(
+                {
+                    "answer_correctness": 0.5,
+                    "groundedness": 0.5,
+                    "citation_support": 0.5,
+                    "missing_evidence_behavior": 0.5,
+                    "planner_success": 0.5,
+                    "privacy_safety": 1.0,
+                    "overall": 0.5,
+                    "issues": [self.issue],
+                    "verdict": self.verdict,
                 }
             ),
             key_alias="judge",
@@ -106,6 +150,64 @@ class FakeEvalService:
         )
 
 
+class MarkerEvalService:
+    def __init__(
+        self,
+        *,
+        tier: str = "private",
+        answer_marker: str = "PRIVATE_ANSWER_MARKER",
+        evidence_marker: str = "PRIVATE_EVIDENCE_MARKER",
+    ) -> None:
+        self.tier = tier
+        self.answer_marker = answer_marker
+        self.evidence_marker = evidence_marker
+
+    def answer(self, messages, **kwargs):
+        from rag_bench.chat_service import ChatServiceResult
+
+        hit = RetrievalHit(
+            doc_id="PROC_PRIVATE" if self.tier == "private" else "PROC_PUBLIC",
+            score=1.0,
+            rank=1,
+            title="Synthetic marker procedure",
+            text=self.evidence_marker,
+            metadata={"data_tier": self.tier, "structured_evidence": True, "structured_doc_type": "procedure"},
+            data_tier=self.tier,
+            doc_type="procedure",
+        )
+        query_plan = {
+            "intent": "procedure",
+            "schema_gaps": [],
+            "target_terms": ["PRIVATE_QUERY_MARKER"],
+            "structured_evidence": {"matched_doc_types": ["procedure"], "matched_doc_count": 1},
+        }
+        response = {
+            "choices": [{"message": {"content": f"{self.answer_marker} [{hit.doc_id}]"}}],
+            "query_plan": query_plan,
+            "rag": {"retrieved": [{"doc_id": hit.doc_id, "metadata": hit.metadata}], "retrieval_metadata": {"query_plan": query_plan}},
+            "privacy": {
+                "session_taint": self.tier,
+                "turn_tier": self.tier,
+                "external_blocked": False,
+                "provider_allowed": True,
+                "reason": "private_uses_trusted_private_backend" if self.tier == "private" else "public_allows_requested_provider",
+            },
+        }
+        return ChatServiceResult(
+            response=response,
+            generation=GenerationResult(
+                answer=f"{self.answer_marker} [{hit.doc_id}]",
+                key_alias="generator",
+                attempted_aliases=["generator"],
+                latency_s=0.01,
+                retry_count=0,
+            ),
+            hits=[hit],
+            retrieval_latency_s=0.01,
+            retrieval_metadata={"query_plan": query_plan},
+        )
+
+
 def _write_eval_set(path: Path, rows: list[dict]) -> Path:
     path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
     return path
@@ -123,6 +225,21 @@ def _config(tmp_path: Path, eval_set: Path, **overrides) -> RagEvalConfig:
     }
     values.update(overrides)
     return RagEvalConfig(**values)
+
+
+def _trusted_private_config(tmp_path: Path, eval_set: Path, **overrides) -> RagEvalConfig:
+    return _config(
+        tmp_path,
+        eval_set,
+        judge_provider="local",
+        judge_model="trusted-judge",
+        judge_backend_id="private_judge",
+        judge_backend_kind="self_hosted_private",
+        judge_trusted_private_backends=("private_judge",),
+        judge_trusted_private_models=("trusted-judge",),
+        disable_llm_judge=False,
+        **overrides,
+    )
 
 
 def test_rag_eval_item_jsonl_loading(tmp_path: Path) -> None:
@@ -296,6 +413,150 @@ def test_private_trusted_judge_allowed(tmp_path: Path) -> None:
 
     assert judge.calls == 1
     assert result.judge_skipped is False
+
+
+def test_private_trusted_judge_error_is_redacted_in_persisted_outputs(tmp_path: Path) -> None:
+    marker = "SECRET_PRIVATE_MARKER"
+    eval_set = _write_eval_set(
+        tmp_path / "eval.jsonl",
+        [{"eval_id": "private", "query": "PRIVATE_QUERY_MARKER", "data_tier": "private"}],
+    )
+    judge = ErrorJudge(f"judge failed while reading {marker}")
+
+    summary = run_rag_eval(
+        _trusted_private_config(tmp_path, eval_set),
+        service=MarkerEvalService(),
+        judge_client=judge,
+    )
+
+    assert judge.calls == 1
+    for key in ("results_path", "failures_path", "summary_path"):
+        text = Path(summary[key]).read_text(encoding="utf-8")
+        assert marker not in text
+        assert "PRIVATE_QUERY_MARKER" not in text
+        assert "PRIVATE_ANSWER_MARKER" not in text
+        assert "PRIVATE_EVIDENCE_MARKER" not in text
+    result = json.loads(Path(summary["results_path"]).read_text(encoding="utf-8").splitlines()[0])
+    failure = json.loads(Path(summary["failures_path"]).read_text(encoding="utf-8").splitlines()[0])
+    assert result["judge_error"] == "redacted_private_judge_error"
+    assert result["judge_error_redacted"] is True
+    assert failure["judge_error"] == "redacted_private_judge_error"
+
+
+def test_private_judge_free_form_issues_are_redacted_in_persisted_outputs(tmp_path: Path) -> None:
+    marker = "SECRET_PRIVATE_MARKER"
+    eval_set = _write_eval_set(
+        tmp_path / "eval.jsonl",
+        [{"eval_id": "private", "query": "PRIVATE_QUERY_MARKER", "data_tier": "private"}],
+    )
+
+    summary = run_rag_eval(
+        _trusted_private_config(tmp_path, eval_set),
+        service=MarkerEvalService(),
+        judge_client=IssueJudge(f"{marker} appears here"),
+    )
+
+    text = Path(summary["results_path"]).read_text(encoding="utf-8")
+    assert marker not in text
+    assert "PRIVATE_QUERY_MARKER" not in text
+    assert "PRIVATE_ANSWER_MARKER" not in text
+    assert "PRIVATE_EVIDENCE_MARKER" not in text
+    result = json.loads(text.splitlines()[0])
+    assert result["judge_scores"]["overall"] == 0.5
+    assert result["judge_scores"]["verdict"] == "partial"
+    assert result["judge_scores"]["issues"] == ["redacted_private_judge_issues"]
+    assert result["query_plan"]["intent"] == "procedure"
+    assert result["query_plan"]["schema_gaps"] == []
+
+
+def test_private_external_judge_is_blocked_before_prompt_construction(monkeypatch, tmp_path: Path) -> None:
+    eval_set = _write_eval_set(
+        tmp_path / "eval.jsonl",
+        [{"eval_id": "private", "query": "PRIVATE_QUERY_MARKER", "data_tier": "private"}],
+    )
+    judge = FakeJudge()
+    built_prompts = {"count": 0}
+
+    def fail_if_prompt_built(*args, **kwargs):
+        built_prompts["count"] += 1
+        raise AssertionError("judge prompt should not be built for blocked private external judge")
+
+    monkeypatch.setattr(eval_harness_module, "build_judge_messages", fail_if_prompt_built)
+
+    result = evaluate_rag_item(
+        load_rag_eval_items(eval_set)[0],
+        _config(
+            tmp_path,
+            eval_set,
+            judge_provider="mimo",
+            judge_model="mimo-v2.5",
+            judge_backend_kind="external_saas",
+            allow_external_judge_public=True,
+            allow_external_judge_semi_private=True,
+            disable_llm_judge=False,
+        ),
+        service=MarkerEvalService(),
+        judge_client=judge,
+    )
+
+    assert built_prompts["count"] == 0
+    assert judge.calls == 0
+    assert result.judge_skipped is True
+    assert result.judge_skip_reason == "private_taint_blocks_external_saas_backend"
+
+
+def test_public_judge_free_form_issues_remain_unredacted(tmp_path: Path) -> None:
+    marker = "PUBLIC_MARKER"
+    eval_set = _write_eval_set(
+        tmp_path / "eval.jsonl",
+        [{"eval_id": "public", "query": "PUBLIC_QUERY", "data_tier": "public"}],
+    )
+
+    summary = run_rag_eval(
+        _config(
+            tmp_path,
+            eval_set,
+            judge_provider="mimo",
+            judge_model="mimo-v2.5",
+            judge_backend_kind="external_saas",
+            allow_external_judge_public=True,
+            disable_llm_judge=False,
+        ),
+        service=MarkerEvalService(tier="public", answer_marker="PUBLIC_ANSWER", evidence_marker="PUBLIC_EVIDENCE"),
+        judge_client=IssueJudge(marker),
+    )
+
+    text = Path(summary["results_path"]).read_text(encoding="utf-8")
+    assert marker in text
+    assert "PUBLIC_ANSWER" in text
+    result = json.loads(text.splitlines()[0])
+    assert result["judge_scores"]["issues"] == [marker]
+
+
+def test_include_private_outputs_override_preserves_synthetic_private_markers(tmp_path: Path) -> None:
+    marker = "SECRET_PRIVATE_MARKER"
+    eval_set = _write_eval_set(
+        tmp_path / "eval.jsonl",
+        [{"eval_id": "private", "query": "PRIVATE_QUERY_MARKER", "data_tier": "private"}],
+    )
+    default_summary = run_rag_eval(
+        _trusted_private_config(tmp_path, eval_set, out_dir=tmp_path / "default-out"),
+        service=MarkerEvalService(),
+        judge_client=IssueJudge(f"{marker} appears here"),
+    )
+    explicit_summary = run_rag_eval(
+        _trusted_private_config(tmp_path, eval_set, out_dir=tmp_path / "explicit-out", include_private_outputs=True),
+        service=MarkerEvalService(),
+        judge_client=IssueJudge(f"{marker} appears here"),
+    )
+
+    default_text = Path(default_summary["results_path"]).read_text(encoding="utf-8")
+    explicit_text = Path(explicit_summary["results_path"]).read_text(encoding="utf-8")
+    assert marker not in default_text
+    assert "PRIVATE_QUERY_MARKER" not in default_text
+    assert marker in explicit_text
+    assert "PRIVATE_QUERY_MARKER" in explicit_text
+    assert "PRIVATE_ANSWER_MARKER" in explicit_text
 
 
 def test_generator_and_judge_config_are_independent(tmp_path: Path) -> None:

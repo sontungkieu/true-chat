@@ -29,9 +29,7 @@ from rag_bench.privacy import (
     classify_backend,
     data_tier_for_hit,
     enforce_privacy_route,
-    max_data_tier,
     normalize_data_tier,
-    redact_for_log,
     safe_source_payload,
 )
 from rag_bench.secrets import ApiKey, load_groq_keys
@@ -124,31 +122,45 @@ class RagEvalResult:
     judge_error: str | None = None
 
     def to_mapping(self, *, include_private_outputs: bool = False) -> dict[str, Any]:
-        payload = {
-            "eval_id": self.eval_id,
-            "query": self.query,
-            "data_tier": self.data_tier,
-            "generator_provider": self.generator_provider,
-            "generator_model": self.generator_model,
-            "judge_provider": self.judge_provider,
-            "judge_model": self.judge_model,
-            "answer": self.answer,
-            "query_plan": self.query_plan,
-            "retrieved_doc_ids": list(self.retrieved_doc_ids),
-            "privacy": self.privacy,
-            "heuristic_scores": self.heuristic_scores,
-            "judge_scores": self.judge_scores,
-            "judge_skipped": self.judge_skipped,
-            "judge_skip_reason": self.judge_skip_reason,
-            "expected": self.expected,
-            "judge_error": self.judge_error,
-        }
-        if self.data_tier == DataTier.PRIVATE.value and not include_private_outputs:
-            payload["query"] = "[REDACTED_PRIVATE]"
-            payload["answer"] = "[REDACTED_PRIVATE]"
-            payload["query_plan"] = redact_for_log(self.query_plan, DataTier.PRIVATE)
-            payload["privacy"] = redact_for_log(self.privacy, DataTier.PRIVATE)
+        return sanitize_eval_result_for_write(self, include_private_eval_text=include_private_outputs)
+
+
+def sanitize_eval_result_for_write(
+    result: RagEvalResult,
+    *,
+    include_private_eval_text: bool = False,
+) -> dict[str, Any]:
+    payload = {
+        "eval_id": result.eval_id,
+        "query": result.query,
+        "data_tier": result.data_tier,
+        "generator_provider": result.generator_provider,
+        "generator_model": result.generator_model,
+        "judge_provider": result.judge_provider,
+        "judge_model": result.judge_model,
+        "answer": result.answer,
+        "query_plan": result.query_plan,
+        "retrieved_doc_ids": list(result.retrieved_doc_ids),
+        "privacy": result.privacy,
+        "heuristic_scores": result.heuristic_scores,
+        "judge_scores": result.judge_scores,
+        "judge_skipped": result.judge_skipped,
+        "judge_skip_reason": result.judge_skip_reason,
+        "expected": result.expected,
+        "judge_error": result.judge_error,
+        "judge_error_redacted": False,
+    }
+    if result.data_tier != DataTier.PRIVATE.value or include_private_eval_text:
         return payload
+    payload["query"] = "[REDACTED_PRIVATE]"
+    payload["answer"] = "[REDACTED_PRIVATE]"
+    payload["query_plan"] = _sanitize_private_query_plan(result.query_plan)
+    payload["privacy"] = _sanitize_private_privacy(result.privacy)
+    payload["judge_scores"] = _sanitize_private_judge_scores(result.judge_scores)
+    if result.judge_error:
+        payload["judge_error"] = "redacted_private_judge_error"
+        payload["judge_error_redacted"] = True
+    return payload
 
 
 @dataclass(frozen=True)
@@ -256,7 +268,10 @@ def run_rag_eval(
         for item in items:
             result = evaluate_rag_item(item, config, service=service, judge_client=judge_client)
             results.append(result)
-            result_row = result.to_mapping(include_private_outputs=config.include_private_outputs)
+            result_row = sanitize_eval_result_for_write(
+                result,
+                include_private_eval_text=config.include_private_outputs,
+            )
             results_file.write(json.dumps(result_row, ensure_ascii=False) + "\n")
             if _is_failure(result):
                 failures.append(result)
@@ -686,9 +701,80 @@ def _expected_bool(not_applicable: bool, value: bool) -> bool | None:
 def _is_failure(result: RagEvalResult) -> bool:
     if result.heuristic_scores.get("all_required_passed") is False:
         return True
+    if result.judge_error:
+        return True
     if result.judge_scores and str(result.judge_scores.get("verdict") or "").lower() == "fail":
         return True
     return False
+
+
+def _sanitize_private_query_plan(query_plan: dict[str, Any]) -> dict[str, Any]:
+    structured = query_plan.get("structured_evidence") if isinstance(query_plan.get("structured_evidence"), dict) else {}
+    sanitized: dict[str, Any] = {}
+    for key in ("intent", "confidence", "answer_style"):
+        if key in query_plan:
+            sanitized[key] = query_plan[key]
+    sanitized["schema_gaps"] = _string_list(query_plan.get("schema_gaps"))
+    if structured:
+        sanitized["structured_evidence"] = {
+            "enabled": structured.get("enabled"),
+            "matched_doc_types": _string_list(structured.get("matched_doc_types")),
+            "matched_doc_count": int(structured.get("matched_doc_count") or 0),
+        }
+    return sanitized
+
+
+def _sanitize_private_privacy(privacy: dict[str, Any]) -> dict[str, Any]:
+    safe_keys = {
+        "session_taint",
+        "turn_tier",
+        "provider_requested",
+        "model_requested",
+        "provider_selected",
+        "model_selected",
+        "backend_id",
+        "backend_kind",
+        "provider_allowed",
+        "external_blocked",
+        "reason",
+        "redaction_required",
+    }
+    sanitized = {key: privacy.get(key) for key in safe_keys if key in privacy}
+    state = privacy.get("state")
+    if isinstance(state, dict):
+        sanitized["state"] = {
+            key: state.get(key)
+            for key in (
+                "session_id",
+                "session_taint",
+                "max_seen_tier",
+                "private_seen",
+                "external_blocked",
+                "last_turn_tier",
+                "reason",
+            )
+            if key in state
+        }
+    return sanitized
+
+
+def _sanitize_private_judge_scores(judge_scores: dict[str, Any] | None) -> dict[str, Any] | None:
+    if judge_scores is None:
+        return None
+    sanitized: dict[str, Any] = {}
+    for key, value in judge_scores.items():
+        if key == "issues":
+            sanitized[key] = ["redacted_private_judge_issues"] if value else []
+        elif key == "verdict":
+            verdict = str(value or "").strip().lower()
+            sanitized[key] = verdict if verdict in {"pass", "partial", "fail"} else "unknown"
+        elif isinstance(value, (int, float, bool)) or value is None:
+            sanitized[key] = value
+        elif isinstance(value, list) and key.endswith("_codes"):
+            sanitized[key] = [str(item) for item in value if str(item).strip()]
+        else:
+            sanitized[key] = "redacted_private_judge_field"
+    return sanitized
 
 
 def _extract_context_citations(prompt: str) -> list[str]:
