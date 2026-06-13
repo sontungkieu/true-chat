@@ -73,6 +73,8 @@ Dictionary-mode prompts now include concise task instructions derived from the p
 
 For alias intent, simple positive and negative alias answers are deterministic: the service returns the extracted alias list with citations, or states that no supported alias was found, without asking an external generator to infer aliases from long dictionary text. The model is still instructed to answer only from retrieved evidence and cite dictionary entry ids for non-deterministic dictionary tasks.
 
+Alias extraction accepts direct `aliases` metadata, explicit alias labels, `has_alias` graph paths, and `has_alias` graph edges with a target label. Weak relations such as `related_to`, `see_also`, `has_concept`, `in_category`, and `is_a` are ignored. If a raw graph edge includes `confidence`, the extractive path requires `confidence >= 0.5`; graph paths already returned by the retriever are treated as validated retriever evidence. The behavior can be rolled back in tests or controlled deployments with `ChatProxyConfig(enable_alias_extractive_answer=False)`, which keeps the alias prompt guardrails but uses the normal generator path.
+
 ## Schema Gaps
 
 Procedure, rule-application, exception, and case-based questions are recognized. When structured evidence sidecars are configured, these gaps are evidence-aware: relevant returned procedure/rule/exception/case evidence clears the corresponding gap and changes the answer style to a grounded structured-evidence mode. A matching sidecar `doc_type` is only a retrieval boost, not sufficient relevance by itself. Without relevant structured evidence, the plan keeps schema-gap markers such as:

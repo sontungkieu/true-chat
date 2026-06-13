@@ -73,6 +73,7 @@ DEFAULT_CHAT_RETRIEVERS = (
 )
 MIN_RETRIEVAL_DISPLAY_SCORE = 5e-4
 CONTEXT_SEPARATOR = "\n\n---\n\n"
+ALIAS_EDGE_MIN_CONFIDENCE = 0.5
 
 
 class ChatGenerationClient(Protocol):
@@ -126,6 +127,7 @@ class ChatProxyConfig:
     dictionary_top_k: int = 5
     dictionary_required: bool = False
     enable_dictionary_query_planner: bool = True
+    enable_alias_extractive_answer: bool = True
     enable_structured_evidence: bool = False
     structured_evidence_jsonl: Path | None = None
     structured_evidence_md: Path | None = None
@@ -383,11 +385,12 @@ class RagChatService:
                 query_plan_payload = query_plan.to_payload()
                 if query_plan.intent == DictionaryQueryIntent.ALIAS:
                     alias_summary = _alias_evidence_summary(retrieval.hits, alias_evidence=alias_evidence)
-                    alias_answer_mode = (
-                        "deterministic_extractive"
-                        if alias_evidence is not None and alias_evidence.has_explicit_alias_evidence
-                        else "deterministic_no_alias"
-                    )
+                    if not self.config.enable_alias_extractive_answer:
+                        alias_answer_mode = "llm_prompt"
+                    elif alias_evidence is not None and alias_evidence.has_explicit_alias_evidence:
+                        alias_answer_mode = "deterministic_extractive"
+                    else:
+                        alias_answer_mode = "deterministic_no_alias"
                     alias_summary["alias_answer_mode"] = alias_answer_mode
                     query_plan_payload.update(
                         {
@@ -399,7 +402,8 @@ class RagChatService:
                     retrieval_metadata["alias_evidence"] = alias_summary
                     retrieval_metadata["alias_answer_style_used"] = query_plan.answer_style
                     retrieval_metadata["alias_answer_mode"] = alias_answer_mode
-                    retrieval_metadata["generator_provider"] = "deterministic_alias"
+                    if alias_answer_mode.startswith("deterministic_"):
+                        retrieval_metadata["generator_provider"] = "deterministic_alias"
                 retrieval_metadata["query_plan"] = query_plan_payload
             if retrieval.hits:
                 privacy_decision = self._enforce_generation_privacy(
@@ -408,7 +412,12 @@ class RagChatService:
                     hits=retrieval.hits,
                     user_message_tier=user_message_tier,
                 )
-                if query_plan is not None and query_plan.intent == DictionaryQueryIntent.ALIAS and alias_evidence is not None:
+                if (
+                    self.config.enable_alias_extractive_answer
+                    and query_plan is not None
+                    and query_plan.intent == DictionaryQueryIntent.ALIAS
+                    and alias_evidence is not None
+                ):
                     answer = _format_alias_answer(alias_evidence, retrieval.hits, language=language)
                     generation = GenerationResult(
                         answer=answer,
@@ -1642,7 +1651,50 @@ def _explicit_alias_values_from_metadata(metadata: dict[str, Any]) -> list[str]:
     aliases.extend(_metadata_text_values(metadata.get("alias_labels")))
     aliases.extend(_metadata_text_values(metadata.get("explicit_aliases")))
     aliases.extend(_alias_values_from_graph_path(metadata))
+    aliases.extend(_alias_values_from_graph_edges(metadata))
+    aliases.extend(_alias_values_from_single_edge_metadata(metadata))
     return aliases
+
+
+def _alias_values_from_graph_edges(metadata: dict[str, Any]) -> list[str]:
+    aliases: list[str] = []
+    for key in ("dictionary_graph_edges", "graph_edges", "alias_edges"):
+        value = metadata.get(key)
+        if not isinstance(value, list):
+            continue
+        for edge in value:
+            if not isinstance(edge, dict) or not _edge_is_supported_alias(edge):
+                continue
+            label = _normalize_alias_value(str(edge.get("target_label") or edge.get("label") or ""))
+            if label:
+                aliases.append(label)
+    return aliases
+
+
+def _alias_values_from_single_edge_metadata(metadata: dict[str, Any]) -> list[str]:
+    edge_type = str(metadata.get("edge_type") or metadata.get("dictionary_relation") or "").strip()
+    if edge_type != "has_alias":
+        return []
+    edge = {
+        "type": edge_type,
+        "target_label": metadata.get("target_label") or metadata.get("label") or metadata.get("alias_label"),
+        "confidence": metadata.get("confidence"),
+    }
+    if not _edge_is_supported_alias(edge):
+        return []
+    label = _normalize_alias_value(str(edge.get("target_label") or ""))
+    return [label] if label else []
+
+
+def _edge_is_supported_alias(edge: dict[str, Any]) -> bool:
+    edge_type = str(edge.get("type") or edge.get("edge_type") or edge.get("relation") or "").strip()
+    if edge_type != "has_alias":
+        return False
+    label = _normalize_alias_value(str(edge.get("target_label") or edge.get("label") or edge.get("alias_label") or ""))
+    if not label:
+        return False
+    confidence = edge.get("confidence")
+    return confidence is None or _safe_float(confidence, default=ALIAS_EDGE_MIN_CONFIDENCE) >= ALIAS_EDGE_MIN_CONFIDENCE
 
 
 def _alias_values_from_graph_path(metadata: dict[str, Any]) -> list[str]:
@@ -1750,7 +1802,7 @@ def _alias_prompt_evidence_summary(hits: list[RetrievalHit], query_plan: Diction
         "Alias evidence summary:\n"
         "- Alias evidence hit count: 0\n"
         "- No retrieved hit is marked as alias evidence.\n"
-        "- State that no supported alias/tên gọi khác was found in the retrieved sources; do not infer aliases from related terms, concepts, categories, or see-also links.\n\n"
+        "- State cautiously that no explicitly marked alias/tên gọi khác was found in the retrieved sources; do not infer aliases from related terms, concepts, categories, or see-also links.\n\n"
     )
 
 
@@ -1761,6 +1813,18 @@ def _safe_int(value: Any) -> int:
         return max(0, int(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed):
+        return default
+    return parsed
 
 
 def _messages_data_tier(messages: list[dict[str, Any]]) -> DataTier:
@@ -1939,13 +2003,13 @@ def _format_alias_answer(alias_evidence: AliasEvidence, hits: Sequence[Retrieval
         aliases = "; ".join(alias_evidence.aliases)
         citations = _format_source_citations(alias_evidence.source_doc_ids)
         if response_language == "vi":
-            return f"Theo các nguồn được truy hồi, tên gọi khác/alias được hỗ trợ là: {aliases}. {citations}".strip()
-        return f"Supported alternate names/aliases in the retrieved sources: {aliases}. {citations}".strip()
+            return f"Theo các nguồn được truy hồi, tên gọi khác/alias được ghi nhận trong nguồn là: {aliases}. {citations}".strip()
+        return f"Supported alternate names/aliases recorded in the retrieved sources: {aliases}. {citations}".strip()
     fallback_doc_ids = [hit.doc_id for hit in hits[:3]]
     citations = _format_source_citations(fallback_doc_ids)
     if response_language == "vi":
         return (
-            "Không tìm thấy tên gọi khác/alias được hỗ trợ rõ ràng trong các nguồn đã truy hồi. "
+            "Không tìm thấy tên gọi khác/alias được đánh dấu rõ ràng trong các nguồn đã truy hồi. "
             f"Các nguồn hiện có chỉ cung cấp định nghĩa hoặc thông tin liên quan. {citations}"
         ).strip()
     return (

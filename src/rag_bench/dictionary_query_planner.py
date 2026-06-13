@@ -118,6 +118,7 @@ RELATION_EDGES = (
 )
 USAGE_EDGES = ("used_for", "supports", "controls", "measures", "fires")
 REQUIREMENT_EDGES = ("requires", "supports")
+ALIAS_EDGE_MIN_CONFIDENCE = 0.5
 
 
 def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
@@ -526,6 +527,7 @@ def _alias_evidence_count(metadata: dict[str, Any], matched_edges: list[str]) ->
     if explicit_count > 0:
         return explicit_count
     count = len(_metadata_text_values(metadata.get("aliases")))
+    count = max(count, _alias_graph_edge_count(metadata))
     relation = str(metadata.get("dictionary_relation") or "")
     graph_path_edges = [
         str(item.get("label") or item.get("id") or "")
@@ -538,6 +540,35 @@ def _alias_evidence_count(metadata: dict[str, Any], matched_edges: list[str]) ->
     if bool(metadata.get("has_alias_evidence")):
         count = max(count, 1)
     return count
+
+
+def _alias_graph_edge_count(metadata: dict[str, Any]) -> int:
+    count = 0
+    for key in ("dictionary_graph_edges", "graph_edges", "alias_edges"):
+        value = metadata.get(key)
+        if isinstance(value, list):
+            count += sum(1 for edge in value if isinstance(edge, dict) and _edge_is_supported_alias(edge))
+    edge_type = str(metadata.get("edge_type") or metadata.get("dictionary_relation") or "").strip()
+    if edge_type == "has_alias":
+        single_edge = {
+            "type": edge_type,
+            "target_label": metadata.get("target_label") or metadata.get("label") or metadata.get("alias_label"),
+            "confidence": metadata.get("confidence"),
+        }
+        if _edge_is_supported_alias(single_edge):
+            count += 1
+    return count
+
+
+def _edge_is_supported_alias(edge: dict[str, Any]) -> bool:
+    edge_type = str(edge.get("type") or edge.get("edge_type") or edge.get("relation") or "").strip()
+    if edge_type != "has_alias":
+        return False
+    label = str(edge.get("target_label") or edge.get("label") or edge.get("alias_label") or "").strip()
+    if not label:
+        return False
+    confidence = edge.get("confidence")
+    return confidence is None or _safe_float(confidence, default=ALIAS_EDGE_MIN_CONFIDENCE) >= ALIAS_EDGE_MIN_CONFIDENCE
 
 
 def _metadata_text_values(value: Any) -> list[str]:
@@ -557,6 +588,15 @@ def _safe_int(value: Any) -> int:
         return max(0, int(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_float(value: Any, *, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _extract_comparison_terms(original: str, normalized: str) -> list[str]:
