@@ -37,6 +37,8 @@ class DictionaryQueryPlan:
     require_comparison: bool = False
     require_citations: bool = True
     answer_style: str = "grounded_summary"
+    alias_requested: bool = False
+    requires_alias_evidence: bool = False
     schema_gaps: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     structured_evidence: dict[str, Any] = field(default_factory=dict)
@@ -53,6 +55,8 @@ class DictionaryQueryPlan:
             "require_comparison": self.require_comparison,
             "require_citations": self.require_citations,
             "answer_style": self.answer_style,
+            "alias_requested": self.alias_requested,
+            "requires_alias_evidence": self.requires_alias_evidence,
             "schema_gaps": list(self.schema_gaps),
             "notes": list(self.notes),
             "structured_evidence": dict(self.structured_evidence),
@@ -87,6 +91,8 @@ class DictionaryQueryPlan:
             require_comparison=self.require_comparison,
             require_citations=self.require_citations,
             answer_style=answer_style,
+            alias_requested=self.alias_requested,
+            requires_alias_evidence=self.requires_alias_evidence,
             schema_gaps=schema_gaps,
             notes=list(self.notes),
             structured_evidence=dict(metadata),
@@ -205,14 +211,20 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             preferred_edge_types=list(REQUIREMENT_EDGES),
             answer_style="requirements_with_evidence",
         )
-    if _has_any(normalized, ("con goi la gi", "ten khac cua", "alias of", "synonym of")):
+    if _has_any(
+        normalized,
+        ("con goi la gi", "ten khac cua", "ten goi khac", "alias of", "synonym of", "synonyms of"),
+    ):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.ALIAS,
             confidence=0.86,
             target_terms=_extract_single_target(original, normalized),
             preferred_edge_types=list(ALIAS_EDGES),
-            answer_style="alias_list",
+            answer_style="alias_direct",
+            alias_requested=True,
+            requires_alias_evidence=True,
+            notes=["Alias answers require explicit has_alias/direct alias evidence."],
         )
     if _has_any(normalized, ("thuoc nhom nao", "la loai gi", "category of", "type of")):
         return DictionaryQueryPlan(
@@ -263,7 +275,14 @@ def dictionary_plan_prompt_instructions(plan: DictionaryQueryPlan) -> str:
             "If relation evidence is weak, say so explicitly.",
         ]
     elif plan.intent == DictionaryQueryIntent.ALIAS:
-        specific = ["List supported aliases or synonym-like names; do not invent aliases."]
+        specific = [
+            "Answer with supported alternate names first.",
+            "Use only retrieved alias evidence such as has_alias edges or direct alias metadata.",
+            "Do not treat related terms, concepts, categories, or see-also references as aliases.",
+            "Keep the answer short unless the user explicitly asks for a definition.",
+            "If no alias evidence is present, state that no supported alias/tên gọi khác was found in the retrieved sources.",
+            "Cite source ids.",
+        ]
     elif plan.intent == DictionaryQueryIntent.CATEGORY:
         specific = ["State supported categories or type relations before broader explanation."]
     elif plan.intent == DictionaryQueryIntent.USAGE:
@@ -349,6 +368,12 @@ def annotate_and_rank_dictionary_hits(
             has_tone_sensitive_targets=has_tone_sensitive_targets,
         )
         metadata["query_plan_intent"] = plan.intent.value
+        if plan.intent == DictionaryQueryIntent.ALIAS:
+            alias_evidence_count = _alias_evidence_count(metadata, matched_edges)
+            metadata["has_alias_evidence"] = alias_evidence_count > 0
+            metadata["alias_evidence_count"] = alias_evidence_count
+            if alias_evidence_count > 0:
+                role = "alias_evidence"
         metadata["query_plan_role"] = role
         metadata["query_plan_edge_types"] = matched_edges
         planned_score = float(hit.score) + boost
@@ -449,11 +474,52 @@ def _planner_boost(
             boost += 0.18
             if role == "fallback":
                 role = "comparison_term"
-    if plan.intent == DictionaryQueryIntent.ALIAS and relation == "has_alias":
-        boost += 0.2
+    if plan.intent == DictionaryQueryIntent.ALIAS:
+        alias_evidence_count = _alias_evidence_count(metadata, edge_matches)
+        if alias_evidence_count > 0:
+            boost += 0.35 + 0.03 * min(alias_evidence_count, 3)
+            role = "alias_evidence"
     if relation == "related_to" and preferred_edges and any(edge != "related_to" for edge in preferred_edges):
         boost -= 0.08
     return boost, role, edge_matches
+
+
+def _alias_evidence_count(metadata: dict[str, Any], matched_edges: list[str]) -> int:
+    explicit_count = _safe_int(metadata.get("alias_evidence_count"))
+    if explicit_count > 0:
+        return explicit_count
+    count = len(_metadata_text_values(metadata.get("aliases")))
+    relation = str(metadata.get("dictionary_relation") or "")
+    graph_path_edges = [
+        str(item.get("label") or item.get("id") or "")
+        for item in metadata.get("dictionary_graph_path", [])
+        if isinstance(item, dict) and str(item.get("type") or "") == "relation"
+    ]
+    has_alias_edge = relation == "has_alias" or "has_alias" in matched_edges or "has_alias" in graph_path_edges
+    if has_alias_edge:
+        count = max(count, 1)
+    if bool(metadata.get("has_alias_evidence")):
+        count = max(count, 1)
+    return count
+
+
+def _metadata_text_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item).strip()]
+    return []
+
+
+def _safe_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _extract_comparison_terms(original: str, normalized: str) -> list[str]:
@@ -514,7 +580,7 @@ def _extract_single_target(original: str, normalized: str) -> list[str]:
     cleaned = normalize_spaces(original)
     prefix_pattern = (
         r"^(?:"
-        r"định nghĩa|dinh nghia|khái niệm|khai niem|tên khác của|ten khac cua|"
+        r"định nghĩa|dinh nghia|khái niệm|khai niem|tên khác của|ten khac cua|tên gọi khác của|ten goi khac cua|"
         r"ngoại lệ của|ngoai le cua|trường hợp này áp dụng|truong hop nay ap dung|"
         r"khi nào áp dụng|khi nao ap dung|category of|type of|define|what is|what does|"
         r"quy trình thực hiện|quy trinh thuc hien|quy trình xử lý|quy trinh xu ly|"
@@ -523,7 +589,7 @@ def _extract_single_target(original: str, normalized: str) -> list[str]:
     )
     suffix_pattern = (
         r"\s+(?:"
-        r"là gì|la gi|còn gọi là gì|con goi la gi|thuộc nhóm nào|thuoc nhom nao|"
+        r"là gì|la gi|còn gọi là gì|con goi la gi|tên gọi khác là gì|ten goi khac la gi|thuộc nhóm nào|thuoc nhom nao|"
         r"là loại gì|la loai gi|dùng để làm gì|dung de lam gi|yêu cầu gì|yeu cau gi|"
         r"cần gì|can gi|used for|require|requires"
         r")$"

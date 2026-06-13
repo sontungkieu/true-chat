@@ -23,7 +23,7 @@ The planner classifies these intents deterministically and gives downstream retr
 The planner currently recognizes:
 
 - `definition`: "X là gì", "định nghĩa X", "what is X", "define X".
-- `alias`: "X còn gọi là gì", "tên khác của X", "alias of X".
+- `alias`: "X còn gọi là gì", "tên khác của X", "tên gọi khác của X", "alias of X", "synonym of X".
 - `category`: "X thuộc nhóm nào", "X là loại gì", "category of X".
 - `comparison`: "so sánh X và Y", "X khác Y như thế nào", "difference between X and Y".
 - `relation`: "X liên quan gì đến Y", "quan hệ giữa X và Y", "how is X related to Y".
@@ -40,7 +40,7 @@ The planner currently recognizes:
 The planner does not rewrite graph scoring. It applies small, explainable boosts after normal retrieval:
 
 - definition: prefer direct headword/alias/concept/category evidence;
-- alias: prefer `has_alias`;
+- alias: prefer explicit `has_alias` or direct alias metadata; related terms, concepts, categories, and see-also links are not counted as aliases;
 - category: prefer `in_category` and `is_a`;
 - comparison: retrieve evidence for both detectable terms, then prefer direct entries, aliases, categories, concepts, and direct relation edges;
 - relation: allow up to two graph hops and prefer stronger typed relations before weak `related_to`;
@@ -54,7 +54,9 @@ Each returned dictionary hit can carry safe metadata such as:
   "query_plan_intent": "comparison",
   "query_plan_role": "comparison_term",
   "query_plan_edge_types": ["is_a"],
-  "query_plan_score": 1.42
+  "query_plan_score": 1.42,
+  "has_alias_evidence": false,
+  "alias_evidence_count": 0
 }
 ```
 
@@ -65,6 +67,7 @@ These fields are labels and scores, not raw private source text.
 Dictionary-mode prompts now include concise task instructions derived from the plan. Examples:
 
 - comparison: cover both terms when evidence exists; state when one side is missing;
+- alias: answer with supported alternate names first, use only explicit alias evidence, and say that no supported alias was found when retrieved sources lack `has_alias`/direct alias metadata;
 - relation: prefer typed graph relations over loose association;
 - procedure/rule/case: do not invent steps, rules, exceptions, or cases.
 
@@ -98,7 +101,7 @@ Dictionary-mode responses include a safe `query_plan` object:
 }
 ```
 
-The same object is also available under `rag.retrieval_metadata.query_plan` for debugging.
+The same object is also available under `rag.retrieval_metadata.query_plan` for debugging. Alias requests additionally expose safe aggregate metadata under `rag.retrieval_metadata.alias_evidence`, including `has_alias_evidence`, `alias_evidence_count`, and source ids for hits marked as alias evidence. It does not add raw alias strings beyond what the retrieved source payload already exposes under the normal privacy policy.
 
 ## Privacy Interaction
 

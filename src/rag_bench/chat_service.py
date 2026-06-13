@@ -18,6 +18,7 @@ from rag_bench.dictionary import (
     load_dictionary_documents,
 )
 from rag_bench.dictionary_query_planner import (
+    DictionaryQueryIntent,
     DictionaryQueryPlan,
     annotate_and_rank_dictionary_hits,
     dictionary_plan_prompt_instructions,
@@ -366,6 +367,9 @@ class RagChatService:
                 retrieval_metadata["structured_evidence"] = structured_result.to_metadata()
             if query_plan is not None:
                 retrieval_metadata["query_plan"] = query_plan.to_payload()
+                if query_plan.intent == DictionaryQueryIntent.ALIAS:
+                    retrieval_metadata["alias_evidence"] = _alias_evidence_summary(retrieval.hits)
+                    retrieval_metadata["alias_answer_style_used"] = query_plan.answer_style
             if retrieval.hits:
                 privacy_decision = self._enforce_generation_privacy(
                     backend=backend,
@@ -1504,19 +1508,23 @@ def build_dictionary_rag_messages(
     plan_summary = ""
     if query_plan is not None:
         target_terms = ", ".join(query_plan.target_terms) if query_plan.target_terms else "not detected"
+        alias_evidence_summary = _alias_prompt_evidence_summary(hits, query_plan)
+        final_instruction = _dictionary_final_instruction(query_plan)
         plan_summary = (
             f"Detected dictionary task: {query_plan.intent.value}\n"
             f"Target terms: {target_terms}\n"
             f"Answer style: {query_plan.answer_style}\n\n"
             f"Task instructions:\n{plan_instruction}\n\n"
+            f"{alias_evidence_summary}"
         )
+    else:
+        final_instruction = _dictionary_final_instruction(None)
     user_prompt = (
         f"Recent conversation:\n{history}\n\n"
         f"Dictionary question:\n{query}\n\n"
         f"Retrieved dictionary entries:\n{context}\n\n"
         f"{plan_summary}"
-        "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
-        "Do not invent content not supported by the retrieved dictionary entries."
+        f"{final_instruction}"
     )
     return [
         {
@@ -1529,6 +1537,78 @@ def build_dictionary_rag_messages(
         },
         {"role": "user", "content": user_prompt},
     ]
+
+
+def _dictionary_final_instruction(query_plan: DictionaryQueryPlan | None) -> str:
+    if query_plan is not None and query_plan.intent == DictionaryQueryIntent.ALIAS:
+        return (
+            "Answer the alias/name question directly in the required response language. "
+            "Start with supported alternate names only when alias evidence is present. "
+            "If no alias evidence is present, state that no supported alias/tên gọi khác was found in the retrieved sources. "
+            "Do not turn the answer into a long definition. Cite dictionary entries with their ids in square brackets. "
+            "Do not invent content not supported by the retrieved dictionary entries."
+        )
+    return (
+        "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
+        "Do not invent content not supported by the retrieved dictionary entries."
+    )
+
+
+def _alias_evidence_summary(hits: list[RetrievalHit]) -> dict[str, Any]:
+    evidence_hits = []
+    total_count = 0
+    for hit in hits:
+        metadata = hit.metadata or {}
+        count = _safe_int(metadata.get("alias_evidence_count"))
+        has_alias = bool(metadata.get("has_alias_evidence")) or count > 0
+        if not has_alias:
+            continue
+        total_count += max(1, count)
+        evidence_hits.append(
+            {
+                "doc_id": hit.doc_id,
+                "rank": hit.rank,
+                "alias_evidence_count": max(1, count),
+                "query_plan_role": metadata.get("query_plan_role"),
+            }
+        )
+    return {
+        "has_alias_evidence": bool(evidence_hits),
+        "alias_evidence_count": total_count,
+        "alias_evidence_hit_count": len(evidence_hits),
+        "alias_evidence_doc_ids": [item["doc_id"] for item in evidence_hits],
+        "evidence_hits": evidence_hits,
+    }
+
+
+def _alias_prompt_evidence_summary(hits: list[RetrievalHit], query_plan: DictionaryQueryPlan) -> str:
+    if query_plan.intent != DictionaryQueryIntent.ALIAS:
+        return ""
+    summary = _alias_evidence_summary(hits)
+    if summary["has_alias_evidence"]:
+        source_ids = ", ".join(f"[{doc_id}]" for doc_id in summary["alias_evidence_doc_ids"])
+        return (
+            "Alias evidence summary:\n"
+            f"- Alias evidence hit count: {summary['alias_evidence_hit_count']}\n"
+            f"- Alias evidence marker count: {summary['alias_evidence_count']}\n"
+            f"- Alias evidence source ids: {source_ids}\n"
+            "- Treat only hits marked as alias evidence or has_alias/direct alias metadata as alias support.\n\n"
+        )
+    return (
+        "Alias evidence summary:\n"
+        "- Alias evidence hit count: 0\n"
+        "- No retrieved hit is marked as alias evidence.\n"
+        "- State that no supported alias/tên gọi khác was found in the retrieved sources; do not infer aliases from related terms, concepts, categories, or see-also links.\n\n"
+    )
+
+
+def _safe_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _messages_data_tier(messages: list[dict[str, Any]]) -> DataTier:

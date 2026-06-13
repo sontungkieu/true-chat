@@ -710,6 +710,154 @@ def test_dictionary_mode_exposes_safe_query_plan_metadata_and_prompt_instruction
     assert llm.calls == 1
 
 
+def test_dictionary_alias_mode_uses_direct_prompt_and_alias_metadata() -> None:
+    class AliasDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="TERM_A_ENTRY",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_A",
+                        text="TERM_A synthetic dictionary entry with explicit alternate name evidence.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "aliases": ["TERM_A_ALT"],
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                    RetrievalHit(
+                        doc_id="TERM_A_RELATED",
+                        score=1.0,
+                        rank=2,
+                        title="TERM_A_RELATED",
+                        text="Synthetic related entry.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A_RELATED",
+                            "dictionary_relation": "related_to",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = AliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict TERM_A còn gọi là gì"}])
+    prompt = llm.messages[1]["content"]
+    alias_metadata = result.response["rag"]["retrieval_metadata"]["alias_evidence"]
+    retrieved_by_id = {source["doc_id"]: source for source in result.response["rag"]["retrieved"]}
+
+    assert result.response["query_plan"]["intent"] == "alias"
+    assert result.response["query_plan"]["answer_style"] == "alias_direct"
+    assert result.response["query_plan"]["requires_alias_evidence"] is True
+    assert alias_metadata["has_alias_evidence"] is True
+    assert alias_metadata["alias_evidence_count"] == 1
+    assert alias_metadata["alias_evidence_doc_ids"] == ["TERM_A_ENTRY"]
+    assert retrieved_by_id["TERM_A_ENTRY"]["metadata"]["has_alias_evidence"] is True
+    assert retrieved_by_id["TERM_A_ENTRY"]["metadata"]["query_plan_role"] == "alias_evidence"
+    assert retrieved_by_id["TERM_A_RELATED"]["metadata"]["has_alias_evidence"] is False
+    assert "Answer with supported alternate names first." in prompt
+    assert "Use only retrieved alias evidence" in prompt
+    assert "Do not treat related terms, concepts, categories, or see-also references as aliases." in prompt
+    assert "Alias evidence hit count: 1" in prompt
+    assert "Alias evidence source ids: [TERM_A_ENTRY]" in prompt
+    assert "Answer the alias/name question directly" in prompt
+    assert "Explain the term in the required response language" not in prompt
+
+
+def test_dictionary_alias_mode_marks_missing_alias_evidence() -> None:
+    class NoAliasDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="TERM_A_ENTRY",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_A",
+                        text="TERM_A synthetic definition only.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                    RetrievalHit(
+                        doc_id="TERM_A_CATEGORY",
+                        score=1.0,
+                        rank=2,
+                        title="TERM_A_CATEGORY",
+                        text="Synthetic category entry.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A_CATEGORY",
+                            "dictionary_relation": "in_category",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = NoAliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict tên khác của TERM_A là gì"}])
+    prompt = llm.messages[1]["content"]
+    alias_metadata = result.response["rag"]["retrieval_metadata"]["alias_evidence"]
+
+    assert result.response["query_plan"]["intent"] == "alias"
+    assert alias_metadata["has_alias_evidence"] is False
+    assert alias_metadata["alias_evidence_count"] == 0
+    assert alias_metadata["alias_evidence_doc_ids"] == []
+    assert "Alias evidence hit count: 0" in prompt
+    assert "No retrieved hit is marked as alias evidence." in prompt
+    assert "no supported alias/tên gọi khác was found" in prompt
+    assert "Answer the alias/name question directly" in prompt
+    assert "Explain the term in the required response language" not in prompt
+    assert result.response["rag"]["retrieved"][0]["metadata"]["has_alias_evidence"] is False
+
+
 def test_dictionary_planner_public_path_preserves_external_generation() -> None:
     class PublicDictionaryRetriever(FakeDictionaryRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:
@@ -773,6 +921,50 @@ def test_dictionary_planner_does_not_bypass_private_taint_guard() -> None:
 
     with pytest.raises(PrivacyRouteError) as error:
         service.answer([{"role": "user", "content": "/dict TERM_A là gì"}], session_id="private-dict")
+
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert llm.calls == 0
+
+
+def test_dictionary_alias_mode_private_hit_still_blocks_external_generation() -> None:
+    class PrivateAliasDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="PRIVATE_ALIAS",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_PRIVATE",
+                        text="private synthetic alias context",
+                        metadata={
+                            "data_tier": "private",
+                            "kind": "dictionary",
+                            "headword": "TERM_PRIVATE",
+                            "aliases": ["TERM_PRIVATE_ALT"],
+                            "raw_docx_text": "private synthetic alias context",
+                        },
+                        data_tier="private",
+                        doc_type="dictionary",
+                    )
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = PrivateAliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer([{"role": "user", "content": "/dict TERM_PRIVATE còn gọi là gì"}], session_id="private-alias")
 
     assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
     assert llm.calls == 0
