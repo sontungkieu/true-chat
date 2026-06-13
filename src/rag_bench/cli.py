@@ -147,10 +147,15 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument(
         "--generator-backend-kind",
         choices=("local_process", "self_hosted_private", "private_lan", "private_vpc", "external_saas", "unknown"),
-        default="local_process",
+        default=None,
     )
     eval_parser.add_argument("--generator-trusted-private-backend", default="", help="Comma-separated trusted generator backend ids.")
     eval_parser.add_argument("--generator-trusted-private-model", default="", help="Comma-separated trusted generator model ids.")
+    eval_parser.add_argument(
+        "--allow-external-semi-private",
+        action="store_true",
+        help="Allow semi-private eval context to be sent to the external generator provider.",
+    )
     eval_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"))
     eval_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
     eval_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
@@ -456,6 +461,11 @@ def _eval_rag(args: argparse.Namespace) -> int:
         return 2
     generator_model = args.generator_model or DEFAULT_CHAT_MODEL
     generator_provider = str(args.generator_provider or "").strip().lower()
+    generator_backend_kind = args.generator_backend_kind or (
+        "external_saas"
+        if generator_provider in {"groq", "mimo", "deepseek", "openai"}
+        else "local_process"
+    )
     available_models = _dedupe_preserve_order((generator_model, DEFAULT_MODEL, DEFAULT_CHAT_MODEL, *mimo_models))
     chat_config = ChatProxyConfig(
         bench=args.bench,
@@ -484,9 +494,10 @@ def _eval_rag(args: argparse.Namespace) -> int:
         structured_evidence_jsonl=args.structured_evidence_jsonl,
         structured_evidence_md=args.structured_evidence_md,
         backend_id=args.generator_backend_id,
-        backend_kind=args.generator_backend_kind,
+        backend_kind=generator_backend_kind,
         trusted_private_backends=_parse_csv(args.generator_trusted_private_backend),
         trusted_private_models=_parse_csv(args.generator_trusted_private_model),
+        allow_external_semi_private=args.allow_external_semi_private,
         available_retrievers=_dedupe_preserve_order((args.retriever, "dictionary-graph")),
     )
     config = RagEvalConfig(
@@ -495,7 +506,7 @@ def _eval_rag(args: argparse.Namespace) -> int:
         generator_provider=args.generator_provider,
         generator_model=generator_model,
         generator_backend_id=args.generator_backend_id,
-        generator_backend_kind=args.generator_backend_kind,
+        generator_backend_kind=generator_backend_kind,
         generator_trusted_private_backends=_parse_csv(args.generator_trusted_private_backend),
         generator_trusted_private_models=_parse_csv(args.generator_trusted_private_model),
         judge_provider=args.judge_provider,

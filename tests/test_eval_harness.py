@@ -587,6 +587,49 @@ def test_generator_and_judge_config_are_independent(tmp_path: Path) -> None:
     assert judge.calls == 1
 
 
+def test_mimo_eval_generator_uses_openai_compatible_client_without_groq_keys(monkeypatch, tmp_path: Path) -> None:
+    eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "public", "query": "TERM_A", "data_tier": "public"}])
+    config = _config(
+        tmp_path,
+        eval_set,
+        generator_provider="mimo",
+        generator_model="mimo-v2.5",
+    )
+    seen = {}
+
+    class FakeRoundRobin:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    monkeypatch.setenv("MIMO_API_KEY", "test-mimo-key")
+    monkeypatch.setattr(eval_harness_module, "RoundRobinGroqClient", FakeRoundRobin)
+
+    client = eval_harness_module._build_eval_generator(config, config.chat_config)
+
+    assert isinstance(client, FakeRoundRobin)
+    assert seen["model"] == "mimo-v2.5"
+    assert seen["provider_name"] == "mimo"
+
+
+def test_deepseek_eval_generator_requires_key(monkeypatch, tmp_path: Path) -> None:
+    eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "public", "query": "TERM_A", "data_tier": "public"}])
+    config = _config(
+        tmp_path,
+        eval_set,
+        generator_provider="deepseek",
+        generator_model="deepseek-v4-flash",
+    )
+
+    monkeypatch.delenv("DS_API_KEY", raising=False)
+
+    try:
+        eval_harness_module._build_eval_generator(config, config.chat_config)
+    except RuntimeError as exc:
+        assert "DS_API_KEY is required" in str(exc)
+    else:
+        raise AssertionError("DeepSeek eval generation should require DS_API_KEY")
+
+
 def test_private_external_block_does_not_serialize_judge_request(tmp_path: Path) -> None:
     eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "private", "query": "TERM_PRIVATE", "data_tier": "private"}])
     judge = FakeJudge()

@@ -32,7 +32,7 @@ from rag_bench.privacy import (
     normalize_data_tier,
     safe_source_payload,
 )
-from rag_bench.secrets import ApiKey, load_groq_keys
+from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
 from rag_bench.types import RetrievalHit
 
 
@@ -605,8 +605,43 @@ def _build_eval_generator(config: RagEvalConfig, chat_config: ChatProxyConfig) -
     provider = str(config.generator_provider or "").strip().lower()
     if provider in {"local", "heuristic", "mock", "local_small"}:
         return HeuristicGeneratorClient(provider=config.generator_provider, model=config.generator_model or "heuristic-local")
+    if provider in {"mimo", "deepseek", "openai"}:
+        return _build_openai_compatible_eval_generator(config, chat_config, provider=provider)
     keys = load_groq_keys(chat_config.groq_keys_path)
     return _build_llm(chat_config, keys)
+
+
+def _build_openai_compatible_eval_generator(
+    config: RagEvalConfig,
+    chat_config: ChatProxyConfig,
+    *,
+    provider: str,
+) -> ChatGenerationClient:
+    env_name, base_url = _judge_env_and_base_url(provider)
+    import os
+
+    api_key = os.getenv(env_name)
+    if api_key:
+        key = ApiKey(alias=provider, value=api_key)
+    elif provider == "mimo":
+        key = load_env_api_key(chat_config.mimo_env_file, chat_config.mimo_api_key_var, alias=provider)
+    else:
+        raise RuntimeError(f"{env_name} is required for {provider} eval generation")
+    return RoundRobinGroqClient(
+        keys=[key],
+        model=config.generator_model,
+        max_retries=chat_config.max_retries,
+        key_tokens_per_minute=0,
+        key_requests_per_minute=0,
+        client_factory=lambda key, timeout: OpenAICompatibleClient(
+            api_key=key.value,
+            base_url=base_url,
+            timeout_s=timeout,
+            token_parameter="max_tokens",
+        ),
+        provider_name=provider,
+        completion_token_parameter="max_tokens",
+    )
 
 
 def _build_default_judge_client(config: RagEvalConfig) -> RagEvalJudgeClient | None:

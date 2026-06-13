@@ -15,11 +15,11 @@ Production RAG should be tested with realistic inference constraints: a small mo
 
 The evaluator uses the existing privacy policy and backend trust rules.
 
-| eval item tier | external judge behavior |
-| --- | --- |
-| `public` | blocked by default; allowed only with `--allow-external-judge-public` and `--enable-llm-judge` |
-| `semi_private` | blocked by default; allowed only with `--allow-external-judge-semi-private` |
-| `private` | external SaaS judges are always blocked; use a trusted private judge backend or heuristic-only evaluation |
+| eval item tier | external generator behavior | external judge behavior |
+| --- | --- | --- |
+| `public` | allowed when selected as the generator backend | blocked by default; allowed only with `--allow-external-judge-public` and `--enable-llm-judge` |
+| `semi_private` | blocked by default; allowed only with `--allow-external-semi-private` | blocked by default; allowed only with `--allow-external-judge-semi-private` |
+| `private` | external SaaS generators are always blocked; use a trusted private generator backend | external SaaS judges are always blocked; use a trusted private judge backend or heuristic-only evaluation |
 
 An API key does not make an external SaaS backend private-safe. A model name alone does not make an external SaaS backend private-safe.
 
@@ -87,6 +87,14 @@ Semi-private external judging additionally requires:
 ```bash
 --allow-external-judge-semi-private
 ```
+
+Semi-private external generation is separate from judging and must be enabled explicitly:
+
+```bash
+--allow-external-semi-private
+```
+
+The two flags are intentionally independent so a run can allow an external generator while keeping external judging disabled, or vice versa. Do not self-judge a model when using the harness for cross-provider evaluation.
 
 Private data requires a trusted private judge backend:
 
