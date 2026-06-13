@@ -644,7 +644,7 @@ def _tokens_per_second(tokens: int | None, latency_s: float) -> float | None:
 def _should_use_fallback(result: GenerationResult) -> bool:
     if not result.error:
         return False
-    if result.error_status_code == 429 or result.rate_limited:
+    if result.error_status_code in {401, 403, 429} or result.rate_limited:
         return True
     text = result.error.lower()
     markers = (
@@ -655,6 +655,11 @@ def _should_use_fallback(result: GenerationResult) -> bool:
         "billing",
         "rate limit",
         "rate_limit",
+        "no api keys remain",
+        "no available",
+        "disabled aliases",
+        "invalid api key",
+        "invalid_api_key",
     )
     return any(marker in text for marker in markers)
 

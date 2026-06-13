@@ -377,7 +377,7 @@ Structured rule/procedure/case evidence can be added as deterministic sidecars w
 
 Offline generator/judge evaluation is available with `rag-bench eval-rag`. It runs the normal RAG generator path, computes deterministic heuristic checks, and optionally calls a separate stronger judge only when the eval item `data_tier` and backend trust policy allow it. External generators and judges are disabled for semi-private context unless `--allow-external-semi-private` and `--allow-external-judge-semi-private` are set explicitly; private external generation/judging remains blocked by policy. Outputs go under ignored `eval_results/`. Private eval text, judge errors, and free-form judge issue strings are redacted by default; `--include-private-eval-text` is only for protected local debugging. See [`docs/rag_generator_judge_eval.md`](docs/rag_generator_judge_eval.md).
 
-Expose MiMo chat models in the same OpenAI-compatible chat UI by putting `MIMO_API_KEY=...` in `.secrets/.env` and adding `--enable-mimo`. If `MIMO_API_KEY_PAYG=...` is also present, the proxy keeps using `MIMO_API_KEY` first and only falls back to the PAYG alias `mimo_payg` when the primary MiMo request fails with quota/rate exhaustion:
+Expose MiMo chat models in the same OpenAI-compatible chat UI by putting `MIMO_API_KEY=...` in `.secrets/.env` and adding `--enable-mimo`. If `MIMO_API_KEY_PAYG=...` is also present, the proxy keeps using `MIMO_API_KEY` first and only falls back to the PAYG alias `mimo_payg` when the primary MiMo request fails with quota/rate exhaustion or provider-side key unavailability:
 
 ```bash
 uv run --frozen rag-bench serve --host 0.0.0.0 --port 8000 \
