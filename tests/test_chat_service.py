@@ -8,12 +8,14 @@ from rag_bench.chat_service import (
     ChatProxyConfig,
     ModelRoutedChatClient,
     RagChatService,
+    _build_mimo_client,
     _format_context,
     last_user_text,
     parse_chat_command,
 )
 from rag_bench.groq_client import GenerationResult
 from rag_bench.privacy import PrivacyRouteError
+from rag_bench.secrets import ApiKey
 from rag_bench.structured_evidence import StructuredEvidenceDoc, StructuredEvidenceIndex
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
 
@@ -395,6 +397,17 @@ def test_model_routed_chat_client_routes_mimo_models() -> None:
     assert mimo.model == "mimo-v2.5-pro"
     assert fallback.key_alias == "groq-a"
     assert groq.model == "qwen/qwen3-32b"
+
+
+def test_mimo_chat_client_uses_configured_auth_header() -> None:
+    client = _build_mimo_client(
+        ChatProxyConfig(mimo_auth_header="both"),
+        [ApiKey(alias="mimo", value="test-mimo-key")],
+    )
+
+    openai_client = client.client_factory(ApiKey(alias="mimo", value="test-mimo-key"), 30)
+
+    assert openai_client.chat.completions.auth_header == "both"
 
 
 def test_available_models_include_mimo_only_when_enabled() -> None:

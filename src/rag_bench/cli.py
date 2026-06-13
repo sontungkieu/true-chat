@@ -11,6 +11,7 @@ from rag_bench.chat_service import (
     ChatProxyConfig,
     DEFAULT_CHAT_MODEL,
     DEFAULT_CHAT_RETRIEVERS,
+    DEFAULT_MIMO_AUTH_HEADER,
     DEFAULT_MIMO_BASE_URL,
     DEFAULT_MIMO_MODELS,
     DEFAULT_PROXY_MODEL_ID,
@@ -159,6 +160,12 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"))
     eval_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
     eval_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
+    eval_parser.add_argument(
+        "--mimo-auth-header",
+        choices=("authorization", "api-key", "both", "none"),
+        default=DEFAULT_MIMO_AUTH_HEADER,
+        help="Auth header style for MiMo OpenAI-compatible requests.",
+    )
     eval_parser.add_argument("--mimo-models", default=",".join(DEFAULT_MIMO_MODELS))
     eval_parser.add_argument("--judge-provider", default=None)
     eval_parser.add_argument("--judge-model", default=None)
@@ -212,6 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"), help="Env file containing MIMO_API_KEY.")
     serve_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY", help="Variable name used for the MiMo API key.")
     serve_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL, help="OpenAI-compatible MiMo base URL.")
+    serve_parser.add_argument(
+        "--mimo-auth-header",
+        choices=("authorization", "api-key", "both", "none"),
+        default=DEFAULT_MIMO_AUTH_HEADER,
+        help="Auth header style for MiMo OpenAI-compatible requests.",
+    )
     serve_parser.add_argument("--mimo-models", default=",".join(DEFAULT_MIMO_MODELS), help="Comma-separated MiMo model ids.")
     serve_parser.add_argument(
         "--mimo-key-tpm",
@@ -479,6 +492,7 @@ def _eval_rag(args: argparse.Namespace) -> int:
         mimo_env_file=args.mimo_env_file,
         mimo_api_key_var=args.mimo_api_key_var,
         mimo_base_url=args.mimo_base_url,
+        mimo_auth_header=args.mimo_auth_header,
         mimo_models=mimo_models,
         vector_model=args.vector_model,
         max_completion_tokens=args.max_completion_tokens,
@@ -613,6 +627,7 @@ def _serve(args: argparse.Namespace) -> int:
         mimo_env_file=args.mimo_env_file,
         mimo_api_key_var=args.mimo_api_key_var,
         mimo_base_url=args.mimo_base_url,
+        mimo_auth_header=args.mimo_auth_header,
         mimo_models=mimo_models,
         mimo_key_tokens_per_minute=args.mimo_key_tpm,
         mimo_key_requests_per_minute=args.mimo_key_rpm,

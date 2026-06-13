@@ -627,6 +627,7 @@ def _build_openai_compatible_eval_generator(
         max_retries=chat_config.max_retries,
         base_url=base_url,
         provider=provider,
+        auth_header=_openai_compatible_auth_header(provider, chat_config),
     )
 
 
@@ -637,6 +638,7 @@ def _build_openai_compatible_client(
     max_retries: int,
     base_url: str,
     provider: str,
+    auth_header: str = "authorization",
 ) -> ChatGenerationClient:
     primary = _build_openai_compatible_round_robin(
         keys=[keys[0]],
@@ -644,6 +646,7 @@ def _build_openai_compatible_client(
         max_retries=max_retries,
         base_url=base_url,
         provider=provider,
+        auth_header=auth_header,
     )
     if len(keys) == 1:
         return primary
@@ -655,6 +658,7 @@ def _build_openai_compatible_client(
             max_retries=max_retries,
             base_url=base_url,
             provider=provider,
+            auth_header=auth_header,
         ),
     )
 
@@ -666,6 +670,7 @@ def _build_openai_compatible_round_robin(
     max_retries: int,
     base_url: str,
     provider: str,
+    auth_header: str = "authorization",
 ) -> RoundRobinGroqClient:
     return RoundRobinGroqClient(
         keys=keys,
@@ -678,6 +683,7 @@ def _build_openai_compatible_round_robin(
             base_url=base_url,
             timeout_s=timeout,
             token_parameter="max_tokens",
+            auth_header=auth_header,
         ),
         provider_name=provider,
         completion_token_parameter="max_tokens",
@@ -698,7 +704,14 @@ def _build_default_judge_client(config: RagEvalConfig) -> RagEvalJudgeClient | N
         max_retries=1,
         base_url=base_url,
         provider=provider,
+        auth_header=_openai_compatible_auth_header(provider, config.chat_config),
     )
+
+
+def _openai_compatible_auth_header(provider: str, chat_config: ChatProxyConfig) -> str:
+    if provider == "mimo":
+        return chat_config.mimo_auth_header
+    return "authorization"
 
 
 def _load_openai_compatible_keys(

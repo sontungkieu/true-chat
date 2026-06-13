@@ -15,6 +15,7 @@ from rag_bench.eval_harness import (
     run_rag_eval,
 )
 from rag_bench.groq_client import GenerationResult
+from rag_bench.secrets import ApiKey
 from rag_bench.structured_evidence import StructuredEvidenceDoc, StructuredEvidenceIndex
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
@@ -611,6 +612,8 @@ def test_mimo_eval_generator_uses_openai_compatible_client_without_groq_keys(mon
     assert isinstance(client, FakeRoundRobin)
     assert seen["model"] == "mimo-v2.5"
     assert seen["provider_name"] == "mimo"
+    openai_client = seen["client_factory"](ApiKey(alias="mimo", value="test-mimo-key"), 30)
+    assert openai_client.chat.completions.auth_header == "both"
 
 
 def test_mimo_eval_generator_builds_payg_fallback_when_configured(monkeypatch, tmp_path: Path) -> None:

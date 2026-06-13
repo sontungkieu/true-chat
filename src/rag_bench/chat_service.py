@@ -58,6 +58,7 @@ DEFAULT_CHAT_MODEL = "qwen/qwen3-32b"
 DEFAULT_CHAT_MODELS = (DEFAULT_CHAT_MODEL, "llama-3.1-8b-instant")
 DEFAULT_MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
 DEFAULT_MIMO_MODELS = ("mimo-v2.5-pro", "mimo-v2.5")
+DEFAULT_MIMO_AUTH_HEADER = "both"
 DEFAULT_CHAT_RETRIEVERS = (
     "bm25",
     "tfidf",
@@ -99,6 +100,7 @@ class ChatProxyConfig:
     mimo_env_file: Path = Path(".secrets/.env")
     mimo_api_key_var: str = "MIMO_API_KEY"
     mimo_base_url: str = DEFAULT_MIMO_BASE_URL
+    mimo_auth_header: str = DEFAULT_MIMO_AUTH_HEADER
     mimo_models: tuple[str, ...] = DEFAULT_MIMO_MODELS
     mimo_key_tokens_per_minute: int = 0
     mimo_key_requests_per_minute: int = 0
@@ -1365,6 +1367,7 @@ def _build_mimo_client(config: ChatProxyConfig, keys: list[ApiKey]) -> RoundRobi
             base_url=config.mimo_base_url,
             timeout_s=timeout,
             token_parameter="max_tokens",
+            auth_header=config.mimo_auth_header,
         ),
         provider_name="MiMo",
         completion_token_parameter="max_tokens",

@@ -515,6 +515,9 @@ class FallbackChatClient:
             max_completion_tokens=max_completion_tokens,
         )
         attempted_aliases = list(primary_result.attempted_aliases) + list(fallback_result.attempted_aliases)
+        combined_error = fallback_result.error
+        if primary_result.error and fallback_result.error:
+            combined_error = f"primary failed: {primary_result.error}; fallback failed: {fallback_result.error}"
         return GenerationResult(
             answer=fallback_result.answer,
             key_alias=fallback_result.key_alias,
@@ -524,9 +527,9 @@ class FallbackChatClient:
             prompt_tokens=fallback_result.prompt_tokens,
             completion_tokens=fallback_result.completion_tokens,
             total_tokens=fallback_result.total_tokens,
-            error=fallback_result.error,
+            error=combined_error,
             error_status_code=fallback_result.error_status_code,
-            rate_limited=fallback_result.rate_limited,
+            rate_limited=fallback_result.rate_limited or (bool(fallback_result.error) and primary_result.rate_limited),
             estimated_tokens=fallback_result.estimated_tokens or primary_result.estimated_tokens,
             scheduled_wait_s=primary_result.scheduled_wait_s + fallback_result.scheduled_wait_s,
             rejected_aliases=list(primary_result.rejected_aliases) + list(fallback_result.rejected_aliases),
