@@ -9,6 +9,7 @@ from rag_bench.chat_service import (
     ModelRoutedChatClient,
     RagChatService,
     _build_mimo_client,
+    _mimo_base_url_for_key,
     _format_context,
     last_user_text,
     parse_chat_command,
@@ -408,6 +409,17 @@ def test_mimo_chat_client_uses_configured_auth_header() -> None:
     openai_client = client.client_factory(ApiKey(alias="mimo", value="test-mimo-key"), 30)
 
     assert openai_client.chat.completions.auth_header == "both"
+
+
+def test_mimo_chat_client_routes_payg_key_to_payg_base_url() -> None:
+    config = ChatProxyConfig(
+        mimo_base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+        mimo_payg_base_url="https://api.xiaomimimo.com/v1",
+    )
+
+    assert _mimo_base_url_for_key(config, ApiKey(alias="mimo", value="tp-token-plan")) == config.mimo_base_url
+    assert _mimo_base_url_for_key(config, ApiKey(alias="mimo_payg", value="sk-payg")) == config.mimo_payg_base_url
+    assert _mimo_base_url_for_key(config, ApiKey(alias="mimo", value="sk-payg")) == config.mimo_payg_base_url
 
 
 def test_available_models_include_mimo_only_when_enabled() -> None:

@@ -14,6 +14,7 @@ from rag_bench.chat_service import (
     DEFAULT_MIMO_AUTH_HEADER,
     DEFAULT_MIMO_BASE_URL,
     DEFAULT_MIMO_MODELS,
+    DEFAULT_MIMO_PAYG_BASE_URL,
     DEFAULT_PROXY_MODEL_ID,
 )
 from rag_bench.eval_harness import DEFAULT_RAG_EVAL_OUTPUT_ROOT, RagEvalConfig, run_rag_eval
@@ -161,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY")
     eval_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL)
     eval_parser.add_argument(
+        "--mimo-payg-base-url",
+        default=DEFAULT_MIMO_PAYG_BASE_URL,
+        help="OpenAI-compatible base URL for MIMO_API_KEY_PAYG / sk-* MiMo keys.",
+    )
+    eval_parser.add_argument(
         "--mimo-auth-header",
         choices=("authorization", "api-key", "both", "none"),
         default=DEFAULT_MIMO_AUTH_HEADER,
@@ -219,6 +225,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--mimo-env-file", type=Path, default=Path(".secrets/.env"), help="Env file containing MIMO_API_KEY.")
     serve_parser.add_argument("--mimo-api-key-var", default="MIMO_API_KEY", help="Variable name used for the MiMo API key.")
     serve_parser.add_argument("--mimo-base-url", default=DEFAULT_MIMO_BASE_URL, help="OpenAI-compatible MiMo base URL.")
+    serve_parser.add_argument(
+        "--mimo-payg-base-url",
+        default=DEFAULT_MIMO_PAYG_BASE_URL,
+        help="OpenAI-compatible base URL for MIMO_API_KEY_PAYG / sk-* MiMo keys.",
+    )
     serve_parser.add_argument(
         "--mimo-auth-header",
         choices=("authorization", "api-key", "both", "none"),
@@ -492,6 +503,7 @@ def _eval_rag(args: argparse.Namespace) -> int:
         mimo_env_file=args.mimo_env_file,
         mimo_api_key_var=args.mimo_api_key_var,
         mimo_base_url=args.mimo_base_url,
+        mimo_payg_base_url=args.mimo_payg_base_url,
         mimo_auth_header=args.mimo_auth_header,
         mimo_models=mimo_models,
         vector_model=args.vector_model,
@@ -627,6 +639,7 @@ def _serve(args: argparse.Namespace) -> int:
         mimo_env_file=args.mimo_env_file,
         mimo_api_key_var=args.mimo_api_key_var,
         mimo_base_url=args.mimo_base_url,
+        mimo_payg_base_url=args.mimo_payg_base_url,
         mimo_auth_header=args.mimo_auth_header,
         mimo_models=mimo_models,
         mimo_key_tokens_per_minute=args.mimo_key_tpm,

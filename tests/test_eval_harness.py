@@ -9,6 +9,7 @@ from rag_bench.chat_service import ChatProxyConfig, RagChatService
 from rag_bench.eval_harness import (
     RagEvalConfig,
     RagEvalItem,
+    _openai_compatible_base_url_for_key,
     compute_heuristic_scores,
     evaluate_rag_item,
     load_rag_eval_items,
@@ -645,6 +646,36 @@ def test_mimo_eval_generator_builds_payg_fallback_when_configured(monkeypatch, t
     assert len(instances) == 2
     assert [key.alias for key in instances[0].kwargs["keys"]] == ["mimo"]
     assert [key.alias for key in instances[1].kwargs["keys"]] == ["mimo_payg"]
+
+
+def test_mimo_eval_payg_keys_use_payg_base_url() -> None:
+    assert (
+        _openai_compatible_base_url_for_key(
+            "mimo",
+            ApiKey(alias="mimo", value="tp-token-plan"),
+            base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+            payg_base_url="https://api.xiaomimimo.com/v1",
+        )
+        == "https://token-plan-sgp.xiaomimimo.com/v1"
+    )
+    assert (
+        _openai_compatible_base_url_for_key(
+            "mimo",
+            ApiKey(alias="mimo_payg", value="sk-payg"),
+            base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+            payg_base_url="https://api.xiaomimimo.com/v1",
+        )
+        == "https://api.xiaomimimo.com/v1"
+    )
+    assert (
+        _openai_compatible_base_url_for_key(
+            "mimo",
+            ApiKey(alias="mimo", value="sk-payg"),
+            base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+            payg_base_url="https://api.xiaomimimo.com/v1",
+        )
+        == "https://api.xiaomimimo.com/v1"
+    )
 
 
 def test_deepseek_eval_generator_requires_key(monkeypatch, tmp_path: Path) -> None:

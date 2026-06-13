@@ -102,6 +102,8 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "MIMO_API_KEY",
             "--mimo-base-url",
             "https://token-plan-sgp.xiaomimimo.com/v1",
+            "--mimo-payg-base-url",
+            "https://api.xiaomimimo.com/v1",
             "--mimo-auth-header",
             "both",
             "--mimo-models",
@@ -156,6 +158,7 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.mimo_env_file == Path(".secrets/.env")
     assert seen["config"].chat.mimo_api_key_var == "MIMO_API_KEY"
     assert seen["config"].chat.mimo_base_url == "https://token-plan-sgp.xiaomimimo.com/v1"
+    assert seen["config"].chat.mimo_payg_base_url == "https://api.xiaomimimo.com/v1"
     assert seen["config"].chat.mimo_auth_header == "both"
     assert seen["config"].chat.mimo_models == ("mimo-v2.5-pro", "mimo-v2.5")
     assert seen["config"].chat.mimo_key_tokens_per_minute == 0
@@ -353,6 +356,7 @@ def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, caps
     assert seen["config"].judge_max_completion_tokens == 3072
     assert seen["config"].include_private_outputs is True
     assert seen["config"].chat_config.enable_structured_evidence is True
+    assert seen["config"].chat_config.mimo_payg_base_url == "https://api.xiaomimimo.com/v1"
     assert seen["config"].chat_config.mimo_auth_header == "both"
 
 

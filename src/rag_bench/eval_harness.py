@@ -12,6 +12,7 @@ from rag_bench.chat_service import (
     ChatGenerationClient,
     ChatProxyConfig,
     ChatServiceResult,
+    DEFAULT_MIMO_PAYG_BASE_URL,
     RagChatService,
     _build_llm,
     _build_retrievers,
@@ -628,6 +629,7 @@ def _build_openai_compatible_eval_generator(
         base_url=base_url,
         provider=provider,
         auth_header=_openai_compatible_auth_header(provider, chat_config),
+        payg_base_url=_openai_compatible_payg_base_url(provider, chat_config),
     )
 
 
@@ -639,6 +641,7 @@ def _build_openai_compatible_client(
     base_url: str,
     provider: str,
     auth_header: str = "authorization",
+    payg_base_url: str | None = None,
 ) -> ChatGenerationClient:
     primary = _build_openai_compatible_round_robin(
         keys=[keys[0]],
@@ -647,6 +650,7 @@ def _build_openai_compatible_client(
         base_url=base_url,
         provider=provider,
         auth_header=auth_header,
+        payg_base_url=payg_base_url,
     )
     if len(keys) == 1:
         return primary
@@ -659,6 +663,7 @@ def _build_openai_compatible_client(
             base_url=base_url,
             provider=provider,
             auth_header=auth_header,
+            payg_base_url=payg_base_url,
         ),
     )
 
@@ -671,6 +676,7 @@ def _build_openai_compatible_round_robin(
     base_url: str,
     provider: str,
     auth_header: str = "authorization",
+    payg_base_url: str | None = None,
 ) -> RoundRobinGroqClient:
     return RoundRobinGroqClient(
         keys=keys,
@@ -680,7 +686,12 @@ def _build_openai_compatible_round_robin(
         key_requests_per_minute=0,
         client_factory=lambda key, timeout: OpenAICompatibleClient(
             api_key=key.value,
-            base_url=base_url,
+            base_url=_openai_compatible_base_url_for_key(
+                provider,
+                key,
+                base_url=base_url,
+                payg_base_url=payg_base_url,
+            ),
             timeout_s=timeout,
             token_parameter="max_tokens",
             auth_header=auth_header,
@@ -705,6 +716,7 @@ def _build_default_judge_client(config: RagEvalConfig) -> RagEvalJudgeClient | N
         base_url=base_url,
         provider=provider,
         auth_header=_openai_compatible_auth_header(provider, config.chat_config),
+        payg_base_url=_openai_compatible_payg_base_url(provider, config.chat_config),
     )
 
 
@@ -712,6 +724,24 @@ def _openai_compatible_auth_header(provider: str, chat_config: ChatProxyConfig) 
     if provider == "mimo":
         return chat_config.mimo_auth_header
     return "authorization"
+
+
+def _openai_compatible_payg_base_url(provider: str, chat_config: ChatProxyConfig) -> str | None:
+    if provider == "mimo":
+        return chat_config.mimo_payg_base_url
+    return None
+
+
+def _openai_compatible_base_url_for_key(
+    provider: str,
+    key: ApiKey,
+    *,
+    base_url: str,
+    payg_base_url: str | None,
+) -> str:
+    if provider == "mimo" and (key.alias == "mimo_payg" or key.value.startswith("sk-")):
+        return payg_base_url or DEFAULT_MIMO_PAYG_BASE_URL
+    return base_url
 
 
 def _load_openai_compatible_keys(
