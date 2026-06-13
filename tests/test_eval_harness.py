@@ -594,6 +594,7 @@ def test_mimo_eval_generator_uses_openai_compatible_client_without_groq_keys(mon
         eval_set,
         generator_provider="mimo",
         generator_model="mimo-v2.5",
+        chat_config=ChatProxyConfig(mimo_env_file=tmp_path / "missing.env"),
     )
     seen = {}
 
@@ -602,6 +603,7 @@ def test_mimo_eval_generator_uses_openai_compatible_client_without_groq_keys(mon
             seen.update(kwargs)
 
     monkeypatch.setenv("MIMO_API_KEY", "test-mimo-key")
+    monkeypatch.delenv("MIMO_API_KEY_PAYG", raising=False)
     monkeypatch.setattr(eval_harness_module, "RoundRobinGroqClient", FakeRoundRobin)
 
     client = eval_harness_module._build_eval_generator(config, config.chat_config)
@@ -609,6 +611,37 @@ def test_mimo_eval_generator_uses_openai_compatible_client_without_groq_keys(mon
     assert isinstance(client, FakeRoundRobin)
     assert seen["model"] == "mimo-v2.5"
     assert seen["provider_name"] == "mimo"
+
+
+def test_mimo_eval_generator_builds_payg_fallback_when_configured(monkeypatch, tmp_path: Path) -> None:
+    eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "public", "query": "TERM_A", "data_tier": "public"}])
+    config = _config(
+        tmp_path,
+        eval_set,
+        generator_provider="mimo",
+        generator_model="mimo-v2.5",
+        chat_config=ChatProxyConfig(mimo_env_file=tmp_path / "missing.env"),
+    )
+    instances = []
+
+    class FakeRoundRobin:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            instances.append(self)
+
+        def rate_limit_snapshot(self):
+            return {}
+
+    monkeypatch.setenv("MIMO_API_KEY", "test-mimo-key")
+    monkeypatch.setenv("MIMO_API_KEY_PAYG", "test-payg-key")
+    monkeypatch.setattr(eval_harness_module, "RoundRobinGroqClient", FakeRoundRobin)
+
+    client = eval_harness_module._build_eval_generator(config, config.chat_config)
+
+    assert isinstance(client, eval_harness_module.FallbackChatClient)
+    assert len(instances) == 2
+    assert [key.alias for key in instances[0].kwargs["keys"]] == ["mimo"]
+    assert [key.alias for key in instances[1].kwargs["keys"]] == ["mimo_payg"]
 
 
 def test_deepseek_eval_generator_requires_key(monkeypatch, tmp_path: Path) -> None:

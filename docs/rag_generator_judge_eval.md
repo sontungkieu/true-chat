@@ -96,6 +96,8 @@ Semi-private external generation is separate from judging and must be enabled ex
 
 The two flags are intentionally independent so a run can allow an external generator while keeping external judging disabled, or vice versa. Do not self-judge a model when using the harness for cross-provider evaluation.
 
+For MiMo generator or judge runs, the harness reads `MIMO_API_KEY` first. If `MIMO_API_KEY_PAYG` is also configured in the process environment or the selected MiMo env file, it is used only as the fallback alias `mimo_payg` after quota/rate exhaustion on the primary MiMo key. MiMo fallback aliases are metadata only; key values are never written to logs or eval reports.
+
 Private data requires a trusted private judge backend:
 
 ```bash

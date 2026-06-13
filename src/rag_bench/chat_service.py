@@ -24,7 +24,7 @@ from rag_bench.dictionary_query_planner import (
     merge_planned_dictionary_results,
     plan_dictionary_query,
 )
-from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
+from rag_bench.groq_client import FallbackChatClient, GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.prompts import SYSTEM_PROMPT
 from rag_bench.privacy import (
     BackendDescriptor,
@@ -44,7 +44,7 @@ from rag_bench.privacy import (
 )
 from rag_bench.retriever_registry import create_retriever, get_retriever_spec, normalize_retriever_id
 from rag_bench.retrievers import Retriever
-from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
+from rag_bench.secrets import ApiKey, load_env_api_key_chain, load_groq_keys
 from rag_bench.structured_evidence import (
     StructuredEvidenceIndex,
     load_structured_evidence_jsonl,
@@ -1336,9 +1336,25 @@ def _build_llm(config: ChatProxyConfig, keys: list[ApiKey]) -> ChatGenerationCli
     if not config.mimo_enabled:
         return groq_client
 
-    mimo_key = load_env_api_key(config.mimo_env_file, config.mimo_api_key_var, alias="mimo")
-    mimo_client = RoundRobinGroqClient(
-        keys=[mimo_key],
+    mimo_keys = load_env_api_key_chain(
+        config.mimo_env_file,
+        config.mimo_api_key_var,
+        primary_alias="mimo",
+        fallback_variables=(("MIMO_API_KEY_PAYG", "mimo_payg"),),
+    )
+    mimo_primary = _build_mimo_client(config, [mimo_keys[0]])
+    mimo_client: ChatGenerationClient = mimo_primary
+    if len(mimo_keys) > 1:
+        mimo_client = FallbackChatClient(primary=mimo_primary, fallback=_build_mimo_client(config, mimo_keys[1:]))
+    return ModelRoutedChatClient(
+        default_client=groq_client,
+        routes={model: mimo_client for model in config.mimo_models},
+    )
+
+
+def _build_mimo_client(config: ChatProxyConfig, keys: list[ApiKey]) -> RoundRobinGroqClient:
+    return RoundRobinGroqClient(
+        keys=keys,
         model=config.mimo_models[0] if config.mimo_models else "mimo-v2.5-pro",
         max_retries=config.max_retries,
         key_tokens_per_minute=config.mimo_key_tokens_per_minute,
@@ -1352,10 +1368,6 @@ def _build_llm(config: ChatProxyConfig, keys: list[ApiKey]) -> ChatGenerationCli
         ),
         provider_name="MiMo",
         completion_token_parameter="max_tokens",
-    )
-    return ModelRoutedChatClient(
-        default_client=groq_client,
-        routes={model: mimo_client for model in config.mimo_models},
     )
 
 

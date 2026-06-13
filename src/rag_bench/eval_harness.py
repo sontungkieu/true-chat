@@ -19,7 +19,7 @@ from rag_bench.chat_service import (
     _load_dictionary,
     _load_structured_evidence_index,
 )
-from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
+from rag_bench.groq_client import FallbackChatClient, GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.privacy import (
     BackendKind,
     ConversationPrivacyState,
@@ -32,7 +32,7 @@ from rag_bench.privacy import (
     normalize_data_tier,
     safe_source_payload,
 )
-from rag_bench.secrets import ApiKey, load_env_api_key, load_groq_keys
+from rag_bench.secrets import ApiKey, SecretFormatError, load_env_api_key_chain, load_groq_keys
 from rag_bench.types import RetrievalHit
 
 
@@ -618,19 +618,59 @@ def _build_openai_compatible_eval_generator(
     provider: str,
 ) -> ChatGenerationClient:
     env_name, base_url = _judge_env_and_base_url(provider)
-    import os
-
-    api_key = os.getenv(env_name)
-    if api_key:
-        key = ApiKey(alias=provider, value=api_key)
-    elif provider == "mimo":
-        key = load_env_api_key(chat_config.mimo_env_file, chat_config.mimo_api_key_var, alias=provider)
-    else:
+    keys = _load_openai_compatible_keys(provider, env_name, chat_config, required=True)
+    if not keys:
         raise RuntimeError(f"{env_name} is required for {provider} eval generation")
-    return RoundRobinGroqClient(
-        keys=[key],
+    return _build_openai_compatible_client(
+        keys=keys,
         model=config.generator_model,
         max_retries=chat_config.max_retries,
+        base_url=base_url,
+        provider=provider,
+    )
+
+
+def _build_openai_compatible_client(
+    *,
+    keys: list[ApiKey],
+    model: str | None,
+    max_retries: int,
+    base_url: str,
+    provider: str,
+) -> ChatGenerationClient:
+    primary = _build_openai_compatible_round_robin(
+        keys=[keys[0]],
+        model=model,
+        max_retries=max_retries,
+        base_url=base_url,
+        provider=provider,
+    )
+    if len(keys) == 1:
+        return primary
+    return FallbackChatClient(
+        primary=primary,
+        fallback=_build_openai_compatible_round_robin(
+            keys=keys[1:],
+            model=model,
+            max_retries=max_retries,
+            base_url=base_url,
+            provider=provider,
+        ),
+    )
+
+
+def _build_openai_compatible_round_robin(
+    *,
+    keys: list[ApiKey],
+    model: str | None,
+    max_retries: int,
+    base_url: str,
+    provider: str,
+) -> RoundRobinGroqClient:
+    return RoundRobinGroqClient(
+        keys=keys,
+        model=model or "",
+        max_retries=max_retries,
         key_tokens_per_minute=0,
         key_requests_per_minute=0,
         client_factory=lambda key, timeout: OpenAICompatibleClient(
@@ -649,26 +689,45 @@ def _build_default_judge_client(config: RagEvalConfig) -> RagEvalJudgeClient | N
         return None
     provider = str(config.judge_provider or "").strip().lower()
     env_name, base_url = _judge_env_and_base_url(provider)
+    keys = _load_openai_compatible_keys(provider, env_name, config.chat_config, required=False)
+    if not keys:
+        return None
+    return _build_openai_compatible_client(
+        keys=keys,
+        model=config.judge_model,
+        max_retries=1,
+        base_url=base_url,
+        provider=provider,
+    )
+
+
+def _load_openai_compatible_keys(
+    provider: str,
+    env_name: str,
+    chat_config: ChatProxyConfig,
+    *,
+    required: bool,
+) -> list[ApiKey]:
+    if provider == "mimo":
+        try:
+            return load_env_api_key_chain(
+                chat_config.mimo_env_file,
+                chat_config.mimo_api_key_var,
+                primary_alias="mimo",
+                fallback_variables=(("MIMO_API_KEY_PAYG", "mimo_payg"),),
+            )
+        except SecretFormatError as exc:
+            if required:
+                raise RuntimeError(f"{env_name} is required for {provider} eval generation") from exc
+            return []
     import os
 
     api_key = os.getenv(env_name)
-    if not api_key:
-        return None
-    return RoundRobinGroqClient(
-        keys=[ApiKey(alias=provider, value=api_key)],
-        model=config.judge_model,
-        max_retries=1,
-        key_tokens_per_minute=0,
-        key_requests_per_minute=0,
-        client_factory=lambda key, timeout: OpenAICompatibleClient(
-            api_key=key.value,
-            base_url=base_url,
-            timeout_s=timeout,
-            token_parameter="max_tokens",
-        ),
-        provider_name=provider,
-        completion_token_parameter="max_tokens",
-    )
+    if api_key:
+        return [ApiKey(alias=provider, value=api_key)]
+    if required:
+        raise RuntimeError(f"{env_name} is required for {provider} eval generation")
+    return []
 
 
 def _judge_env_and_base_url(provider: str) -> tuple[str, str]:
