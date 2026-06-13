@@ -232,7 +232,7 @@ def test_chat_page() -> None:
     assert "const DEFAULT_MEMORY_ENABLED = false" in response.text
     assert "const DEFAULT_DICTIONARY_CROSS_REF = true" in response.text
     assert "const DEFAULT_MAX_TOKENS = 4096" in response.text
-    assert "SETTINGS_SCHEMA_VERSION = 2" in response.text
+    assert "SETTINGS_SCHEMA_VERSION = 3" in response.text
     assert "runtimeVersion" in response.text
     assert "const APP_VERSION = \"\"" in response.text
     assert "__APP_VERSION_JSON__" not in response.text

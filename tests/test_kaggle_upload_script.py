@@ -53,6 +53,7 @@ def test_build_notebook_checks_expected_commit_and_injects_tunnel_token() -> Non
     assert "uv', 'run', '--frozen', '--no-sync'" in source
     assert "'--model', 'qwen/qwen3-32b'" in source
     assert "'--max-completion-tokens', '4096'" in source
+    assert "SERVE_RETRIEVER = 'bm25'" in source
     assert "print_proxy_log_tail" in source
     assert "LOCAL_PATCH" not in source
     assert "UserSecretsClient" in source
@@ -106,9 +107,10 @@ def test_build_notebook_can_attach_dictionary_and_mimo() -> None:
         dictionary_artifact="runs/pb_dictionary_base_supp2021_prod_graph",
         dictionary_required=True,
         available_retrievers="bm25,dictionary-graph",
+        serve_retriever="dictionary-graph",
         allow_external_semi_private=True,
         enable_mimo=True,
-        mimo_models="mimo-v2.5-pro,mimo-v2.5",
+        mimo_models="mimo-v2.5",
     )
     source = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
     cell_ids = [cell["id"] for cell in notebook["cells"]]
@@ -118,11 +120,13 @@ def test_build_notebook_can_attach_dictionary_and_mimo() -> None:
     assert "secret-mimo" not in source
     assert f"MIMO_ENV_B64 = '{mimo_payload}'" in source
     assert "'--available-retrievers', AVAILABLE_RETRIEVERS" in source
+    assert "SERVE_RETRIEVER = 'dictionary-graph'" in source
     assert "'--dictionary-artifact', DICTIONARY_ARTIFACT" in source
     assert "proxy_cmd.append('--dictionary-required')" in source
     assert "proxy_cmd.append('--allow-external-semi-private')" in source
     assert "proxy_cmd.append('--enable-mimo')" in source
     assert "'--mimo-models', MIMO_MODELS" in source
+    assert "MIMO_MODELS = 'mimo-v2.5'" in source
     assert "DICTIONARY_DATASET_SOURCE = 'codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732'" in source
 
 
@@ -172,6 +176,7 @@ def test_write_staging_files_adds_dataset_sources_without_raw_secrets(tmp_path: 
         dictionary_artifact="runs/pb_dictionary_base_supp2021_prod_graph",
         dictionary_required=True,
         available_retrievers="bm25,dictionary-graph",
+        serve_retriever="dictionary-graph",
         enable_mimo=True,
     )
 
@@ -180,6 +185,7 @@ def test_write_staging_files_adds_dataset_sources_without_raw_secrets(tmp_path: 
     metadata = json.loads(metadata_text)
 
     assert metadata["dataset_sources"] == ["codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732"]
+    assert "SERVE_RETRIEVER = 'dictionary-graph'" in notebook_text
     assert "secret-mimo" not in metadata_text
     assert "secret-mimo" not in notebook_text
 

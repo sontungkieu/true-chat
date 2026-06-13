@@ -469,6 +469,7 @@ scripts/upload_kaggle_rag_proxy_notebook.py \
   --dictionary-artifact runs/pb_dictionary_base_supp2021_prod_graph \
   --dictionary-required \
   --allow-external-semi-private \
+  --serve-retriever dictionary-graph \
   --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits
 ```
 
@@ -481,8 +482,11 @@ scripts/upload_kaggle_rag_proxy_notebook.py \
   --dictionary-dataset-source codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732 \
   --dictionary-required \
   --allow-external-semi-private \
+  --serve-retriever dictionary-graph \
   --enable-mimo
 ```
+
+When a dictionary runtime dataset is attached, the uploader also defaults `rag-bench serve --retriever` to `dictionary-graph` so normal chat requests do not start from the benchmark BM25 corpus. Pass `--serve-retriever bm25` only for a deliberate mixed benchmark-plus-dictionary fallback deployment.
 
 For a private throwaway notebook, the script can embed local Groq keys and MiMo env directly into generated cells instead of using Kaggle Secrets:
 
