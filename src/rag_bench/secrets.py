@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,6 +94,54 @@ def load_env_api_key(path: str | Path, variable: str, *, alias: str) -> ApiKey:
     if not value:
         raise SecretFormatError(f"{variable} was not found in {Path(path)}")
     return ApiKey(alias=alias, value=value)
+
+
+def load_env_api_key_chain(
+    path: str | Path,
+    primary_variable: str,
+    *,
+    primary_alias: str,
+    fallback_variables: tuple[tuple[str, str], ...] = (),
+) -> list[ApiKey]:
+    """Load an ordered API key chain from process env and an env file.
+
+    Process environment values take precedence over the env file. Secret values are
+    never included in errors; callers use aliases for logging/metadata.
+    """
+
+    primary_variable = primary_variable.strip()
+    if not primary_variable:
+        raise SecretFormatError("API key variable name must not be empty")
+    variables = ((primary_variable, primary_alias), *fallback_variables)
+    env_path = Path(path)
+    values: dict[str, str] = {}
+    if env_path.exists():
+        values = load_env_values(env_path)
+
+    keys: list[ApiKey] = []
+    seen_aliases: set[str] = set()
+    seen_variables: set[str] = set()
+    for variable, alias in variables:
+        variable = variable.strip()
+        alias = alias.strip()
+        if not variable or not alias:
+            raise SecretFormatError("API key variable and alias names must not be empty")
+        if variable in seen_variables:
+            continue
+        seen_variables.add(variable)
+        value = os.getenv(variable) or values.get(variable)
+        if not value:
+            continue
+        if alias in seen_aliases:
+            raise SecretFormatError(f"Duplicate API key alias: {alias}")
+        seen_aliases.add(alias)
+        keys.append(ApiKey(alias=alias, value=value))
+
+    if keys:
+        return keys
+    if not env_path.exists():
+        raise SecretFormatError(f"Env file does not exist: {env_path}")
+    raise SecretFormatError(f"{primary_variable} was not found in {env_path}")
 
 
 def _strip_env_quotes(value: str) -> str:

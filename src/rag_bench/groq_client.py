@@ -476,6 +476,74 @@ class RoundRobinGroqClient:
         return Groq(api_key=key.value, base_url=self.base_url, timeout=self.timeout_s, max_retries=0)
 
 
+@dataclass
+class FallbackChatClient:
+    """Try a primary chat client first, then a fallback on quota/rate exhaustion."""
+
+    primary: Any
+    fallback: Any
+
+    @property
+    def key_usage_counts(self) -> dict[str, int]:
+        counts: Counter[str] = Counter()
+        for client in (self.primary, self.fallback):
+            counts.update(dict(getattr(client, "key_usage_counts", {}) or {}))
+        return dict(counts)
+
+    def generate(
+        self,
+        messages: Iterable[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_completion_tokens: int = 512,
+    ) -> GenerationResult:
+        messages_list = list(messages)
+        primary_result = self.primary.generate(
+            messages_list,
+            model=model,
+            temperature=temperature,
+            max_completion_tokens=max_completion_tokens,
+        )
+        if not _should_use_fallback(primary_result):
+            return primary_result
+
+        fallback_result = self.fallback.generate(
+            messages_list,
+            model=model,
+            temperature=temperature,
+            max_completion_tokens=max_completion_tokens,
+        )
+        attempted_aliases = list(primary_result.attempted_aliases) + list(fallback_result.attempted_aliases)
+        combined_error = fallback_result.error
+        if primary_result.error and fallback_result.error:
+            combined_error = f"primary failed: {primary_result.error}; fallback failed: {fallback_result.error}"
+        return GenerationResult(
+            answer=fallback_result.answer,
+            key_alias=fallback_result.key_alias,
+            attempted_aliases=attempted_aliases,
+            latency_s=primary_result.latency_s + fallback_result.latency_s,
+            retry_count=max(0, len(attempted_aliases) - 1),
+            prompt_tokens=fallback_result.prompt_tokens,
+            completion_tokens=fallback_result.completion_tokens,
+            total_tokens=fallback_result.total_tokens,
+            error=combined_error,
+            error_status_code=fallback_result.error_status_code,
+            rate_limited=fallback_result.rate_limited or (bool(fallback_result.error) and primary_result.rate_limited),
+            estimated_tokens=fallback_result.estimated_tokens or primary_result.estimated_tokens,
+            scheduled_wait_s=primary_result.scheduled_wait_s + fallback_result.scheduled_wait_s,
+            rejected_aliases=list(primary_result.rejected_aliases) + list(fallback_result.rejected_aliases),
+            output_tokens_per_s=fallback_result.output_tokens_per_s,
+        )
+
+    def rate_limit_snapshot(self) -> dict[str, dict[str, float | int | str]]:
+        snapshot: dict[str, dict[str, float | int | str]] = {}
+        for client in (self.primary, self.fallback):
+            for alias, details in client.rate_limit_snapshot().items():
+                snapshot[alias] = details
+        return snapshot
+
+
 def _extract_usage(response: Any) -> tuple[int | None, int | None, int | None]:
     usage = getattr(response, "usage", None)
     if usage is None:
@@ -574,6 +642,29 @@ def _tokens_per_second(tokens: int | None, latency_s: float) -> float | None:
     if tokens is None or tokens <= 0 or latency_s <= 0:
         return None
     return tokens / latency_s
+
+
+def _should_use_fallback(result: GenerationResult) -> bool:
+    if not result.error:
+        return False
+    if result.error_status_code in {401, 403, 429} or result.rate_limited:
+        return True
+    text = result.error.lower()
+    markers = (
+        "quota",
+        "insufficient_quota",
+        "balance",
+        "credit",
+        "billing",
+        "rate limit",
+        "rate_limit",
+        "no api keys remain",
+        "no available",
+        "disabled aliases",
+        "invalid api key",
+        "invalid_api_key",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _error_text(exc: Exception) -> str:

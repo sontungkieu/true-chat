@@ -102,6 +102,10 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
             "MIMO_API_KEY",
             "--mimo-base-url",
             "https://token-plan-sgp.xiaomimimo.com/v1",
+            "--mimo-payg-base-url",
+            "https://api.xiaomimimo.com/v1",
+            "--mimo-auth-header",
+            "both",
             "--mimo-models",
             "mimo-v2.5-pro,mimo-v2.5",
             "--mimo-key-tpm",
@@ -154,6 +158,8 @@ def test_cli_serve_smoke_with_mocked_server(monkeypatch) -> None:
     assert seen["config"].chat.mimo_env_file == Path(".secrets/.env")
     assert seen["config"].chat.mimo_api_key_var == "MIMO_API_KEY"
     assert seen["config"].chat.mimo_base_url == "https://token-plan-sgp.xiaomimimo.com/v1"
+    assert seen["config"].chat.mimo_payg_base_url == "https://api.xiaomimimo.com/v1"
+    assert seen["config"].chat.mimo_auth_header == "both"
     assert seen["config"].chat.mimo_models == ("mimo-v2.5-pro", "mimo-v2.5")
     assert seen["config"].chat.mimo_key_tokens_per_minute == 0
     assert seen["config"].chat.mimo_key_requests_per_minute == 0
@@ -319,6 +325,7 @@ def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, caps
             "local_eval",
             "--generator-trusted-private-model",
             "tiny-generator",
+            "--allow-external-semi-private",
             "--judge-provider",
             "mimo",
             "--judge-model",
@@ -340,6 +347,7 @@ def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, caps
     assert seen["config"].generator_model == "tiny-generator"
     assert seen["config"].generator_backend_id == "local_eval"
     assert seen["config"].generator_backend_kind == "local_process"
+    assert seen["config"].chat_config.allow_external_semi_private is True
     assert seen["config"].judge_provider == "mimo"
     assert seen["config"].judge_model == "mimo-v2.5"
     assert seen["config"].judge_backend_kind == "external_saas"
@@ -348,6 +356,8 @@ def test_cli_eval_rag_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, caps
     assert seen["config"].judge_max_completion_tokens == 3072
     assert seen["config"].include_private_outputs is True
     assert seen["config"].chat_config.enable_structured_evidence is True
+    assert seen["config"].chat_config.mimo_payg_base_url == "https://api.xiaomimimo.com/v1"
+    assert seen["config"].chat_config.mimo_auth_header == "both"
 
 
 def test_cli_eval_rag_accepts_redacted_smoke_fixture_benchmark(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -403,3 +413,40 @@ def test_cli_eval_rag_accepts_redacted_smoke_fixture_benchmark(monkeypatch, tmp_
     assert seen["config"].chat_config.dictionary_required is True
     assert seen["config"].chat_config.structured_evidence_jsonl == fixture_dir / "structured_evidence_public.jsonl"
     assert seen["config"].disable_llm_judge is True
+
+
+def test_cli_eval_rag_external_generator_defaults_to_external_saas(monkeypatch, tmp_path: Path) -> None:
+    seen = {}
+    eval_set = tmp_path / "eval.jsonl"
+    eval_set.write_text('{"eval_id":"one","query":"TERM_A","data_tier":"semi_private"}\n', encoding="utf-8")
+
+    def fake_run_rag_eval(config):
+        seen["config"] = config
+        return {
+            "output_dir": str(tmp_path / "eval-out"),
+            "results_path": str(tmp_path / "eval-out" / "results.jsonl"),
+            "summary_path": str(tmp_path / "eval-out" / "summary.md"),
+            "failures_path": str(tmp_path / "eval-out" / "failures.jsonl"),
+            "item_count": 1,
+            "failure_count": 0,
+            "judge_called_count": 0,
+        }
+
+    monkeypatch.setattr(cli, "run_rag_eval", fake_run_rag_eval)
+
+    assert cli.main(
+        [
+            "eval-rag",
+            "--eval-set",
+            str(eval_set),
+            "--generator-provider",
+            "deepseek",
+            "--generator-model",
+            "deepseek-v4-flash",
+            "--allow-external-semi-private",
+        ]
+    ) == 0
+
+    assert seen["config"].generator_provider == "deepseek"
+    assert seen["config"].generator_backend_kind == "external_saas"
+    assert seen["config"].chat_config.allow_external_semi_private is True

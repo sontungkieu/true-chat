@@ -23,7 +23,7 @@ The planner classifies these intents deterministically and gives downstream retr
 The planner currently recognizes:
 
 - `definition`: "X là gì", "định nghĩa X", "what is X", "define X".
-- `alias`: "X còn gọi là gì", "tên khác của X", "alias of X".
+- `alias`: "X còn gọi là gì", "tên khác của X", "tên gọi khác của X", "alias of X", "synonym of X".
 - `category`: "X thuộc nhóm nào", "X là loại gì", "category of X".
 - `comparison`: "so sánh X và Y", "X khác Y như thế nào", "difference between X and Y".
 - `relation`: "X liên quan gì đến Y", "quan hệ giữa X và Y", "how is X related to Y".
@@ -40,7 +40,7 @@ The planner currently recognizes:
 The planner does not rewrite graph scoring. It applies small, explainable boosts after normal retrieval:
 
 - definition: prefer direct headword/alias/concept/category evidence;
-- alias: prefer `has_alias`;
+- alias: prefer explicit `has_alias` or direct alias metadata; related terms, concepts, categories, arbitrary lexical overlap, and see-also links are not counted as aliases;
 - category: prefer `in_category` and `is_a`;
 - comparison: retrieve evidence for both detectable terms, then prefer direct entries, aliases, categories, concepts, and direct relation edges;
 - relation: allow up to two graph hops and prefer stronger typed relations before weak `related_to`;
@@ -54,7 +54,9 @@ Each returned dictionary hit can carry safe metadata such as:
   "query_plan_intent": "comparison",
   "query_plan_role": "comparison_term",
   "query_plan_edge_types": ["is_a"],
-  "query_plan_score": 1.42
+  "query_plan_score": 1.42,
+  "has_alias_evidence": false,
+  "alias_evidence_count": 0
 }
 ```
 
@@ -65,10 +67,13 @@ These fields are labels and scores, not raw private source text.
 Dictionary-mode prompts now include concise task instructions derived from the plan. Examples:
 
 - comparison: cover both terms when evidence exists; state when one side is missing;
+- alias: extract supported alternate names from explicit alias metadata/`has_alias` graph paths and answer directly when possible; if the answer falls back to the LLM prompt, include an explicit alias evidence block and forbid using related/concept/category/see-also evidence as aliases;
 - relation: prefer typed graph relations over loose association;
 - procedure/rule/case: do not invent steps, rules, exceptions, or cases.
 
-The model is still instructed to answer only from retrieved evidence and cite dictionary entry ids.
+For alias intent, simple positive and negative alias answers are deterministic: the service returns the extracted alias list with citations, or states that no supported alias was found, without asking an external generator to infer aliases from long dictionary text. The model is still instructed to answer only from retrieved evidence and cite dictionary entry ids for non-deterministic dictionary tasks.
+
+Alias extraction accepts direct `aliases` metadata, explicit alias labels, `has_alias` graph paths, and `has_alias` graph edges with a target label. Weak relations such as `related_to`, `see_also`, `has_concept`, `in_category`, and `is_a` are ignored. If a raw graph edge includes `confidence`, the extractive path requires `confidence >= 0.5`; graph paths already returned by the retriever are treated as validated retriever evidence. The behavior can be rolled back in tests or controlled deployments with `ChatProxyConfig(enable_alias_extractive_answer=False)`, which keeps the alias prompt guardrails but uses the normal generator path.
 
 ## Schema Gaps
 
@@ -98,7 +103,7 @@ Dictionary-mode responses include a safe `query_plan` object:
 }
 ```
 
-The same object is also available under `rag.retrieval_metadata.query_plan` for debugging.
+The same object is also available under `rag.retrieval_metadata.query_plan` for debugging. Alias requests additionally expose safe aggregate metadata under `rag.retrieval_metadata.alias_evidence`, including `has_alias_evidence`, `alias_evidence_count`, `alias_evidence_doc_count`, `alias_answer_mode`, and source ids for hits marked as alias evidence. The `query_plan` payload mirrors the aggregate alias counts and answer mode. These debug metadata fields do not include raw alias strings beyond what the normal answer/source payload already exposes under the runtime privacy policy.
 
 ## Privacy Interaction
 

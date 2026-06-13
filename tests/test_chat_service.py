@@ -8,12 +8,18 @@ from rag_bench.chat_service import (
     ChatProxyConfig,
     ModelRoutedChatClient,
     RagChatService,
+    _build_mimo_client,
+    _mimo_base_url_for_key,
     _format_context,
+    build_dictionary_rag_messages,
+    extract_alias_evidence_from_hits,
     last_user_text,
     parse_chat_command,
 )
 from rag_bench.groq_client import GenerationResult
+from rag_bench.dictionary_query_planner import plan_dictionary_query
 from rag_bench.privacy import PrivacyRouteError
+from rag_bench.secrets import ApiKey
 from rag_bench.structured_evidence import StructuredEvidenceDoc, StructuredEvidenceIndex
 from rag_bench.types import BenchmarkData, Document, Query, RetrievalHit, RetrievalResult
 
@@ -397,6 +403,28 @@ def test_model_routed_chat_client_routes_mimo_models() -> None:
     assert groq.model == "qwen/qwen3-32b"
 
 
+def test_mimo_chat_client_uses_configured_auth_header() -> None:
+    client = _build_mimo_client(
+        ChatProxyConfig(mimo_auth_header="both"),
+        [ApiKey(alias="mimo", value="test-mimo-key")],
+    )
+
+    openai_client = client.client_factory(ApiKey(alias="mimo", value="test-mimo-key"), 30)
+
+    assert openai_client.chat.completions.auth_header == "both"
+
+
+def test_mimo_chat_client_routes_payg_key_to_payg_base_url() -> None:
+    config = ChatProxyConfig(
+        mimo_base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+        mimo_payg_base_url="https://api.xiaomimimo.com/v1",
+    )
+
+    assert _mimo_base_url_for_key(config, ApiKey(alias="mimo", value="tp-token-plan")) == config.mimo_base_url
+    assert _mimo_base_url_for_key(config, ApiKey(alias="mimo_payg", value="sk-payg")) == config.mimo_payg_base_url
+    assert _mimo_base_url_for_key(config, ApiKey(alias="mimo", value="sk-payg")) == config.mimo_payg_base_url
+
+
 def test_available_models_include_mimo_only_when_enabled() -> None:
     service = RagChatService(
         config=ChatProxyConfig(top_k=2, model_id="rag-test", mimo_enabled=True),
@@ -685,6 +713,614 @@ def test_dictionary_mode_exposes_safe_query_plan_metadata_and_prompt_instruction
     assert llm.calls == 1
 
 
+def test_extract_alias_evidence_from_explicit_metadata() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic alias entry.",
+                metadata={"aliases": ["ALIAS_A", "ALIAS_B"], "has_alias_evidence": True},
+            )
+        ]
+    )
+
+    assert evidence.aliases == ["ALIAS_A", "ALIAS_B"]
+    assert evidence.source_doc_ids == ["TERM_A_ENTRY"]
+    assert evidence.evidence_count == 2
+    assert evidence.has_explicit_alias_evidence is True
+
+
+def test_extract_alias_evidence_ignores_related_category_and_concepts() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="RELATED",
+                score=1.0,
+                rank=1,
+                title="RELATED_X",
+                text="Synthetic related entry.",
+                metadata={"edge_type": "related_to", "label": "RELATED_X", "dictionary_relation": "related_to"},
+            ),
+            RetrievalHit(
+                doc_id="CATEGORY",
+                score=1.0,
+                rank=2,
+                title="CATEGORY_X",
+                text="Synthetic category entry.",
+                metadata={"edge_type": "in_category", "label": "CATEGORY_X", "dictionary_relation": "in_category"},
+            ),
+            RetrievalHit(
+                doc_id="CONCEPT",
+                score=1.0,
+                rank=3,
+                title="CONCEPT_X",
+                text="Synthetic concept entry.",
+                metadata={"concepts": ["CONCEPT_X"]},
+            ),
+        ]
+    )
+
+    assert evidence.aliases == []
+    assert evidence.source_doc_ids == []
+    assert evidence.evidence_count == 0
+    assert evidence.has_explicit_alias_evidence is False
+
+
+def test_extract_alias_evidence_dedupes_stably() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic alias entry.",
+                metadata={"aliases": ["ALIAS_A", "alias_a", "ALIAS_B"]},
+            )
+        ]
+    )
+
+    assert evidence.aliases == ["ALIAS_A", "ALIAS_B"]
+    assert evidence.source_doc_ids == ["TERM_A_ENTRY"]
+    assert evidence.evidence_count == 2
+
+
+def test_extract_alias_evidence_from_dictionary_graph_edges() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic graph edge entry.",
+                metadata={
+                    "headword": "TERM_A",
+                    "dictionary_graph_edges": [
+                        {"type": "has_alias", "target_label": "ALIAS_A", "confidence": 0.95},
+                    ],
+                },
+            )
+        ],
+        target_terms=["TERM_A"],
+    )
+
+    assert evidence.aliases == ["ALIAS_A"]
+    assert evidence.source_doc_ids == ["TERM_A_ENTRY"]
+    assert evidence.evidence_count == 1
+
+
+def test_extract_alias_evidence_from_single_has_alias_edge_metadata() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic single edge entry.",
+                metadata={
+                    "headword": "TERM_A",
+                    "edge_type": "has_alias",
+                    "target_label": "ALIAS_A",
+                },
+            )
+        ],
+        target_terms=["TERM_A"],
+    )
+
+    assert evidence.aliases == ["ALIAS_A"]
+    assert evidence.source_doc_ids == ["TERM_A_ENTRY"]
+    assert evidence.evidence_count == 1
+
+
+@pytest.mark.parametrize("edge_type", ["related_to", "see_also", "has_concept", "in_category", "is_a"])
+def test_extract_alias_evidence_rejects_non_alias_graph_edge_types(edge_type: str) -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic non-alias edge entry.",
+                metadata={
+                    "headword": "TERM_A",
+                    "graph_edges": [
+                        {"type": edge_type, "target_label": "NOT_ALIAS", "confidence": 0.99},
+                    ],
+                },
+            )
+        ],
+        target_terms=["TERM_A"],
+    )
+
+    assert evidence.aliases == []
+    assert evidence.source_doc_ids == []
+    assert evidence.evidence_count == 0
+
+
+def test_extract_alias_evidence_rejects_low_confidence_has_alias_edge() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic weak alias edge entry.",
+                metadata={
+                    "headword": "TERM_A",
+                    "dictionary_graph_edges": [
+                        {"type": "has_alias", "target_label": "WEAK_ALIAS", "confidence": 0.01},
+                    ],
+                },
+            )
+        ],
+        target_terms=["TERM_A"],
+    )
+
+    assert evidence.aliases == []
+    assert evidence.source_doc_ids == []
+    assert evidence.evidence_count == 0
+
+
+def test_extract_alias_evidence_filters_aliases_by_target_term() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic alias entry.",
+                metadata={"headword": "TERM_A", "aliases": ["ALIAS_A"]},
+            ),
+            RetrievalHit(
+                doc_id="TERM_B_RELATED",
+                score=0.9,
+                rank=2,
+                title="TERM_B",
+                text="Synthetic related entry.",
+                metadata={"headword": "TERM_B", "aliases": ["RELATED_ALIAS_B"], "dictionary_relation": "related_to"},
+            ),
+        ],
+        target_terms=["TERM_A"],
+    )
+
+    assert evidence.aliases == ["ALIAS_A"]
+    assert evidence.source_doc_ids == ["TERM_A_ENTRY"]
+    assert evidence.evidence_count == 1
+
+
+def test_extract_alias_evidence_from_has_alias_graph_path() -> None:
+    evidence = extract_alias_evidence_from_hits(
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic graph alias entry.",
+                metadata={
+                    "dictionary_relation": "has_alias",
+                    "dictionary_graph_path": [
+                        {"type": "entry", "id": "TERM_A_ENTRY", "label": "TERM_A"},
+                        {"type": "relation", "id": "has_alias", "label": "has_alias"},
+                        {"type": "alias", "id": "alias:term-a-alt", "label": "ALIAS_A"},
+                    ],
+                },
+            )
+        ]
+    )
+
+    assert evidence.aliases == ["ALIAS_A"]
+    assert evidence.source_doc_ids == ["TERM_A_ENTRY"]
+    assert evidence.evidence_count == 1
+
+
+def test_dictionary_alias_prompt_includes_explicit_alias_block_when_used() -> None:
+    messages = [{"role": "user", "content": "/dict TERM_A còn gọi là gì"}]
+    plan = plan_dictionary_query("TERM_A còn gọi là gì")
+    prompt_messages = build_dictionary_rag_messages(
+        messages,
+        [
+            RetrievalHit(
+                doc_id="TERM_A_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERM_A",
+                text="Synthetic alias entry.",
+                metadata={"aliases": ["ALIAS_A"]},
+            )
+        ],
+        query="TERM_A còn gọi là gì",
+        max_context_chars=1000,
+        history_messages=0,
+        language="vi",
+        query_plan=plan,
+    )
+    prompt = prompt_messages[1]["content"]
+
+    assert "Explicit alias evidence:" in prompt
+    assert "- ALIAS_A [TERM_A_ENTRY]" in prompt
+    assert "Answer only from the explicit alias evidence block" in prompt
+    assert "Do not treat related terms, concepts, categories, or see-also references as aliases." in prompt
+    assert "Explain the term in the required response language" not in prompt
+
+
+def test_dictionary_alias_mode_uses_direct_prompt_and_alias_metadata() -> None:
+    class AliasDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="TERM_A_ENTRY",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_A",
+                        text="TERM_A synthetic dictionary entry with explicit alternate name evidence.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "aliases": ["TERM_A_ALT"],
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                    RetrievalHit(
+                        doc_id="TERM_A_RELATED",
+                        score=1.0,
+                        rank=2,
+                        title="TERM_A_RELATED",
+                        text="Synthetic related entry.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A_RELATED",
+                            "aliases": ["RELATED_ALIAS_X"],
+                            "dictionary_relation": "related_to",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = AliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict TERM_A còn gọi là gì"}])
+    alias_metadata = result.response["rag"]["retrieval_metadata"]["alias_evidence"]
+    retrieved_by_id = {source["doc_id"]: source for source in result.response["rag"]["retrieved"]}
+    answer = result.response["choices"][0]["message"]["content"]
+
+    assert llm.calls == 0
+    assert "TERM_A_ALT" in answer
+    assert "RELATED_ALIAS_X" not in answer
+    assert "[TERM_A_ENTRY]" in answer
+    assert "được ghi nhận trong nguồn" in answer
+    assert "tên chính thức" not in answer
+    assert "chắc chắn" not in answer
+    assert "always called" not in answer
+    assert result.response["query_plan"]["intent"] == "alias"
+    assert result.response["query_plan"]["answer_style"] == "alias_direct"
+    assert result.response["query_plan"]["requires_alias_evidence"] is True
+    assert result.response["query_plan"]["alias_answer_mode"] == "deterministic_extractive"
+    assert result.response["query_plan"]["alias_evidence_count"] == 1
+    assert result.response["query_plan"]["alias_evidence_doc_count"] == 1
+    assert result.response["rag"]["key_alias"] == "deterministic_alias"
+    assert result.response["rag"]["retrieval_metadata"]["generator_provider"] == "deterministic_alias"
+    assert alias_metadata["has_alias_evidence"] is True
+    assert alias_metadata["has_explicit_alias_evidence"] is True
+    assert alias_metadata["alias_evidence_count"] == 1
+    assert alias_metadata["alias_evidence_doc_count"] == 1
+    assert alias_metadata["alias_answer_mode"] == "deterministic_extractive"
+    assert alias_metadata["alias_evidence_doc_ids"] == ["TERM_A_ENTRY"]
+    assert retrieved_by_id["TERM_A_ENTRY"]["metadata"]["has_alias_evidence"] is True
+    assert retrieved_by_id["TERM_A_ENTRY"]["metadata"]["query_plan_role"] == "alias_evidence"
+    assert retrieved_by_id["TERM_A_RELATED"]["metadata"]["has_alias_evidence"] is False
+    assert retrieved_by_id["TERM_A_RELATED"]["metadata"]["alias_evidence_count"] == 0
+
+
+def test_dictionary_alias_mode_extracts_pb_like_has_alias_edge_only() -> None:
+    class GraphEdgeAliasDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="TERM_A_ENTRY",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_A",
+                        text="TERM_A synthetic graph edge entry.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "dictionary_graph_edges": [
+                                {"type": "has_alias", "target_label": "ALIAS_A", "confidence": 0.95},
+                                {"type": "related_to", "target_label": "RELATED_A", "confidence": 0.99},
+                                {"type": "in_category", "target_label": "CATEGORY_A", "confidence": 0.99},
+                            ],
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = GraphEdgeAliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict TERM_A còn gọi là gì"}])
+    answer = result.response["choices"][0]["message"]["content"]
+
+    assert llm.calls == 0
+    assert "ALIAS_A" in answer
+    assert "RELATED_A" not in answer
+    assert "CATEGORY_A" not in answer
+    assert result.response["query_plan"]["intent"] == "alias"
+    assert result.response["query_plan"]["alias_answer_mode"] == "deterministic_extractive"
+    assert result.response["rag"]["retrieval_metadata"]["alias_evidence"]["alias_evidence_count"] == 1
+
+
+def test_dictionary_alias_extractive_answer_can_be_disabled() -> None:
+    class AliasDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="TERM_A_ENTRY",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_A",
+                        text="TERM_A synthetic dictionary entry.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "aliases": ["ALIAS_A"],
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = AliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            enable_alias_extractive_answer=False,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict TERM_A còn gọi là gì"}])
+
+    assert llm.calls == 1
+    assert result.response["query_plan"]["intent"] == "alias"
+    assert result.response["query_plan"]["alias_answer_mode"] == "llm_prompt"
+    assert result.response["rag"]["retrieval_metadata"]["alias_answer_mode"] == "llm_prompt"
+    assert result.response["rag"]["key_alias"] == "alias-a"
+    assert "Explicit alias evidence:" in llm.messages[1]["content"]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_intent"),
+    [
+        ("/dict TERM_A là gì", "definition"),
+        ("/dict so sánh TERM_A và TERM_B", "comparison"),
+        ("/dict quy trình TERM_A", "procedure"),
+        ("/dict trường hợp này áp dụng TERM_A không", "rule_application"),
+        ("/dict case tương tự cho TERM_A là gì", "case_based"),
+    ],
+)
+def test_dictionary_alias_extractive_answer_is_alias_intent_only(query: str, expected_intent: str) -> None:
+    class AliasMetadataDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="TERM_A_ENTRY",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_A",
+                        text="TERM_A synthetic dictionary entry.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "aliases": ["ALIAS_A"],
+                            "dictionary_graph_edges": [
+                                {"type": "has_alias", "target_label": "ALIAS_A", "confidence": 0.95},
+                            ],
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                    RetrievalHit(
+                        doc_id="TERM_B_ENTRY",
+                        score=1.0,
+                        rank=2,
+                        title="TERM_B",
+                        text="TERM_B synthetic dictionary entry.",
+                        metadata={"data_tier": "public", "kind": "dictionary", "headword": "TERM_B"},
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = AliasMetadataDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": query}])
+
+    assert llm.calls == 1
+    assert result.response["query_plan"]["intent"] == expected_intent
+    assert "alias_answer_mode" not in result.response["query_plan"]
+    assert "alias_answer_mode" not in result.response["rag"]["retrieval_metadata"]
+    assert result.response["rag"]["key_alias"] == "alias-a"
+
+
+def test_dictionary_alias_mode_marks_missing_alias_evidence() -> None:
+    class NoAliasDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="TERM_A_ENTRY",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_A",
+                        text="TERM_A synthetic definition only.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                    RetrievalHit(
+                        doc_id="TERM_A_CATEGORY",
+                        score=1.0,
+                        rank=2,
+                        title="TERM_A_CATEGORY",
+                        text="Synthetic category entry.",
+                        metadata={
+                            "data_tier": "public",
+                            "kind": "dictionary",
+                            "headword": "TERM_A_CATEGORY",
+                            "dictionary_relation": "in_category",
+                        },
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = NoAliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict tên khác của TERM_A là gì"}])
+    alias_metadata = result.response["rag"]["retrieval_metadata"]["alias_evidence"]
+    answer = result.response["choices"][0]["message"]["content"]
+
+    assert llm.calls == 0
+    assert result.response["query_plan"]["intent"] == "alias"
+    assert result.response["query_plan"]["alias_answer_mode"] == "deterministic_no_alias"
+    assert result.response["query_plan"]["alias_evidence_count"] == 0
+    assert result.response["query_plan"]["alias_evidence_doc_count"] == 0
+    assert alias_metadata["has_alias_evidence"] is False
+    assert alias_metadata["has_explicit_alias_evidence"] is False
+    assert alias_metadata["alias_evidence_count"] == 0
+    assert alias_metadata["alias_answer_mode"] == "deterministic_no_alias"
+    assert alias_metadata["alias_evidence_doc_ids"] == []
+    assert "Không tìm thấy tên gọi khác/alias được đánh dấu rõ ràng" in answer
+    assert "không có alias" not in answer.lower()
+    assert "không tồn tại tên gọi khác" not in answer.lower()
+    assert "there is no alias" not in answer.lower()
+    assert "CATEGORY_X" not in answer
+    assert "RELATED_X" not in answer
+    assert result.response["rag"]["retrieved"][0]["metadata"]["has_alias_evidence"] is False
+
+
 def test_dictionary_planner_public_path_preserves_external_generation() -> None:
     class PublicDictionaryRetriever(FakeDictionaryRetriever):
         def search(self, query: Query, top_k: int) -> RetrievalResult:
@@ -748,6 +1384,50 @@ def test_dictionary_planner_does_not_bypass_private_taint_guard() -> None:
 
     with pytest.raises(PrivacyRouteError) as error:
         service.answer([{"role": "user", "content": "/dict TERM_A là gì"}], session_id="private-dict")
+
+    assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
+    assert llm.calls == 0
+
+
+def test_dictionary_alias_mode_private_hit_still_blocks_external_generation() -> None:
+    class PrivateAliasDictionaryRetriever(FakeDictionaryRetriever):
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="PRIVATE_ALIAS",
+                        score=1.2,
+                        rank=1,
+                        title="TERM_PRIVATE",
+                        text="private synthetic alias context",
+                        metadata={
+                            "data_tier": "private",
+                            "kind": "dictionary",
+                            "headword": "TERM_PRIVATE",
+                            "aliases": ["TERM_PRIVATE_ALT"],
+                            "raw_docx_text": "private synthetic alias context",
+                        },
+                        data_tier="private",
+                        doc_type="dictionary",
+                    )
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    retriever = PrivateAliasDictionaryRetriever()
+    llm = CountingLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=llm,
+        retrievers={"dictionary-graph": retriever},
+    )
+
+    with pytest.raises(PrivacyRouteError) as error:
+        service.answer([{"role": "user", "content": "/dict TERM_PRIVATE còn gọi là gì"}], session_id="private-alias")
 
     assert error.value.decision.reason == "private_taint_blocks_external_saas_backend"
     assert llm.calls == 0

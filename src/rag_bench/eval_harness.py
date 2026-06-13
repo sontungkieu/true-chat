@@ -12,6 +12,7 @@ from rag_bench.chat_service import (
     ChatGenerationClient,
     ChatProxyConfig,
     ChatServiceResult,
+    DEFAULT_MIMO_PAYG_BASE_URL,
     RagChatService,
     _build_llm,
     _build_retrievers,
@@ -19,7 +20,7 @@ from rag_bench.chat_service import (
     _load_dictionary,
     _load_structured_evidence_index,
 )
-from rag_bench.groq_client import GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
+from rag_bench.groq_client import FallbackChatClient, GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
 from rag_bench.privacy import (
     BackendKind,
     ConversationPrivacyState,
@@ -32,7 +33,7 @@ from rag_bench.privacy import (
     normalize_data_tier,
     safe_source_payload,
 )
-from rag_bench.secrets import ApiKey, load_groq_keys
+from rag_bench.secrets import ApiKey, SecretFormatError, load_env_api_key_chain, load_groq_keys
 from rag_bench.types import RetrievalHit
 
 
@@ -605,8 +606,99 @@ def _build_eval_generator(config: RagEvalConfig, chat_config: ChatProxyConfig) -
     provider = str(config.generator_provider or "").strip().lower()
     if provider in {"local", "heuristic", "mock", "local_small"}:
         return HeuristicGeneratorClient(provider=config.generator_provider, model=config.generator_model or "heuristic-local")
+    if provider in {"mimo", "deepseek", "openai"}:
+        return _build_openai_compatible_eval_generator(config, chat_config, provider=provider)
     keys = load_groq_keys(chat_config.groq_keys_path)
     return _build_llm(chat_config, keys)
+
+
+def _build_openai_compatible_eval_generator(
+    config: RagEvalConfig,
+    chat_config: ChatProxyConfig,
+    *,
+    provider: str,
+) -> ChatGenerationClient:
+    env_name, base_url = _judge_env_and_base_url(provider)
+    keys = _load_openai_compatible_keys(provider, env_name, chat_config, required=True)
+    if not keys:
+        raise RuntimeError(f"{env_name} is required for {provider} eval generation")
+    return _build_openai_compatible_client(
+        keys=keys,
+        model=config.generator_model,
+        max_retries=chat_config.max_retries,
+        base_url=base_url,
+        provider=provider,
+        auth_header=_openai_compatible_auth_header(provider, chat_config),
+        payg_base_url=_openai_compatible_payg_base_url(provider, chat_config),
+    )
+
+
+def _build_openai_compatible_client(
+    *,
+    keys: list[ApiKey],
+    model: str | None,
+    max_retries: int,
+    base_url: str,
+    provider: str,
+    auth_header: str = "authorization",
+    payg_base_url: str | None = None,
+) -> ChatGenerationClient:
+    primary = _build_openai_compatible_round_robin(
+        keys=[keys[0]],
+        model=model,
+        max_retries=max_retries,
+        base_url=base_url,
+        provider=provider,
+        auth_header=auth_header,
+        payg_base_url=payg_base_url,
+    )
+    if len(keys) == 1:
+        return primary
+    return FallbackChatClient(
+        primary=primary,
+        fallback=_build_openai_compatible_round_robin(
+            keys=keys[1:],
+            model=model,
+            max_retries=max_retries,
+            base_url=base_url,
+            provider=provider,
+            auth_header=auth_header,
+            payg_base_url=payg_base_url,
+        ),
+    )
+
+
+def _build_openai_compatible_round_robin(
+    *,
+    keys: list[ApiKey],
+    model: str | None,
+    max_retries: int,
+    base_url: str,
+    provider: str,
+    auth_header: str = "authorization",
+    payg_base_url: str | None = None,
+) -> RoundRobinGroqClient:
+    return RoundRobinGroqClient(
+        keys=keys,
+        model=model or "",
+        max_retries=max_retries,
+        key_tokens_per_minute=0,
+        key_requests_per_minute=0,
+        client_factory=lambda key, timeout: OpenAICompatibleClient(
+            api_key=key.value,
+            base_url=_openai_compatible_base_url_for_key(
+                provider,
+                key,
+                base_url=base_url,
+                payg_base_url=payg_base_url,
+            ),
+            timeout_s=timeout,
+            token_parameter="max_tokens",
+            auth_header=auth_header,
+        ),
+        provider_name=provider,
+        completion_token_parameter="max_tokens",
+    )
 
 
 def _build_default_judge_client(config: RagEvalConfig) -> RagEvalJudgeClient | None:
@@ -614,26 +706,71 @@ def _build_default_judge_client(config: RagEvalConfig) -> RagEvalJudgeClient | N
         return None
     provider = str(config.judge_provider or "").strip().lower()
     env_name, base_url = _judge_env_and_base_url(provider)
+    keys = _load_openai_compatible_keys(provider, env_name, config.chat_config, required=False)
+    if not keys:
+        return None
+    return _build_openai_compatible_client(
+        keys=keys,
+        model=config.judge_model,
+        max_retries=1,
+        base_url=base_url,
+        provider=provider,
+        auth_header=_openai_compatible_auth_header(provider, config.chat_config),
+        payg_base_url=_openai_compatible_payg_base_url(provider, config.chat_config),
+    )
+
+
+def _openai_compatible_auth_header(provider: str, chat_config: ChatProxyConfig) -> str:
+    if provider == "mimo":
+        return chat_config.mimo_auth_header
+    return "authorization"
+
+
+def _openai_compatible_payg_base_url(provider: str, chat_config: ChatProxyConfig) -> str | None:
+    if provider == "mimo":
+        return chat_config.mimo_payg_base_url
+    return None
+
+
+def _openai_compatible_base_url_for_key(
+    provider: str,
+    key: ApiKey,
+    *,
+    base_url: str,
+    payg_base_url: str | None,
+) -> str:
+    if provider == "mimo" and (key.alias == "mimo_payg" or key.value.startswith("sk-")):
+        return payg_base_url or DEFAULT_MIMO_PAYG_BASE_URL
+    return base_url
+
+
+def _load_openai_compatible_keys(
+    provider: str,
+    env_name: str,
+    chat_config: ChatProxyConfig,
+    *,
+    required: bool,
+) -> list[ApiKey]:
+    if provider == "mimo":
+        try:
+            return load_env_api_key_chain(
+                chat_config.mimo_env_file,
+                chat_config.mimo_api_key_var,
+                primary_alias="mimo",
+                fallback_variables=(("MIMO_API_KEY_PAYG", "mimo_payg"),),
+            )
+        except SecretFormatError as exc:
+            if required:
+                raise RuntimeError(f"{env_name} is required for {provider} eval generation") from exc
+            return []
     import os
 
     api_key = os.getenv(env_name)
-    if not api_key:
-        return None
-    return RoundRobinGroqClient(
-        keys=[ApiKey(alias=provider, value=api_key)],
-        model=config.judge_model,
-        max_retries=1,
-        key_tokens_per_minute=0,
-        key_requests_per_minute=0,
-        client_factory=lambda key, timeout: OpenAICompatibleClient(
-            api_key=key.value,
-            base_url=base_url,
-            timeout_s=timeout,
-            token_parameter="max_tokens",
-        ),
-        provider_name=provider,
-        completion_token_parameter="max_tokens",
-    )
+    if api_key:
+        return [ApiKey(alias=provider, value=api_key)]
+    if required:
+        raise RuntimeError(f"{env_name} is required for {provider} eval generation")
+    return []
 
 
 def _judge_env_and_base_url(provider: str) -> tuple[str, str]:
@@ -683,7 +820,29 @@ def _parse_judge_json(text: str) -> dict[str, Any]:
         parsed = json.loads(match.group(0))
     if not isinstance(parsed, dict):
         raise ValueError("judge response must be a JSON object")
-    return parsed
+    return _coerce_judge_score_numbers(parsed)
+
+
+def _coerce_judge_score_numbers(scores: dict[str, Any]) -> dict[str, Any]:
+    coerced = dict(scores)
+    for key in (
+        "answer_correctness",
+        "groundedness",
+        "citation_support",
+        "missing_evidence_behavior",
+        "planner_success",
+        "privacy_safety",
+        "overall",
+    ):
+        value = coerced.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                try:
+                    coerced[key] = float(stripped)
+                except ValueError:
+                    pass
+    return coerced
 
 
 def _has_citation(answer: str, retrieved_doc_ids: Sequence[str]) -> bool:
