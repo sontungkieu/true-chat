@@ -40,7 +40,7 @@ The planner currently recognizes:
 The planner does not rewrite graph scoring. It applies small, explainable boosts after normal retrieval:
 
 - definition: prefer direct headword/alias/concept/category evidence;
-- alias: prefer explicit `has_alias` or direct alias metadata; related terms, concepts, categories, and see-also links are not counted as aliases;
+- alias: prefer explicit `has_alias` or direct alias metadata; related terms, concepts, categories, arbitrary lexical overlap, and see-also links are not counted as aliases;
 - category: prefer `in_category` and `is_a`;
 - comparison: retrieve evidence for both detectable terms, then prefer direct entries, aliases, categories, concepts, and direct relation edges;
 - relation: allow up to two graph hops and prefer stronger typed relations before weak `related_to`;
@@ -67,11 +67,11 @@ These fields are labels and scores, not raw private source text.
 Dictionary-mode prompts now include concise task instructions derived from the plan. Examples:
 
 - comparison: cover both terms when evidence exists; state when one side is missing;
-- alias: answer with supported alternate names first, use only explicit alias evidence, and say that no supported alias was found when retrieved sources lack `has_alias`/direct alias metadata;
+- alias: extract supported alternate names from explicit alias metadata/`has_alias` graph paths and answer directly when possible; if the answer falls back to the LLM prompt, include an explicit alias evidence block and forbid using related/concept/category/see-also evidence as aliases;
 - relation: prefer typed graph relations over loose association;
 - procedure/rule/case: do not invent steps, rules, exceptions, or cases.
 
-The model is still instructed to answer only from retrieved evidence and cite dictionary entry ids.
+For alias intent, simple positive and negative alias answers are deterministic: the service returns the extracted alias list with citations, or states that no supported alias was found, without asking an external generator to infer aliases from long dictionary text. The model is still instructed to answer only from retrieved evidence and cite dictionary entry ids for non-deterministic dictionary tasks.
 
 ## Schema Gaps
 
@@ -101,7 +101,7 @@ Dictionary-mode responses include a safe `query_plan` object:
 }
 ```
 
-The same object is also available under `rag.retrieval_metadata.query_plan` for debugging. Alias requests additionally expose safe aggregate metadata under `rag.retrieval_metadata.alias_evidence`, including `has_alias_evidence`, `alias_evidence_count`, and source ids for hits marked as alias evidence. It does not add raw alias strings beyond what the retrieved source payload already exposes under the normal privacy policy.
+The same object is also available under `rag.retrieval_metadata.query_plan` for debugging. Alias requests additionally expose safe aggregate metadata under `rag.retrieval_metadata.alias_evidence`, including `has_alias_evidence`, `alias_evidence_count`, `alias_evidence_doc_count`, `alias_answer_mode`, and source ids for hits marked as alias evidence. The `query_plan` payload mirrors the aggregate alias counts and answer mode. These debug metadata fields do not include raw alias strings beyond what the normal answer/source payload already exposes under the runtime privacy policy.
 
 ## Privacy Interaction
 

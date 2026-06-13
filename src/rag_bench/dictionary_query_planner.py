@@ -369,7 +369,14 @@ def annotate_and_rank_dictionary_hits(
         )
         metadata["query_plan_intent"] = plan.intent.value
         if plan.intent == DictionaryQueryIntent.ALIAS:
-            alias_evidence_count = _alias_evidence_count(metadata, matched_edges)
+            target_match = _alias_hit_matches_target(
+                hit,
+                metadata,
+                target_keys,
+                target_strict_keys,
+                has_tone_sensitive_targets=has_tone_sensitive_targets,
+            )
+            alias_evidence_count = _alias_evidence_count(metadata, matched_edges) if target_match else 0
             metadata["has_alias_evidence"] = alias_evidence_count > 0
             metadata["alias_evidence_count"] = alias_evidence_count
             if alias_evidence_count > 0:
@@ -475,13 +482,43 @@ def _planner_boost(
             if role == "fallback":
                 role = "comparison_term"
     if plan.intent == DictionaryQueryIntent.ALIAS:
-        alias_evidence_count = _alias_evidence_count(metadata, edge_matches)
+        target_match = _alias_hit_matches_target(
+            hit,
+            metadata,
+            target_keys,
+            target_strict_keys,
+            has_tone_sensitive_targets=has_tone_sensitive_targets,
+        )
+        alias_evidence_count = _alias_evidence_count(metadata, edge_matches) if target_match else 0
         if alias_evidence_count > 0:
             boost += 0.35 + 0.03 * min(alias_evidence_count, 3)
             role = "alias_evidence"
     if relation == "related_to" and preferred_edges and any(edge != "related_to" for edge in preferred_edges):
         boost -= 0.08
     return boost, role, edge_matches
+
+
+def _alias_hit_matches_target(
+    hit: RetrievalHit,
+    metadata: dict[str, Any],
+    target_keys: set[str],
+    target_strict_keys: set[str],
+    *,
+    has_tone_sensitive_targets: bool,
+) -> bool:
+    if not target_keys and not target_strict_keys:
+        return True
+    candidate_values = [
+        str(metadata.get("headword") or ""),
+        str(hit.title or ""),
+        str(hit.doc_id or ""),
+    ]
+    for item in metadata.get("dictionary_graph_path", []):
+        if isinstance(item, dict) and str(item.get("type") or "").strip().lower() == "entry":
+            candidate_values.append(str(item.get("label") or item.get("id") or ""))
+    if has_tone_sensitive_targets:
+        return any(_strict_term_key(value) in target_strict_keys for value in candidate_values if _strict_term_key(value))
+    return any(_term_key(value) in target_keys for value in candidate_values if _term_key(value))
 
 
 def _alias_evidence_count(metadata: dict[str, Any], matched_edges: list[str]) -> int:

@@ -4,10 +4,11 @@ import json
 import math
 import re
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
 from rag_bench.benchmarks import load_benchmark
 from rag_bench.dictionary import (
@@ -161,6 +162,14 @@ class ChatServiceResult:
     hits: list[RetrievalHit]
     retrieval_latency_s: float
     retrieval_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class AliasEvidence:
+    aliases: list[str]
+    source_doc_ids: list[str]
+    evidence_count: int
+    has_explicit_alias_evidence: bool
 
 
 @dataclass
@@ -353,6 +362,11 @@ class RagChatService:
             )
             if query_plan is not None:
                 retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
+            alias_evidence = (
+                extract_alias_evidence_from_hits(retrieval.hits, target_terms=query_plan.target_terms)
+                if query_plan is not None and query_plan.intent == DictionaryQueryIntent.ALIAS
+                else None
+            )
             retrieval_metadata = {
                 **retrieval.metadata,
                 "command": "/dict" if command and command[0] == "dict" else None,
@@ -366,10 +380,27 @@ class RagChatService:
             if structured_result is not None:
                 retrieval_metadata["structured_evidence"] = structured_result.to_metadata()
             if query_plan is not None:
-                retrieval_metadata["query_plan"] = query_plan.to_payload()
+                query_plan_payload = query_plan.to_payload()
                 if query_plan.intent == DictionaryQueryIntent.ALIAS:
-                    retrieval_metadata["alias_evidence"] = _alias_evidence_summary(retrieval.hits)
+                    alias_summary = _alias_evidence_summary(retrieval.hits, alias_evidence=alias_evidence)
+                    alias_answer_mode = (
+                        "deterministic_extractive"
+                        if alias_evidence is not None and alias_evidence.has_explicit_alias_evidence
+                        else "deterministic_no_alias"
+                    )
+                    alias_summary["alias_answer_mode"] = alias_answer_mode
+                    query_plan_payload.update(
+                        {
+                            "alias_evidence_count": alias_summary["alias_evidence_count"],
+                            "alias_evidence_doc_count": alias_summary["alias_evidence_doc_count"],
+                            "alias_answer_mode": alias_answer_mode,
+                        }
+                    )
+                    retrieval_metadata["alias_evidence"] = alias_summary
                     retrieval_metadata["alias_answer_style_used"] = query_plan.answer_style
+                    retrieval_metadata["alias_answer_mode"] = alias_answer_mode
+                    retrieval_metadata["generator_provider"] = "deterministic_alias"
+                retrieval_metadata["query_plan"] = query_plan_payload
             if retrieval.hits:
                 privacy_decision = self._enforce_generation_privacy(
                     backend=backend,
@@ -377,24 +408,38 @@ class RagChatService:
                     hits=retrieval.hits,
                     user_message_tier=user_message_tier,
                 )
-                prompt_messages = build_dictionary_rag_messages(
-                    messages,
-                    retrieval.hits,
-                    query=question,
-                    max_context_chars=self.config.max_context_chars,
-                    history_messages=history_messages,
-                    language=response_language,
-                    query_plan=query_plan,
-                )
-                generation = self.llm.generate(
-                    prompt_messages,
-                    model=generation_model,
-                    temperature=self.config.temperature if temperature is None else temperature,
-                    max_completion_tokens=self.config.max_completion_tokens if max_tokens is None else max_tokens,
-                )
-                if generation.error:
-                    raise RuntimeError(generation.error)
-                answer = _format_dictionary_answer(retrieval.hits, generation.answer)
+                if query_plan is not None and query_plan.intent == DictionaryQueryIntent.ALIAS and alias_evidence is not None:
+                    answer = _format_alias_answer(alias_evidence, retrieval.hits, language=language)
+                    generation = GenerationResult(
+                        answer=answer,
+                        key_alias="deterministic_alias",
+                        attempted_aliases=[],
+                        latency_s=0.0,
+                        retry_count=0,
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                        estimated_tokens=0,
+                    )
+                else:
+                    prompt_messages = build_dictionary_rag_messages(
+                        messages,
+                        retrieval.hits,
+                        query=question,
+                        max_context_chars=self.config.max_context_chars,
+                        history_messages=history_messages,
+                        language=response_language,
+                        query_plan=query_plan,
+                    )
+                    generation = self.llm.generate(
+                        prompt_messages,
+                        model=generation_model,
+                        temperature=self.config.temperature if temperature is None else temperature,
+                        max_completion_tokens=self.config.max_completion_tokens if max_tokens is None else max_tokens,
+                    )
+                    if generation.error:
+                        raise RuntimeError(generation.error)
+                    answer = _format_dictionary_answer(retrieval.hits, generation.answer)
             else:
                 privacy_decision = self._record_no_generation_privacy(
                     session_state,
@@ -1554,29 +1599,133 @@ def _dictionary_final_instruction(query_plan: DictionaryQueryPlan | None) -> str
     )
 
 
-def _alias_evidence_summary(hits: list[RetrievalHit]) -> dict[str, Any]:
-    evidence_hits = []
-    total_count = 0
+def extract_alias_evidence_from_hits(
+    hits: Sequence[RetrievalHit],
+    *,
+    target_terms: Sequence[str] = (),
+) -> AliasEvidence:
+    aliases: list[str] = []
+    source_doc_ids: list[str] = []
+    seen_aliases: set[str] = set()
+    seen_doc_ids: set[str] = set()
+    target_keys = {_alias_dedupe_key(term) for term in target_terms if _alias_dedupe_key(term)}
     for hit in hits:
         metadata = hit.metadata or {}
-        count = _safe_int(metadata.get("alias_evidence_count"))
-        has_alias = bool(metadata.get("has_alias_evidence")) or count > 0
-        if not has_alias:
+        if target_keys and not _hit_matches_alias_target(hit, target_keys):
             continue
-        total_count += max(1, count)
+        hit_aliases = _explicit_alias_values_from_metadata(metadata)
+        accepted_for_hit = False
+        for alias in hit_aliases:
+            normalized = _normalize_alias_value(alias)
+            if not normalized:
+                continue
+            alias_key = _alias_dedupe_key(normalized)
+            if alias_key in seen_aliases:
+                accepted_for_hit = True
+                continue
+            seen_aliases.add(alias_key)
+            aliases.append(normalized)
+            accepted_for_hit = True
+        if accepted_for_hit and hit.doc_id not in seen_doc_ids:
+            seen_doc_ids.add(hit.doc_id)
+            source_doc_ids.append(hit.doc_id)
+    return AliasEvidence(
+        aliases=aliases,
+        source_doc_ids=source_doc_ids,
+        evidence_count=len(aliases),
+        has_explicit_alias_evidence=bool(aliases),
+    )
+
+
+def _explicit_alias_values_from_metadata(metadata: dict[str, Any]) -> list[str]:
+    aliases = _metadata_text_values(metadata.get("aliases"))
+    aliases.extend(_metadata_text_values(metadata.get("alias_labels")))
+    aliases.extend(_metadata_text_values(metadata.get("explicit_aliases")))
+    aliases.extend(_alias_values_from_graph_path(metadata))
+    return aliases
+
+
+def _alias_values_from_graph_path(metadata: dict[str, Any]) -> list[str]:
+    path = metadata.get("dictionary_graph_path")
+    if not isinstance(path, list):
+        return []
+    aliases: list[str] = []
+    relation_is_alias = False
+    for item in path:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "").strip().lower()
+        item_label = str(item.get("label") or item.get("id") or "").strip()
+        if item_type == "relation":
+            relation_is_alias = item_label == "has_alias" or str(item.get("id") or "").strip() == "has_alias"
+            continue
+        if relation_is_alias and item_type == "alias" and item_label:
+            aliases.append(item_label)
+            relation_is_alias = False
+    return aliases
+
+
+def _hit_matches_alias_target(hit: RetrievalHit, target_keys: set[str]) -> bool:
+    metadata = hit.metadata or {}
+    candidates = [
+        str(metadata.get("headword") or ""),
+        str(hit.title or ""),
+        str(hit.doc_id or ""),
+    ]
+    for item in metadata.get("dictionary_graph_path", []):
+        if isinstance(item, dict) and str(item.get("type") or "").strip().lower() == "entry":
+            candidates.append(str(item.get("label") or item.get("id") or ""))
+    return any(_alias_dedupe_key(candidate) in target_keys for candidate in candidates if candidate)
+
+
+def _normalize_alias_value(value: str) -> str:
+    value = re.sub(r"\s+", " ", str(value or "")).strip()
+    return value.strip(" ;,")
+
+
+def _alias_dedupe_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", _normalize_alias_value(value))
+    without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return without_marks.casefold()
+
+
+def _metadata_text_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if str(item).strip()]
+    return []
+
+
+def _alias_evidence_summary(
+    hits: Sequence[RetrievalHit],
+    *,
+    alias_evidence: AliasEvidence | None = None,
+) -> dict[str, Any]:
+    alias_evidence = alias_evidence or extract_alias_evidence_from_hits(hits)
+    evidence_hits = []
+    alias_doc_ids = set(alias_evidence.source_doc_ids)
+    for hit in hits:
+        if hit.doc_id not in alias_doc_ids:
+            continue
+        metadata = hit.metadata or {}
         evidence_hits.append(
             {
                 "doc_id": hit.doc_id,
                 "rank": hit.rank,
-                "alias_evidence_count": max(1, count),
+                "alias_evidence_count": len(_explicit_alias_values_from_metadata(metadata)) or 1,
                 "query_plan_role": metadata.get("query_plan_role"),
             }
         )
     return {
-        "has_alias_evidence": bool(evidence_hits),
-        "alias_evidence_count": total_count,
+        "has_alias_evidence": alias_evidence.has_explicit_alias_evidence,
+        "has_explicit_alias_evidence": alias_evidence.has_explicit_alias_evidence,
+        "alias_evidence_count": alias_evidence.evidence_count,
         "alias_evidence_hit_count": len(evidence_hits),
-        "alias_evidence_doc_ids": [item["doc_id"] for item in evidence_hits],
+        "alias_evidence_doc_count": len(alias_evidence.source_doc_ids),
+        "alias_evidence_doc_ids": list(alias_evidence.source_doc_ids),
         "evidence_hits": evidence_hits,
     }
 
@@ -1584,15 +1733,18 @@ def _alias_evidence_summary(hits: list[RetrievalHit]) -> dict[str, Any]:
 def _alias_prompt_evidence_summary(hits: list[RetrievalHit], query_plan: DictionaryQueryPlan) -> str:
     if query_plan.intent != DictionaryQueryIntent.ALIAS:
         return ""
-    summary = _alias_evidence_summary(hits)
-    if summary["has_alias_evidence"]:
-        source_ids = ", ".join(f"[{doc_id}]" for doc_id in summary["alias_evidence_doc_ids"])
+    alias_evidence = extract_alias_evidence_from_hits(hits, target_terms=query_plan.target_terms)
+    summary = _alias_evidence_summary(hits, alias_evidence=alias_evidence)
+    if alias_evidence.has_explicit_alias_evidence:
+        alias_lines = "\n".join(
+            f"- {alias} {_format_source_citations(alias_evidence.source_doc_ids)}" for alias in alias_evidence.aliases
+        )
         return (
-            "Alias evidence summary:\n"
+            "Explicit alias evidence:\n"
+            f"{alias_lines}\n"
             f"- Alias evidence hit count: {summary['alias_evidence_hit_count']}\n"
             f"- Alias evidence marker count: {summary['alias_evidence_count']}\n"
-            f"- Alias evidence source ids: {source_ids}\n"
-            "- Treat only hits marked as alias evidence or has_alias/direct alias metadata as alias support.\n\n"
+            "- Answer only from the explicit alias evidence block; do not infer aliases from related terms, concepts, categories, or see-also links.\n\n"
         )
     return (
         "Alias evidence summary:\n"
@@ -1779,6 +1931,39 @@ def _format_image_answer(query: str, hits: list[RetrievalHit], *, language: str 
     if response_language == "vi":
         return f"Tìm thấy {len(hits)} kết quả ảnh cho '{query}'."
     return f"Found {len(hits)} image result(s) for '{query}'."
+
+
+def _format_alias_answer(alias_evidence: AliasEvidence, hits: Sequence[RetrievalHit], *, language: str | None = None) -> str:
+    response_language = "vi" if language is None else _normalize_response_language(language)
+    if alias_evidence.has_explicit_alias_evidence:
+        aliases = "; ".join(alias_evidence.aliases)
+        citations = _format_source_citations(alias_evidence.source_doc_ids)
+        if response_language == "vi":
+            return f"Theo các nguồn được truy hồi, tên gọi khác/alias được hỗ trợ là: {aliases}. {citations}".strip()
+        return f"Supported alternate names/aliases in the retrieved sources: {aliases}. {citations}".strip()
+    fallback_doc_ids = [hit.doc_id for hit in hits[:3]]
+    citations = _format_source_citations(fallback_doc_ids)
+    if response_language == "vi":
+        return (
+            "Không tìm thấy tên gọi khác/alias được hỗ trợ rõ ràng trong các nguồn đã truy hồi. "
+            f"Các nguồn hiện có chỉ cung cấp định nghĩa hoặc thông tin liên quan. {citations}"
+        ).strip()
+    return (
+        "No supported alternate name/alias was found in the retrieved sources. "
+        f"The available sources only provide definitions or related information. {citations}"
+    ).strip()
+
+
+def _format_source_citations(doc_ids: Sequence[str]) -> str:
+    seen: set[str] = set()
+    citations: list[str] = []
+    for doc_id in doc_ids:
+        doc_id = str(doc_id or "").strip()
+        if not doc_id or doc_id in seen:
+            continue
+        seen.add(doc_id)
+        citations.append(f"[{doc_id}]")
+    return ", ".join(citations)
 
 
 def _format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str:

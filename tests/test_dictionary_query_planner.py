@@ -213,6 +213,7 @@ def test_alias_evidence_metadata_counts_only_alias_evidence() -> None:
             text="Synthetic related entry.",
             metadata={
                 "headword": "TERM_RELATED",
+                "aliases": ["RELATED_ALIAS_X"],
                 "dictionary_relation": "related_to",
                 "data_tier": "public",
             },
