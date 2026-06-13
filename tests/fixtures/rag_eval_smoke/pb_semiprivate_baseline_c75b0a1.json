@@ -1,0 +1,43 @@
+{
+  "checkpoint_commit": "c75b0a1",
+  "dataset": "pb_semiprivate_45_item_eval_redacted",
+  "data_tier": "semi_private",
+  "generator": {
+    "provider": "groq",
+    "model": "llama-3.1-8b-instant"
+  },
+  "judges": {
+    "deepseek": {
+      "model": "deepseek-v4-flash",
+      "scored": 45,
+      "mean_overall": 0.851,
+      "verdicts": {
+        "pass": 30,
+        "partial": 9,
+        "fail": 6
+      },
+      "categories": {
+        "alias": 0.52,
+        "comparison": 0.804,
+        "missing_evidence": 0.983
+      }
+    },
+    "mimo": {
+      "model": "mimo-v2.5",
+      "scored": 45,
+      "mean_overall": 0.871,
+      "verdicts": {
+        "pass": 31,
+        "partial": 13,
+        "fail": 1
+      },
+      "categories": {
+        "alias": 0.54
+      }
+    }
+  },
+  "security": {
+    "raw_pb_content_included": false,
+    "eval_outputs_committed": false
+  }
+}
