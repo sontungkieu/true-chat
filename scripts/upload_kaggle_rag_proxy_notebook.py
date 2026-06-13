@@ -117,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             dictionary_artifact=args.dictionary_artifact,
             dictionary_required=args.dictionary_required,
             available_retrievers=available_retrievers,
+            allow_external_semi_private=args.allow_external_semi_private,
             enable_mimo=enable_mimo,
             mimo_models=args.mimo_models,
         )
@@ -149,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
                 "dictionary_artifact": args.dictionary_artifact,
                 "dictionary_required": bool(args.dictionary_required),
                 "available_retrievers": available_retrievers,
+                "allow_external_semi_private": bool(args.allow_external_semi_private),
                 "enable_mimo": enable_mimo,
                 "mimo_models": args.mimo_models if enable_mimo else "",
             },
@@ -210,6 +212,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--available-retrievers",
         default=None,
         help=f"Comma-separated retriever ids exposed by the UI. For full dictionary deploys use: {DEFAULT_AVAILABLE_RETRIEVERS}",
+    )
+    parser.add_argument(
+        "--allow-external-semi-private",
+        action="store_true",
+        help="Pass --allow-external-semi-private to the Kaggle proxy for approved semi-private external generation.",
     )
     parser.add_argument(
         "--embed-groq-keys",
@@ -486,6 +493,7 @@ def write_staging_files(
     dictionary_artifact: str | None = None,
     dictionary_required: bool = False,
     available_retrievers: str | None = None,
+    allow_external_semi_private: bool = False,
     enable_mimo: bool = False,
     mimo_models: str = DEFAULT_MIMO_MODELS,
 ) -> None:
@@ -506,6 +514,7 @@ def write_staging_files(
                 dictionary_artifact=dictionary_artifact,
                 dictionary_required=dictionary_required,
                 available_retrievers=available_retrievers,
+                allow_external_semi_private=allow_external_semi_private,
                 enable_mimo=enable_mimo,
                 mimo_models=mimo_models,
             ),
@@ -549,6 +558,7 @@ def build_notebook(
     dictionary_artifact: str | None = None,
     dictionary_required: bool = False,
     available_retrievers: str | None = None,
+    allow_external_semi_private: bool = False,
     enable_mimo: bool = False,
     mimo_models: str = DEFAULT_MIMO_MODELS,
 ) -> dict[str, Any]:
@@ -745,6 +755,7 @@ def build_notebook(
                 f"AVAILABLE_RETRIEVERS = {available_retrievers!r}\n"
                 f"DICTIONARY_ARTIFACT = {dictionary_artifact!r}\n"
                 f"DICTIONARY_REQUIRED = {dictionary_required!r}\n"
+                f"ALLOW_EXTERNAL_SEMI_PRIVATE = {allow_external_semi_private!r}\n"
                 f"ENABLE_MIMO = {enable_mimo!r}\n"
                 f"MIMO_MODELS = {mimo_models!r}\n"
                 "if AVAILABLE_RETRIEVERS:\n"
@@ -753,6 +764,8 @@ def build_notebook(
                 "    proxy_cmd.extend(['--dictionary-artifact', DICTIONARY_ARTIFACT])\n"
                 "if DICTIONARY_REQUIRED:\n"
                 "    proxy_cmd.append('--dictionary-required')\n"
+                "if ALLOW_EXTERNAL_SEMI_PRIVATE:\n"
+                "    proxy_cmd.append('--allow-external-semi-private')\n"
                 "if ENABLE_MIMO:\n"
                 "    proxy_cmd.append('--enable-mimo')\n"
                 "    proxy_cmd.extend(['--mimo-models', MIMO_MODELS])\n"

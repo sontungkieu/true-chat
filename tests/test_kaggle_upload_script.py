@@ -106,6 +106,7 @@ def test_build_notebook_can_attach_dictionary_and_mimo() -> None:
         dictionary_artifact="runs/pb_dictionary_base_supp2021_prod_graph",
         dictionary_required=True,
         available_retrievers="bm25,dictionary-graph",
+        allow_external_semi_private=True,
         enable_mimo=True,
         mimo_models="mimo-v2.5-pro,mimo-v2.5",
     )
@@ -119,6 +120,7 @@ def test_build_notebook_can_attach_dictionary_and_mimo() -> None:
     assert "'--available-retrievers', AVAILABLE_RETRIEVERS" in source
     assert "'--dictionary-artifact', DICTIONARY_ARTIFACT" in source
     assert "proxy_cmd.append('--dictionary-required')" in source
+    assert "proxy_cmd.append('--allow-external-semi-private')" in source
     assert "proxy_cmd.append('--enable-mimo')" in source
     assert "'--mimo-models', MIMO_MODELS" in source
     assert "DICTIONARY_DATASET_SOURCE = 'codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732'" in source

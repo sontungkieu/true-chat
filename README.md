@@ -468,10 +468,11 @@ scripts/upload_kaggle_rag_proxy_notebook.py \
   --dictionary-dataset-source codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732 \
   --dictionary-artifact runs/pb_dictionary_base_supp2021_prod_graph \
   --dictionary-required \
+  --allow-external-semi-private \
   --available-retrievers bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits
 ```
 
-`--dictionary-dataset-source` is written to Kaggle `dataset_sources`, then the notebook copies the attached artifact from `/kaggle/input` into the cloned repo before `rag-bench serve` starts. If `--available-retrievers` is omitted while a dictionary dataset is attached, the uploader defaults to the full local UI retriever set above. The generated notebook can also expose MiMo models through Kaggle Secrets named `MIMO_API_KEY` and optional `MIMO_BASE_URL`:
+`--dictionary-dataset-source` is written to Kaggle `dataset_sources`, then the notebook copies the attached artifact from `/kaggle/input` into the cloned repo before `rag-bench serve` starts. PB dictionary context is semi-private, so approved external Groq/MiMo generation requires `--allow-external-semi-private`; without it, the runtime privacy guard blocks external SaaS generation. If `--available-retrievers` is omitted while a dictionary dataset is attached, the uploader defaults to the full local UI retriever set above. The generated notebook can also expose MiMo models through Kaggle Secrets named `MIMO_API_KEY` and optional `MIMO_BASE_URL`:
 
 ```bash
 scripts/upload_kaggle_rag_proxy_notebook.py \
@@ -479,6 +480,7 @@ scripts/upload_kaggle_rag_proxy_notebook.py \
   --credentials /home/tung/all-kaggle.json \
   --dictionary-dataset-source codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732 \
   --dictionary-required \
+  --allow-external-semi-private \
   --enable-mimo
 ```
 
