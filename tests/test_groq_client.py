@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from rag_bench.groq_client import RoundRobinGroqClient
+from rag_bench.groq_client import FallbackChatClient, RoundRobinGroqClient
 from rag_bench.secrets import ApiKey
 
 
@@ -143,6 +143,114 @@ def test_round_robin_reports_rate_limit_after_retry_budget() -> None:
     assert result.attempted_aliases == ["a", "b"]
     assert result.error_status_code == 429
     assert result.rate_limited is True
+
+
+def test_fallback_chat_client_uses_fallback_on_rate_limit() -> None:
+    primary = RoundRobinGroqClient(
+        keys=[ApiKey("mimo", "primary-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, {"mimo": 1}),
+        sleep_fn=lambda _seconds: None,
+    )
+    fallback = RoundRobinGroqClient(
+        keys=[ApiKey("mimo_payg", "payg-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, {}),
+        sleep_fn=lambda _seconds: None,
+    )
+    client = FallbackChatClient(primary=primary, fallback=fallback)
+
+    result = client.generate([{"role": "user", "content": "q"}])
+
+    assert result.answer == "answer from mimo_payg"
+    assert result.key_alias == "mimo_payg"
+    assert result.attempted_aliases == ["mimo", "mimo_payg"]
+    assert result.retry_count == 1
+    assert result.rate_limited is False
+    assert dict(client.key_usage_counts) == {"mimo": 1, "mimo_payg": 1}
+
+
+def test_fallback_chat_client_does_not_use_payg_when_primary_succeeds() -> None:
+    primary = RoundRobinGroqClient(
+        keys=[ApiKey("mimo", "primary-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, {}),
+        sleep_fn=lambda _seconds: None,
+    )
+    fallback = RoundRobinGroqClient(
+        keys=[ApiKey("mimo_payg", "payg-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, {}),
+        sleep_fn=lambda _seconds: None,
+    )
+    client = FallbackChatClient(primary=primary, fallback=fallback)
+
+    result = client.generate([{"role": "user", "content": "q"}])
+
+    assert result.answer == "answer from mimo"
+    assert result.key_alias == "mimo"
+    assert result.attempted_aliases == ["mimo"]
+    assert dict(client.key_usage_counts) == {"mimo": 1}
+
+
+def test_fallback_chat_client_uses_fallback_when_primary_key_unavailable() -> None:
+    primary = RoundRobinGroqClient(
+        keys=[ApiKey("mimo", "primary-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, {"mimo": [FakeOrganizationRestrictedError()]}),
+        sleep_fn=lambda _seconds: None,
+    )
+    fallback = RoundRobinGroqClient(
+        keys=[ApiKey("mimo_payg", "payg-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, {}),
+        sleep_fn=lambda _seconds: None,
+    )
+    client = FallbackChatClient(primary=primary, fallback=fallback)
+
+    result = client.generate([{"role": "user", "content": "q"}])
+
+    assert result.answer == "answer from mimo_payg"
+    assert result.key_alias == "mimo_payg"
+    assert result.attempted_aliases == ["mimo", "mimo_payg"]
+    assert result.rejected_aliases == ["mimo"]
+
+
+def test_fallback_chat_client_reports_primary_and_fallback_errors() -> None:
+    primary = RoundRobinGroqClient(
+        keys=[ApiKey("mimo", "primary-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(key.alias, {"mimo": 1}),
+        sleep_fn=lambda _seconds: None,
+    )
+    fallback = RoundRobinGroqClient(
+        keys=[ApiKey("mimo_payg", "payg-secret")],
+        model="test-model",
+        max_retries=0,
+        client_factory=lambda key, _timeout: FakeClient(
+            key.alias,
+            {"mimo_payg": [FakeOrganizationRestrictedError()]},
+        ),
+        sleep_fn=lambda _seconds: None,
+    )
+    client = FallbackChatClient(primary=primary, fallback=fallback)
+
+    result = client.generate([{"role": "user", "content": "q"}])
+
+    assert result.answer == ""
+    assert result.key_alias is None
+    assert result.attempted_aliases == ["mimo", "mimo_payg"]
+    assert result.rate_limited is True
+    assert result.error is not None
+    assert "primary failed" in result.error
+    assert "fallback failed" in result.error
 
 
 def test_round_robin_disables_restricted_key_and_tries_next_key() -> None:

@@ -57,6 +57,36 @@ def test_relation_plan_prefers_typed_edges_before_weak_related_to() -> None:
     assert plan.preferred_edge_types.index("is_a") < plan.preferred_edge_types.index("related_to")
 
 
+def test_alias_plan_uses_alias_direct_style_and_requires_alias_evidence() -> None:
+    queries = [
+        "TERM_A còn gọi là gì",
+        "tên khác của TERM_A là gì",
+        "alias of TERM_A",
+        "synonym of TERM_A",
+    ]
+
+    for query in queries:
+        plan = plan_dictionary_query(query)
+
+        assert plan.intent == DictionaryQueryIntent.ALIAS
+        assert "has_alias" in plan.preferred_edge_types
+        assert plan.answer_style == "alias_direct"
+        assert plan.alias_requested is True
+        assert plan.requires_alias_evidence is True
+        assert plan.to_payload()["requires_alias_evidence"] is True
+
+
+def test_alias_prompt_instructions_are_direct_and_evidence_bound() -> None:
+    plan = plan_dictionary_query("TERM_A còn gọi là gì")
+    instructions = dictionary_plan_prompt_instructions(plan)
+
+    assert "Answer with supported alternate names first." in instructions
+    assert "Use only retrieved alias evidence" in instructions
+    assert "Do not treat related terms, concepts, categories, or see-also references as aliases." in instructions
+    assert "If no alias evidence is present" in instructions
+    assert "Cite source ids." in instructions
+
+
 def test_procedure_plan_marks_schema_gap_and_prompt_blocks_hallucinated_steps() -> None:
     plan = plan_dictionary_query("quy trình xử lý TERM_A là gì")
     instructions = dictionary_plan_prompt_instructions(plan)
@@ -157,3 +187,106 @@ def test_planner_rerank_uses_strict_vietnamese_targets_before_folded_matches() -
 
     assert ranked[0].doc_id == "japan"
     assert ranked[0].metadata["query_plan_role"] == "primary_term"
+
+
+def test_alias_evidence_metadata_counts_only_alias_evidence() -> None:
+    plan = plan_dictionary_query("TERM_A còn gọi là gì")
+    hits = [
+        RetrievalHit(
+            doc_id="alias",
+            score=1.0,
+            rank=1,
+            title="TERM_A",
+            text="Synthetic alias entry.",
+            metadata={
+                "headword": "TERM_A",
+                "aliases": ["TERM_A_ALT"],
+                "data_tier": "public",
+            },
+            data_tier="public",
+        ),
+        RetrievalHit(
+            doc_id="related",
+            score=1.0,
+            rank=2,
+            title="TERM_RELATED",
+            text="Synthetic related entry.",
+            metadata={
+                "headword": "TERM_RELATED",
+                "aliases": ["RELATED_ALIAS_X"],
+                "dictionary_relation": "related_to",
+                "data_tier": "public",
+            },
+            data_tier="public",
+        ),
+        RetrievalHit(
+            doc_id="category",
+            score=1.0,
+            rank=3,
+            title="TERM_CATEGORY",
+            text="Synthetic category entry.",
+            metadata={
+                "headword": "TERM_CATEGORY",
+                "dictionary_relation": "in_category",
+                "data_tier": "public",
+            },
+            data_tier="public",
+        ),
+    ]
+
+    ranked = annotate_and_rank_dictionary_hits(hits, plan, max_hits=3)
+    by_id = {hit.doc_id: hit for hit in ranked}
+
+    assert by_id["alias"].metadata["has_alias_evidence"] is True
+    assert by_id["alias"].metadata["alias_evidence_count"] == 1
+    assert by_id["alias"].metadata["query_plan_role"] == "alias_evidence"
+    assert by_id["related"].metadata["has_alias_evidence"] is False
+    assert by_id["related"].metadata["alias_evidence_count"] == 0
+    assert by_id["category"].metadata["has_alias_evidence"] is False
+    assert by_id["category"].metadata["alias_evidence_count"] == 0
+
+
+def test_alias_evidence_metadata_counts_has_alias_graph_edges_only() -> None:
+    plan = plan_dictionary_query("TERM_A còn gọi là gì")
+    hits = [
+        RetrievalHit(
+            doc_id="alias-edge",
+            score=1.0,
+            rank=1,
+            title="TERM_A",
+            text="Synthetic alias edge entry.",
+            metadata={
+                "headword": "TERM_A",
+                "dictionary_graph_edges": [
+                    {"type": "has_alias", "target_label": "ALIAS_A", "confidence": 0.95},
+                    {"type": "related_to", "target_label": "RELATED_A", "confidence": 0.99},
+                    {"type": "in_category", "target_label": "CATEGORY_A", "confidence": 0.99},
+                ],
+                "data_tier": "public",
+            },
+            data_tier="public",
+        ),
+        RetrievalHit(
+            doc_id="weak-alias-edge",
+            score=0.9,
+            rank=2,
+            title="TERM_A",
+            text="Synthetic weak alias edge entry.",
+            metadata={
+                "headword": "TERM_A",
+                "dictionary_graph_edges": [
+                    {"type": "has_alias", "target_label": "WEAK_ALIAS", "confidence": 0.01},
+                ],
+                "data_tier": "public",
+            },
+            data_tier="public",
+        ),
+    ]
+
+    ranked = annotate_and_rank_dictionary_hits(hits, plan, max_hits=2)
+    by_id = {hit.doc_id: hit for hit in ranked}
+
+    assert by_id["alias-edge"].metadata["has_alias_evidence"] is True
+    assert by_id["alias-edge"].metadata["alias_evidence_count"] == 1
+    assert by_id["weak-alias-edge"].metadata["has_alias_evidence"] is False
+    assert by_id["weak-alias-edge"].metadata["alias_evidence_count"] == 0

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from rag_bench.secrets import SecretFormatError, load_env_api_key, load_groq_keys
+from rag_bench.secrets import SecretFormatError, load_env_api_key, load_env_api_key_chain, load_groq_keys
 
 
 def test_load_groq_keys_parses_aliases_without_exposing_values(tmp_path: Path) -> None:
@@ -57,3 +57,36 @@ def test_load_env_api_key_fails_clearly_when_missing(tmp_path: Path) -> None:
 
     with pytest.raises(SecretFormatError, match="MIMO_API_KEY was not found"):
         load_env_api_key(path, "MIMO_API_KEY", alias="mimo")
+
+
+def test_load_env_api_key_chain_keeps_primary_before_payg_fallback(tmp_path: Path) -> None:
+    path = tmp_path / ".env"
+    path.write_text(
+        "MIMO_API_KEY=primary-secret\nMIMO_API_KEY_PAYG=payg-secret\n",
+        encoding="utf-8",
+    )
+
+    keys = load_env_api_key_chain(
+        path,
+        "MIMO_API_KEY",
+        primary_alias="mimo",
+        fallback_variables=(("MIMO_API_KEY_PAYG", "mimo_payg"),),
+    )
+
+    assert [key.alias for key in keys] == ["mimo", "mimo_payg"]
+    assert [key.value for key in keys] == ["primary-secret", "payg-secret"]
+
+
+def test_load_env_api_key_chain_uses_process_env_when_file_missing(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MIMO_API_KEY", "primary-from-env")
+    monkeypatch.setenv("MIMO_API_KEY_PAYG", "payg-from-env")
+
+    keys = load_env_api_key_chain(
+        tmp_path / "missing.env",
+        "MIMO_API_KEY",
+        primary_alias="mimo",
+        fallback_variables=(("MIMO_API_KEY_PAYG", "mimo_payg"),),
+    )
+
+    assert [key.alias for key in keys] == ["mimo", "mimo_payg"]
+    assert [key.value for key in keys] == ["primary-from-env", "payg-from-env"]

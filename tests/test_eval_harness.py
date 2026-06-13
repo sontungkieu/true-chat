@@ -9,12 +9,15 @@ from rag_bench.chat_service import ChatProxyConfig, RagChatService
 from rag_bench.eval_harness import (
     RagEvalConfig,
     RagEvalItem,
+    _openai_compatible_base_url_for_key,
+    _parse_judge_json,
     compute_heuristic_scores,
     evaluate_rag_item,
     load_rag_eval_items,
     run_rag_eval,
 )
 from rag_bench.groq_client import GenerationResult
+from rag_bench.secrets import ApiKey
 from rag_bench.structured_evidence import StructuredEvidenceDoc, StructuredEvidenceIndex
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
 
@@ -585,6 +588,136 @@ def test_generator_and_judge_config_are_independent(tmp_path: Path) -> None:
     assert result.judge_provider == "mimo"
     assert result.judge_model == "mimo-v2.5"
     assert judge.calls == 1
+
+
+def test_judge_json_parser_coerces_numeric_strings() -> None:
+    parsed = _parse_judge_json(
+        json.dumps(
+            {
+                "answer_correctness": "0.9",
+                "groundedness": "1",
+                "citation_support": 0.8,
+                "missing_evidence_behavior": "0.7",
+                "planner_success": "1.0",
+                "privacy_safety": "1",
+                "overall": "0.88",
+                "issues": [],
+                "verdict": "pass",
+            }
+        )
+    )
+
+    assert parsed["answer_correctness"] == 0.9
+    assert parsed["groundedness"] == 1.0
+    assert parsed["overall"] == 0.88
+
+
+def test_mimo_eval_generator_uses_openai_compatible_client_without_groq_keys(monkeypatch, tmp_path: Path) -> None:
+    eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "public", "query": "TERM_A", "data_tier": "public"}])
+    config = _config(
+        tmp_path,
+        eval_set,
+        generator_provider="mimo",
+        generator_model="mimo-v2.5",
+        chat_config=ChatProxyConfig(mimo_env_file=tmp_path / "missing.env"),
+    )
+    seen = {}
+
+    class FakeRoundRobin:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    monkeypatch.setenv("MIMO_API_KEY", "test-mimo-key")
+    monkeypatch.delenv("MIMO_API_KEY_PAYG", raising=False)
+    monkeypatch.setattr(eval_harness_module, "RoundRobinGroqClient", FakeRoundRobin)
+
+    client = eval_harness_module._build_eval_generator(config, config.chat_config)
+
+    assert isinstance(client, FakeRoundRobin)
+    assert seen["model"] == "mimo-v2.5"
+    assert seen["provider_name"] == "mimo"
+    openai_client = seen["client_factory"](ApiKey(alias="mimo", value="test-mimo-key"), 30)
+    assert openai_client.chat.completions.auth_header == "both"
+
+
+def test_mimo_eval_generator_builds_payg_fallback_when_configured(monkeypatch, tmp_path: Path) -> None:
+    eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "public", "query": "TERM_A", "data_tier": "public"}])
+    config = _config(
+        tmp_path,
+        eval_set,
+        generator_provider="mimo",
+        generator_model="mimo-v2.5",
+        chat_config=ChatProxyConfig(mimo_env_file=tmp_path / "missing.env"),
+    )
+    instances = []
+
+    class FakeRoundRobin:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            instances.append(self)
+
+        def rate_limit_snapshot(self):
+            return {}
+
+    monkeypatch.setenv("MIMO_API_KEY", "test-mimo-key")
+    monkeypatch.setenv("MIMO_API_KEY_PAYG", "test-payg-key")
+    monkeypatch.setattr(eval_harness_module, "RoundRobinGroqClient", FakeRoundRobin)
+
+    client = eval_harness_module._build_eval_generator(config, config.chat_config)
+
+    assert isinstance(client, eval_harness_module.FallbackChatClient)
+    assert len(instances) == 2
+    assert [key.alias for key in instances[0].kwargs["keys"]] == ["mimo"]
+    assert [key.alias for key in instances[1].kwargs["keys"]] == ["mimo_payg"]
+
+
+def test_mimo_eval_payg_keys_use_payg_base_url() -> None:
+    assert (
+        _openai_compatible_base_url_for_key(
+            "mimo",
+            ApiKey(alias="mimo", value="tp-token-plan"),
+            base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+            payg_base_url="https://api.xiaomimimo.com/v1",
+        )
+        == "https://token-plan-sgp.xiaomimimo.com/v1"
+    )
+    assert (
+        _openai_compatible_base_url_for_key(
+            "mimo",
+            ApiKey(alias="mimo_payg", value="sk-payg"),
+            base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+            payg_base_url="https://api.xiaomimimo.com/v1",
+        )
+        == "https://api.xiaomimimo.com/v1"
+    )
+    assert (
+        _openai_compatible_base_url_for_key(
+            "mimo",
+            ApiKey(alias="mimo", value="sk-payg"),
+            base_url="https://token-plan-sgp.xiaomimimo.com/v1",
+            payg_base_url="https://api.xiaomimimo.com/v1",
+        )
+        == "https://api.xiaomimimo.com/v1"
+    )
+
+
+def test_deepseek_eval_generator_requires_key(monkeypatch, tmp_path: Path) -> None:
+    eval_set = _write_eval_set(tmp_path / "eval.jsonl", [{"eval_id": "public", "query": "TERM_A", "data_tier": "public"}])
+    config = _config(
+        tmp_path,
+        eval_set,
+        generator_provider="deepseek",
+        generator_model="deepseek-v4-flash",
+    )
+
+    monkeypatch.delenv("DS_API_KEY", raising=False)
+
+    try:
+        eval_harness_module._build_eval_generator(config, config.chat_config)
+    except RuntimeError as exc:
+        assert "DS_API_KEY is required" in str(exc)
+    else:
+        raise AssertionError("DeepSeek eval generation should require DS_API_KEY")
 
 
 def test_private_external_block_does_not_serialize_judge_request(tmp_path: Path) -> None:
