@@ -820,7 +820,29 @@ def _parse_judge_json(text: str) -> dict[str, Any]:
         parsed = json.loads(match.group(0))
     if not isinstance(parsed, dict):
         raise ValueError("judge response must be a JSON object")
-    return parsed
+    return _coerce_judge_score_numbers(parsed)
+
+
+def _coerce_judge_score_numbers(scores: dict[str, Any]) -> dict[str, Any]:
+    coerced = dict(scores)
+    for key in (
+        "answer_correctness",
+        "groundedness",
+        "citation_support",
+        "missing_evidence_behavior",
+        "planner_success",
+        "privacy_safety",
+        "overall",
+    ):
+        value = coerced.get(key)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                try:
+                    coerced[key] = float(stripped)
+                except ValueError:
+                    pass
+    return coerced
 
 
 def _has_citation(answer: str, retrieved_doc_ids: Sequence[str]) -> bool:

@@ -10,6 +10,7 @@ from rag_bench.eval_harness import (
     RagEvalConfig,
     RagEvalItem,
     _openai_compatible_base_url_for_key,
+    _parse_judge_json,
     compute_heuristic_scores,
     evaluate_rag_item,
     load_rag_eval_items,
@@ -587,6 +588,28 @@ def test_generator_and_judge_config_are_independent(tmp_path: Path) -> None:
     assert result.judge_provider == "mimo"
     assert result.judge_model == "mimo-v2.5"
     assert judge.calls == 1
+
+
+def test_judge_json_parser_coerces_numeric_strings() -> None:
+    parsed = _parse_judge_json(
+        json.dumps(
+            {
+                "answer_correctness": "0.9",
+                "groundedness": "1",
+                "citation_support": 0.8,
+                "missing_evidence_behavior": "0.7",
+                "planner_success": "1.0",
+                "privacy_safety": "1",
+                "overall": "0.88",
+                "issues": [],
+                "verdict": "pass",
+            }
+        )
+    )
+
+    assert parsed["answer_correctness"] == 0.9
+    assert parsed["groundedness"] == 1.0
+    assert parsed["overall"] == 0.88
 
 
 def test_mimo_eval_generator_uses_openai_compatible_client_without_groq_keys(monkeypatch, tmp_path: Path) -> None:
