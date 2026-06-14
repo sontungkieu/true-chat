@@ -1,11 +1,13 @@
 # RAG Generator/Judge Evaluation Harness
 
-This harness evaluates dictionary-mode RAG while keeping two roles separate:
+This harness evaluates the production RAG pipeline while keeping two roles separate:
 
 - **generator**: the model/backend that runs the actual RAG answer pipeline;
 - **judge**: an optional stronger evaluator that scores the generated answer after privacy policy checks.
 
 The harness is for offline evaluation only. It does not change production chat behavior unless the `eval-rag` command is run explicitly.
+
+Internally, evaluation is split into a common `pipeline_eval` layer and scorer/reporting layers. The default adapter is `ProductionChatPipelineAdapter`, which calls `RagChatService.answer(...)` with the same retrieval, planner, dictionary fallback, privacy, prompt, and generation path used by the chat API. This means PB eval sets, public benchmark-derived eval sets, future custom eval sets, and later remote/replay adapters can share one production-pipeline contract instead of maintaining separate ad hoc runners.
 
 ## Why Separate Generator and Judge
 
@@ -25,7 +27,7 @@ An API key does not make an external SaaS backend private-safe. A model name alo
 
 ## Eval Set Format
 
-The eval set is JSONL. Use synthetic/redacted data unless the run is entirely local/private.
+The eval set is JSONL. It is not tied to one benchmark. Each row is a production-pipeline case: query, mode, data tier, and optional expected metadata. Use synthetic/redacted data unless the run is entirely local/private.
 
 ```json
 {"eval_id":"proc_public_001","query":"quy trình xử lý TERM_A là gì","mode":"dictionary","data_tier":"public","expected_intent":"procedure","expected_doc_ids":["PROC_A"],"expected_structured_doc_types":["procedure"],"forbidden_schema_gaps":["procedure_schema_not_implemented"],"should_have_citations":true}

@@ -11,7 +11,6 @@ from rag_bench.benchmarks import load_benchmark
 from rag_bench.chat_service import (
     ChatGenerationClient,
     ChatProxyConfig,
-    ChatServiceResult,
     DEFAULT_MIMO_PAYG_BASE_URL,
     RagChatService,
     _build_llm,
@@ -21,12 +20,16 @@ from rag_bench.chat_service import (
     _load_structured_evidence_index,
 )
 from rag_bench.groq_client import FallbackChatClient, GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
+from rag_bench.pipeline_eval import (
+    PipelineEvalAdapter,
+    PipelineEvalRequest,
+    ProductionChatPipelineAdapter,
+)
 from rag_bench.privacy import (
     BackendKind,
     ConversationPrivacyState,
     DataTier,
     PrivateBackendPolicy,
-    PrivacyRouteError,
     classify_backend,
     data_tier_for_hit,
     enforce_privacy_route,
@@ -255,11 +258,14 @@ def run_rag_eval(
     *,
     service: RagChatService | None = None,
     judge_client: RagEvalJudgeClient | None = None,
+    pipeline_adapter: PipelineEvalAdapter | None = None,
 ) -> dict[str, Any]:
     items = load_rag_eval_items(config.eval_set)
     out_dir = config.out_dir or _timestamped_output_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    service = service or build_eval_chat_service(config)
+    if pipeline_adapter is None:
+        service = service or build_eval_chat_service(config)
+        pipeline_adapter = ProductionChatPipelineAdapter(service=service, request_model=config.generator_model)
     judge_client = judge_client if judge_client is not None else _build_default_judge_client(config)
     results: list[RagEvalResult] = []
     failures: list[RagEvalResult] = []
@@ -267,7 +273,13 @@ def run_rag_eval(
     failures_path = out_dir / "failures.jsonl"
     with results_path.open("w", encoding="utf-8") as results_file, failures_path.open("w", encoding="utf-8") as failures_file:
         for item in items:
-            result = evaluate_rag_item(item, config, service=service, judge_client=judge_client)
+            result = evaluate_rag_item(
+                item,
+                config,
+                service=service,
+                judge_client=judge_client,
+                pipeline_adapter=pipeline_adapter,
+            )
             results.append(result)
             result_row = sanitize_eval_result_for_write(
                 result,
@@ -288,6 +300,7 @@ def run_rag_eval(
         "item_count": len(results),
         "failure_count": len(failures),
         "judge_called_count": sum(1 for result in results if not result.judge_skipped),
+        "pipeline": getattr(pipeline_adapter, "pipeline_id", "unknown"),
     }
 
 
@@ -313,8 +326,9 @@ def evaluate_rag_item(
     item: RagEvalItem,
     config: RagEvalConfig,
     *,
-    service: RagChatService,
+    service: RagChatService | None = None,
     judge_client: RagEvalJudgeClient | None = None,
+    pipeline_adapter: PipelineEvalAdapter | None = None,
 ) -> RagEvalResult:
     answer = ""
     query_plan: dict[str, Any] = {}
@@ -322,22 +336,28 @@ def evaluate_rag_item(
     privacy: dict[str, Any] = {}
     hits: list[RetrievalHit] = []
     generation_error: str | None = None
-    try:
-        service_result = service.answer(
-            [{"role": "user", "content": _mode_query(item), "data_tier": item.data_tier}],
-            request_model=config.generator_model,
-            response_mode=item.mode,
+    if pipeline_adapter is None:
+        if service is None:
+            raise ValueError("evaluate_rag_item requires either service or pipeline_adapter")
+        pipeline_adapter = ProductionChatPipelineAdapter(service=service, request_model=config.generator_model)
+    adapter = pipeline_adapter
+    pipeline_output = adapter.evaluate(
+        PipelineEvalRequest(
+            eval_id=item.eval_id,
+            query=_mode_query(item),
+            mode=item.mode,
+            data_tier=item.data_tier,
             session_id=f"rag-eval-{item.eval_id}",
-            reset_privacy=True,
+            request_model=config.generator_model,
+            top_k=config.chat_config.dictionary_top_k if item.mode == "dictionary" else config.chat_config.top_k,
         )
-        answer = _answer_from_service_result(service_result)
-        query_plan = _query_plan_from_service_result(service_result)
-        retrieved_doc_ids = [hit.doc_id for hit in service_result.hits]
-        privacy = dict(service_result.response.get("privacy") or {})
-        hits = list(service_result.hits)
-    except PrivacyRouteError as exc:
-        generation_error = exc.decision.reason
-        privacy = exc.decision.to_payload()
+    )
+    answer = pipeline_output.answer
+    query_plan = pipeline_output.query_plan
+    retrieved_doc_ids = pipeline_output.retrieved_doc_ids
+    privacy = pipeline_output.privacy
+    hits = list(pipeline_output.hits)
+    generation_error = pipeline_output.error
 
     heuristic_scores = compute_heuristic_scores(
         item,
@@ -789,22 +809,6 @@ def _mode_query(item: RagEvalItem) -> str:
     if item.mode == "dictionary" and not item.query.strip().startswith("/dict"):
         return f"/dict {item.query}"
     return item.query
-
-
-def _answer_from_service_result(result: ChatServiceResult) -> str:
-    choices = result.response.get("choices") or []
-    if choices and isinstance(choices[0], dict):
-        message = choices[0].get("message") or {}
-        return str(message.get("content") or "")
-    return str(result.generation.answer or "")
-
-
-def _query_plan_from_service_result(result: ChatServiceResult) -> dict[str, Any]:
-    if isinstance(result.response.get("query_plan"), dict):
-        return dict(result.response["query_plan"])
-    metadata = result.retrieval_metadata or result.response.get("rag", {}).get("retrieval_metadata") or {}
-    plan = metadata.get("query_plan") if isinstance(metadata, dict) else None
-    return dict(plan) if isinstance(plan, dict) else {}
 
 
 def _parse_judge_json(text: str) -> dict[str, Any]:

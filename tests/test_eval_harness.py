@@ -17,6 +17,7 @@ from rag_bench.eval_harness import (
     run_rag_eval,
 )
 from rag_bench.groq_client import GenerationResult
+from rag_bench.pipeline_eval import PipelineEvalOutput
 from rag_bench.secrets import ApiKey
 from rag_bench.structured_evidence import StructuredEvidenceDoc, StructuredEvidenceIndex
 from rag_bench.types import BenchmarkData, Query, RetrievalHit, RetrievalResult
@@ -150,6 +151,43 @@ class FakeEvalService:
             hits=[hit],
             retrieval_latency_s=0.01,
             retrieval_metadata={"query_plan": query_plan},
+        )
+
+
+class StaticPipelineAdapter:
+    pipeline_id = "static_test_adapter"
+
+    def evaluate(self, request):
+        hit = RetrievalHit(
+            doc_id="PROC_A",
+            score=1.0,
+            rank=1,
+            title="Synthetic static evidence",
+            text="Synthetic static evidence.",
+            metadata={"data_tier": request.data_tier, "structured_evidence": True, "structured_doc_type": "procedure"},
+            data_tier=request.data_tier,
+            doc_type="procedure",
+        )
+        query_plan = {
+            "intent": "procedure",
+            "schema_gaps": [],
+            "structured_evidence": {"matched_doc_types": ["procedure"], "matched_doc_count": 1},
+        }
+        return PipelineEvalOutput(
+            eval_id=request.eval_id,
+            answer="Synthetic answer [PROC_A]",
+            hits=[hit],
+            generation=GenerationResult(
+                answer="Synthetic answer [PROC_A]",
+                key_alias="static",
+                attempted_aliases=["static"],
+                latency_s=0.0,
+                retry_count=0,
+            ),
+            query_plan=query_plan,
+            retrieval_metadata={"query_plan": query_plan},
+            privacy={"session_taint": request.data_tier, "provider_allowed": True},
+            response={},
         )
 
 
@@ -292,6 +330,29 @@ def test_heuristic_only_eval_writes_outputs(tmp_path: Path) -> None:
     assert Path(summary["summary_path"]).read_text(encoding="utf-8").startswith("# RAG Generator/Judge Eval Summary")
     result = json.loads(Path(summary["results_path"]).read_text(encoding="utf-8").splitlines()[0])
     assert result["judge_skipped"] is True
+    assert result["heuristic_scores"]["all_required_passed"] is True
+
+
+def test_rag_eval_can_use_pipeline_adapter_without_building_service(tmp_path: Path) -> None:
+    eval_set = _write_eval_set(
+        tmp_path / "eval.jsonl",
+        [
+            {
+                "eval_id": "proc_public_001",
+                "query": "quy trình xử lý TERM_A là gì",
+                "expected_intent": "procedure",
+                "expected_doc_ids": ["PROC_A"],
+                "expected_structured_doc_types": ["procedure"],
+            }
+        ],
+    )
+
+    summary = run_rag_eval(_config(tmp_path, eval_set), pipeline_adapter=StaticPipelineAdapter())
+
+    assert summary["pipeline"] == "static_test_adapter"
+    assert summary["item_count"] == 1
+    result = json.loads(Path(summary["results_path"]).read_text(encoding="utf-8").splitlines()[0])
+    assert result["retrieved_doc_ids"] == ["PROC_A"]
     assert result["heuristic_scores"]["all_required_passed"] is True
 
 
