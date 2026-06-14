@@ -101,7 +101,7 @@ The final `RetrievalHit.score` returned after planning is the calibrated `query_
 
 ## Prompt Behavior
 
-Dictionary-mode prompts now include concise task instructions derived from the plan. Examples:
+Dictionary-mode prompts are rendered from stable prompt sections such as `conversation_history`, `dictionary_question`, `retrieved_dictionary_entries`, `dictionary_task_plan`, and `answer_contract`. Runtime metadata records the enabled section ids and character counts under `prompt_sections` without storing raw prompt text, so prompt components can be compared in evaluation without leaking retrieved content. The dictionary task section includes concise task instructions derived from the plan. Examples:
 
 - comparison: cover both terms when evidence exists; state when one side is missing;
 - alias: extract supported alternate names from explicit alias metadata/`has_alias` graph paths and answer directly when possible; if the answer falls back to the LLM prompt, include an explicit alias evidence block and forbid using related/concept/category/see-also evidence as aliases;

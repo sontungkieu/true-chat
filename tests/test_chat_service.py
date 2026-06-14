@@ -1149,6 +1149,40 @@ def test_dictionary_prompt_preserves_near_match_acronym_targets() -> None:
     assert "do not say the target was not found" in user_prompt
 
 
+def test_chat_prompt_sections_are_rendered_and_traced_without_prompt_content() -> None:
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(top_k=2, model_id="rag-test"),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=retriever,
+        llm=llm,
+    )
+
+    result = service.answer([{"role": "user", "content": "What do cats do?"}])
+
+    prompt = llm.messages[1]["content"]
+    assert "### user_question: Question" in prompt
+    assert "### retrieved_contexts: Retrieved contexts" in prompt
+    prompt_sections = result.response["rag"]["retrieval_metadata"]["prompt_sections"]
+    assert prompt_sections["schema"] == "prompt_sections_v1"
+    assert [section["id"] for section in prompt_sections["sections"]] == [
+        "conversation_history",
+        "user_question",
+        "retrieved_contexts",
+        "dictionary_fallback_guidance",
+        "answer_contract",
+    ]
+    assert all("content" not in section for section in prompt_sections["sections"])
+    assert "Cats purr" not in str(prompt_sections)
+
+
 def test_dictionary_mode_replaces_refusal_when_direct_entry_exists() -> None:
     class DirectEntryDictionaryRetriever:
         name = "dictionary-graph"

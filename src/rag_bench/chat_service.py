@@ -74,6 +74,7 @@ DEFAULT_CHAT_RETRIEVERS = (
 MIN_RETRIEVAL_DISPLAY_SCORE = 5e-4
 CONTEXT_SEPARATOR = "\n\n---\n\n"
 ALIAS_EDGE_MIN_CONFIDENCE = 0.5
+PROMPT_SECTION_SCHEMA_VERSION = "prompt_sections_v1"
 
 
 class ChatGenerationClient(Protocol):
@@ -155,6 +156,14 @@ class RetrievalScoreControls:
     @property
     def has_score_range(self) -> bool:
         return self.min_score is not None or self.max_score is not None
+
+
+@dataclass(frozen=True)
+class PromptSection:
+    section_id: str
+    title: str
+    content: str
+    enabled: bool = True
 
 
 @dataclass
@@ -431,14 +440,18 @@ class RagChatService:
                         estimated_tokens=0,
                     )
                 else:
-                    prompt_messages = build_dictionary_rag_messages(
+                    prompt_sections = build_dictionary_rag_prompt_sections(
                         messages,
                         retrieval.hits,
                         query=question,
                         max_context_chars=self.config.max_context_chars,
                         history_messages=history_messages,
-                        language=response_language,
                         query_plan=query_plan,
+                    )
+                    retrieval_metadata["prompt_sections"] = _prompt_sections_metadata(prompt_sections)
+                    prompt_messages = _build_dictionary_rag_messages_from_sections(
+                        prompt_sections,
+                        language=response_language,
                     )
                     generation = self.llm.generate(
                         prompt_messages,
@@ -565,14 +578,14 @@ class RagChatService:
             hits=prompt_hits,
             user_message_tier=user_message_tier,
         )
-        prompt_messages = build_chat_rag_messages(
+        prompt_sections = build_chat_rag_prompt_sections(
             messages,
             prompt_hits,
             max_context_chars=self.config.max_context_chars,
             history_messages=history_messages,
-            language=response_language,
             dictionary_fallback_metadata=dictionary_fallback.metadata if dictionary_fallback is not None else None,
         )
+        prompt_messages = _build_chat_rag_messages_from_sections(prompt_sections, language=response_language)
         generation = self.llm.generate(
             prompt_messages,
             model=generation_model,
@@ -610,6 +623,7 @@ class RagChatService:
 
         combined_hits = list(prompt_hits)
         retrieval_metadata = {**retriever_privacy_metadata, **retrieval.metadata, **score_filter_metadata}
+        retrieval_metadata["prompt_sections"] = _prompt_sections_metadata(prompt_sections)
         if dictionary_fallback is not None:
             retrieval_metadata.update(
                 {
@@ -1617,22 +1631,75 @@ def build_chat_rag_messages(
     language: str | None = None,
     dictionary_fallback_metadata: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
+    sections = build_chat_rag_prompt_sections(
+        messages,
+        hits,
+        max_context_chars=max_context_chars,
+        history_messages=history_messages,
+        dictionary_fallback_metadata=dictionary_fallback_metadata,
+    )
+    return _build_chat_rag_messages_from_sections(sections, language=language)
+
+
+def build_chat_rag_prompt_sections(
+    messages: list[dict[str, Any]],
+    hits: list[RetrievalHit],
+    *,
+    max_context_chars: int,
+    history_messages: int,
+    dictionary_fallback_metadata: dict[str, Any] | None = None,
+) -> list[PromptSection]:
     question = last_user_text(messages)
     context = _format_context(hits, max_context_chars=max_context_chars)
     history = _format_history(messages[:-1], history_messages=history_messages)
-    language_instruction = _language_instruction(language)
     dictionary_instruction = _text_mode_dictionary_fallback_instruction(dictionary_fallback_metadata)
-    user_prompt = (
-        f"Recent conversation:\n{history}\n\n"
-        f"Question:\n{question}\n\n"
-        f"Retrieved contexts:\n{context}\n\n"
-        f"{dictionary_instruction}"
-        "Answer:"
-    )
+    return [
+        PromptSection("conversation_history", "Recent conversation", history),
+        PromptSection("user_question", "Question", question),
+        PromptSection("retrieved_contexts", "Retrieved contexts", context),
+        PromptSection(
+            "dictionary_fallback_guidance",
+            "Dictionary fallback guidance",
+            dictionary_instruction,
+            enabled=bool(dictionary_instruction.strip()),
+        ),
+        PromptSection("answer_contract", "Answer", "Answer:"),
+    ]
+
+
+def _build_chat_rag_messages_from_sections(sections: Sequence[PromptSection], *, language: str | None = None) -> list[dict[str, str]]:
+    language_instruction = _language_instruction(language)
     return [
         {"role": "system", "content": _join_prompt_parts(SYSTEM_PROMPT, language_instruction)},
-        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": _render_prompt_sections(sections)},
     ]
+
+
+def _render_prompt_sections(sections: Sequence[PromptSection]) -> str:
+    rendered: list[str] = []
+    for section in sections:
+        if not section.enabled:
+            continue
+        content = section.content.strip()
+        if not content:
+            continue
+        rendered.append(f"### {section.section_id}: {section.title}\n{content}")
+    return "\n\n".join(rendered).strip()
+
+
+def _prompt_sections_metadata(sections: Sequence[PromptSection]) -> dict[str, Any]:
+    return {
+        "schema": PROMPT_SECTION_SCHEMA_VERSION,
+        "sections": [
+            {
+                "id": section.section_id,
+                "title": section.title,
+                "enabled": section.enabled,
+                "chars": len(section.content),
+            }
+            for section in sections
+        ],
+    }
 
 
 def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) -> str:
@@ -1674,10 +1741,28 @@ def build_dictionary_rag_messages(
     language: str | None = None,
     query_plan: DictionaryQueryPlan | None = None,
 ) -> list[dict[str, str]]:
+    sections = build_dictionary_rag_prompt_sections(
+        messages,
+        hits,
+        query=query,
+        max_context_chars=max_context_chars,
+        history_messages=history_messages,
+        query_plan=query_plan,
+    )
+    return _build_dictionary_rag_messages_from_sections(sections, language=language)
+
+
+def build_dictionary_rag_prompt_sections(
+    messages: list[dict[str, Any]],
+    hits: list[RetrievalHit],
+    *,
+    query: str,
+    max_context_chars: int,
+    history_messages: int,
+    query_plan: DictionaryQueryPlan | None = None,
+) -> list[PromptSection]:
     context = _format_context(hits, max_context_chars=max_context_chars)
     history = _format_history(messages[:-1], history_messages=history_messages)
-    response_language = _normalize_response_language(language)
-    language_instruction = _language_instruction(response_language)
     plan_instruction = dictionary_plan_prompt_instructions(query_plan) if query_plan is not None else ""
     plan_summary = ""
     if query_plan is not None:
@@ -1693,13 +1778,27 @@ def build_dictionary_rag_messages(
         )
     else:
         final_instruction = _dictionary_final_instruction(None)
-    user_prompt = (
-        f"Recent conversation:\n{history}\n\n"
-        f"Dictionary question:\n{query}\n\n"
-        f"Retrieved dictionary entries:\n{context}\n\n"
-        f"{plan_summary}"
-        f"{final_instruction}"
-    )
+    return [
+        PromptSection("conversation_history", "Recent conversation", history),
+        PromptSection("dictionary_question", "Dictionary question", query),
+        PromptSection("retrieved_dictionary_entries", "Retrieved dictionary entries", context),
+        PromptSection(
+            "dictionary_task_plan",
+            "Dictionary task plan",
+            plan_summary,
+            enabled=bool(plan_summary.strip()),
+        ),
+        PromptSection("answer_contract", "Answer contract", final_instruction),
+    ]
+
+
+def _build_dictionary_rag_messages_from_sections(
+    sections: Sequence[PromptSection],
+    *,
+    language: str | None = None,
+) -> list[dict[str, str]]:
+    response_language = _normalize_response_language(language)
+    language_instruction = _language_instruction(response_language)
     return [
         {
             "role": "system",
@@ -1710,7 +1809,7 @@ def build_dictionary_rag_messages(
                 language_instruction,
             ),
         },
-        {"role": "user", "content": user_prompt},
+        {"role": "user", "content": _render_prompt_sections(sections)},
     ]
 
 
