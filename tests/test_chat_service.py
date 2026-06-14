@@ -1413,6 +1413,36 @@ def test_dictionary_alias_mode_marks_missing_alias_evidence() -> None:
                         data_tier="public",
                         doc_type="dictionary",
                     ),
+                    RetrievalHit(
+                        doc_id="TERM_A_REF_3",
+                        score=0.9,
+                        rank=3,
+                        title="TERM_A_REF_3",
+                        text="Synthetic related entry 3.",
+                        metadata={"data_tier": "public", "kind": "dictionary", "headword": "TERM_A_REF_3"},
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                    RetrievalHit(
+                        doc_id="TERM_A_REF_4",
+                        score=0.8,
+                        rank=4,
+                        title="TERM_A_REF_4",
+                        text="Synthetic related entry 4.",
+                        metadata={"data_tier": "public", "kind": "dictionary", "headword": "TERM_A_REF_4"},
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
+                    RetrievalHit(
+                        doc_id="TERM_A_REF_5",
+                        score=0.7,
+                        rank=5,
+                        title="TERM_A_REF_5",
+                        text="Synthetic related entry 5.",
+                        metadata={"data_tier": "public", "kind": "dictionary", "headword": "TERM_A_REF_5"},
+                        data_tier="public",
+                        doc_type="dictionary",
+                    ),
                 ],
                 latency_s=0.01,
                 metadata={"kind": "dictionary"},
@@ -1421,7 +1451,7 @@ def test_dictionary_alias_mode_marks_missing_alias_evidence() -> None:
     retriever = NoAliasDictionaryRetriever()
     llm = CountingLLM()
     service = RagChatService(
-        config=ChatProxyConfig(top_k=2, dictionary_top_k=3, model_id="rag-test"),
+        config=ChatProxyConfig(top_k=2, dictionary_top_k=5, model_id="rag-test"),
         benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
         retriever=retriever,
         llm=llm,
@@ -1446,6 +1476,8 @@ def test_dictionary_alias_mode_marks_missing_alias_evidence() -> None:
     assert "không có alias" not in answer.lower()
     assert "không tồn tại tên gọi khác" not in answer.lower()
     assert "there is no alias" not in answer.lower()
+    assert "[TERM_A_REF_5]" in answer
+    assert len(result.response["rag"]["retrieved"]) == 5
     assert "CATEGORY_X" not in answer
     assert "RELATED_X" not in answer
     assert result.response["rag"]["retrieved"][0]["metadata"]["has_alias_evidence"] is False
@@ -2230,7 +2262,7 @@ def test_text_dictionary_fallback_replaces_internal_query_leak_for_ambiguous_acr
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             hits = []
             if query.text == "PB":
-                titles = ["ALPHA ENTRY", "BETA ENTRY", "GAMMA ENTRY"]
+                titles = ["ALPHA ENTRY", "BETA ENTRY", "GAMMA ENTRY", "DELTA ENTRY", "EPSILON ENTRY"]
                 hits = [
                     RetrievalHit(
                         doc_id=f"dict-pb-{index}",
@@ -2280,7 +2312,7 @@ def test_text_dictionary_fallback_replaces_internal_query_leak_for_ambiguous_acr
     service = RagChatService(
         config=ChatProxyConfig(
             top_k=3,
-            dictionary_top_k=3,
+            dictionary_top_k=5,
             model_id="rag-test",
             allow_external_semi_private=True,
         ),
@@ -2291,14 +2323,17 @@ def test_text_dictionary_fallback_replaces_internal_query_leak_for_ambiguous_acr
         dictionary_status={"source": "artifact", "entry_count": 3},
     )
 
-    result = service.answer([{"role": "user", "content": "PB là gì?"}], response_mode="text", language="vi")
+    result = service.answer([{"role": "user", "content": "PB là gì?"}], response_mode="text", top_k=5, language="vi")
 
     answer = result.response["choices"][0]["message"]["content"]
     assert "câu hỏi đầu tiên" not in answer
     assert "câu hỏi thứ hai" not in answer
     assert "“PB” là một truy vấn ngắn" in answer
     assert "ALPHA ENTRY [dict-pb-0]" in answer
+    assert "EPSILON ENTRY [dict-pb-4]" in answer
     assert "[dict-pb-0]" in answer
+    assert "[dict-pb-4]" in answer
+    assert len(result.response["rag"]["retrieved"]) == 5
     assert result.response["rag"]["retrieval_metadata"]["dictionary_internal_query_leak_fallback"] is True
 
 

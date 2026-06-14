@@ -2491,7 +2491,7 @@
           <div class="field-row">
             <div class="field">
               <label for="sourceTopK" data-i18n="sourceTopK">Max sources</label>
-              <input id="sourceTopK" type="number" min="1" max="50" step="1" placeholder="Default">
+              <input id="sourceTopK" type="number" min="1" max="20" step="1" placeholder="Default">
             </div>
             <div class="field">
               <label for="scoreMin" data-i18n="scoreMin">Min score</label>
@@ -3253,7 +3253,7 @@
       searchChoiceInput.value = settings.search;
       settings.imageTopK = clampNumber(settings.imageTopK, 1, 20, 5);
       imageTopKInput.value = settings.imageTopK;
-      settings.sourceTopK = optionalClampedNumber(settings.sourceTopK, 1, 50);
+      settings.sourceTopK = optionalClampedNumber(settings.sourceTopK, 1, 20);
       sourceTopKInput.value = settings.sourceTopK ?? "";
       settings.scoreMin = optionalFiniteNumber(settings.scoreMin);
       settings.scoreMax = optionalFiniteNumber(settings.scoreMax);
@@ -3295,7 +3295,7 @@
       searchChoiceInput.value = settings.search;
       settings.imageTopK = clampNumber(imageTopKInput.value, 1, 20, 5);
       imageTopKInput.value = settings.imageTopK;
-      settings.sourceTopK = optionalClampedNumber(sourceTopKInput.value, 1, 50);
+      settings.sourceTopK = optionalClampedNumber(sourceTopKInput.value, 1, 20);
       sourceTopKInput.value = settings.sourceTopK ?? "";
       settings.scoreMin = optionalFiniteNumber(scoreMinInput.value);
       settings.scoreMax = optionalFiniteNumber(scoreMaxInput.value);

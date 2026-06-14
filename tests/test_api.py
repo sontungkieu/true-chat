@@ -377,6 +377,7 @@ def test_chat_page() -> None:
     assert "parseSseEvent" in response.text
     assert "localStorage" in response.text
     assert 'id="sourceTopK"' in response.text
+    assert 'id="sourceTopK" type="number" min="1" max="20"' in response.text
     assert "score_min: requestOptions.score_min" in response.text
     assert "sort_by_score: requestOptions.sort_by_score" in response.text
     assert "function showDebugSourceMetadata()" in response.text

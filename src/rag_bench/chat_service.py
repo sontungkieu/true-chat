@@ -1589,7 +1589,7 @@ def _dedupe_normalized_retriever_ids(values: tuple[str, ...]) -> tuple[str, ...]
 def _clamp_top_k(value: int | None, *, fallback: int) -> int:
     if value is None:
         return max(1, fallback)
-    return min(50, max(1, int(value)))
+    return min(20, max(1, int(value)))
 
 
 def build_chat_rag_messages(
@@ -2103,7 +2103,7 @@ def _format_alias_answer(alias_evidence: AliasEvidence, hits: Sequence[Retrieval
         if response_language == "vi":
             return f"Theo các nguồn được truy hồi, tên gọi khác/alias được ghi nhận trong nguồn là: {aliases}. {citations}".strip()
         return f"Supported alternate names/aliases recorded in the retrieved sources: {aliases}. {citations}".strip()
-    fallback_doc_ids = [hit.doc_id for hit in hits[:3]]
+    fallback_doc_ids = [hit.doc_id for hit in hits]
     citations = _format_source_citations(fallback_doc_ids)
     if response_language == "vi":
         return (
@@ -2184,9 +2184,9 @@ def _format_dictionary_occurrence_fallback_answer(
         else []
     )
     target = target_terms[0] if target_terms else _strip_command_prefix(question).strip()
-    citations = _format_source_citations([hit.doc_id for hit in hits[:3]])
-    titles = _format_source_title_citations(hits[:3])
-    has_direct_entry = any(_hit_has_direct_dictionary_match(hit) for hit in hits[:3])
+    citations = _format_source_citations([hit.doc_id for hit in hits])
+    titles = _format_source_title_citations(hits)
+    has_direct_entry = any(_hit_has_direct_dictionary_match(hit) for hit in hits)
     if response_language == "vi":
         if has_direct_entry:
             return (
@@ -2227,7 +2227,7 @@ def _format_dictionary_disambiguation_fallback_answer(
         else []
     )
     target = target_terms[0] if target_terms else _strip_command_prefix(question).strip()
-    cited_hits = hits[:3]
+    cited_hits = list(hits)
     citations = _format_source_citations([hit.doc_id for hit in cited_hits])
     entries = _format_source_title_citations(cited_hits)
     if response_language == "vi":
