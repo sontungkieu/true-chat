@@ -3567,7 +3567,8 @@
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
         language: currentLanguage(),
-        memory: settings.memory !== false
+        memory: settings.memory !== false,
+        runtime_commit: runtimeCommit() || undefined
       };
     }
 
@@ -3668,8 +3669,27 @@
     }
 
     function shortRuntimeCommit() {
-      const commit = runtimeCommit();
+      return shortCommit(runtimeCommit());
+    }
+
+    function shortCommit(value) {
+      const commit = String(value || "").trim();
       return commit.length > 12 ? commit.slice(0, 12) : commit;
+    }
+
+    function messageCommit(meta) {
+      if (!meta || typeof meta !== "object") return "";
+      if (meta.runtime_commit) return String(meta.runtime_commit).trim();
+      if (meta.commit) return String(meta.commit).trim();
+      const version = meta.version;
+      if (version && typeof version === "object") {
+        return String(version.actual_commit || version.expected_commit || "").trim();
+      }
+      return "";
+    }
+
+    function shortMessageCommit(meta) {
+      return shortCommit(messageCommit(meta));
     }
 
     function clampNumber(value, min, max, fallback) {
@@ -4229,6 +4249,8 @@
       }
       if (request.sort_by_score) parts.push(t("sortByScore"));
       if ((mode === "image" || mode === "text_image") && request.image_rewrite) parts.push(t("rewrite"));
+      const commit = shortMessageCommit(request);
+      if (commit) parts.push("commit " + commit);
       return parts.filter(Boolean).join(" | ");
     }
 
@@ -5417,7 +5439,7 @@
     function formatMeta(meta) {
       const parts = [];
       if (settings.devMode) {
-        const commit = shortRuntimeCommit();
+        const commit = shortMessageCommit(meta);
         if (commit) parts.push("commit " + commit);
         if (meta.key_alias) parts.push("key " + meta.key_alias);
         if (Array.isArray(meta.rejected_aliases) && meta.rejected_aliases.length) {
@@ -5535,8 +5557,16 @@
       hideNotice();
       const userMessage = conversation.messages[userIndex];
       const requestOptions = userMessage?.request || captureRequestOptions(userMessage?.content || "");
+      const requestCommit = requestOptions.runtime_commit || runtimeCommit() || "";
+      if (requestCommit) requestOptions.runtime_commit = requestCommit;
       if (userMessage && userMessage.role === "user") userMessage.request = requestOptions;
-      const assistant = { role: "assistant", content: "", pending: true, sources: [], meta: null };
+      const assistant = {
+        role: "assistant",
+        content: "",
+        pending: true,
+        sources: [],
+        meta: requestCommit ? { runtime_commit: requestCommit } : null
+      };
       conversation.messages.push(assistant);
       conversation.updatedAt = Date.now();
       saveState();
@@ -5553,7 +5583,7 @@
         const result = await fetchAssistant(conversation, apiMessages, activeController.signal, requestOptions);
         assistant.content = result.content || t("emptyAnswer");
         assistant.sources = result.sources || [];
-        assistant.meta = result.meta || null;
+        assistant.meta = mergeMessageMeta({ runtime_commit: requestCommit }, result.meta);
         conversation.privacyState = result.privacyState || conversation.privacyState || null;
       } catch (error) {
         if (error.name === "AbortError") {
@@ -5722,7 +5752,7 @@
       if (rag) {
         const result = resultFromContentAndRag(content, rag);
         pending.sources = result.sources || [];
-        pending.meta = result.meta || null;
+        pending.meta = mergeMessageMeta(pending.meta, result.meta);
         conversation.privacyState = result.privacyState || conversation.privacyState || null;
       }
       saveState();
@@ -5762,6 +5792,14 @@
             }
           : null
       };
+    }
+
+    function mergeMessageMeta(base, extra) {
+      const merged = {};
+      if (base && typeof base === "object") Object.assign(merged, base);
+      if (extra && typeof extra === "object") Object.assign(merged, extra);
+      if (!merged.runtime_commit) delete merged.runtime_commit;
+      return Object.keys(merged).length ? merged : null;
     }
 
     function setSending(isSending) {

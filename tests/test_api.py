@@ -404,7 +404,10 @@ def test_chat_page_includes_runtime_commit(monkeypatch) -> None:
     assert response.status_code == 200
     assert "runtimeVersionValue" in response.text
     assert "shortRuntimeCommit" in response.text
-    assert 'parts.push("commit " + commit)' in response.text
+    assert "function shortMessageCommit" in response.text
+    assert "runtime_commit: runtimeCommit() || undefined" in response.text
+    assert "pending.meta = mergeMessageMeta(pending.meta, result.meta)" in response.text
+    assert "const commit = shortMessageCommit(meta)" in response.text
     assert 'const APP_VERSION = "abc123def456"' in response.text
 
 
