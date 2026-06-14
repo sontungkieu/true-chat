@@ -73,6 +73,13 @@ def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
             "K H C N xuat hien o dau?",
             "khcnxuathienodau",
         ],
+        "CTCC": [
+            "CTCC",
+            "C T C C",
+            "CTCC là gì?",
+            "CTCC xuất hiện ở đâu?",
+            "ctccxuathienodau",
+        ],
         "QSPB": ["QSPB", "Q S P B", "QSPB là gì?", "qspblagi"],
     }
 

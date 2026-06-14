@@ -761,7 +761,7 @@ class DictionaryGraphRetriever:
                     for headword_key, indexes in self._headword_indexes.items():
                         if headword_key == query_key:
                             continue
-                        if query_key in headword_key or headword_key in query_key:
+                        if _dictionary_headword_partial_match(query_key, headword_key):
                             for index in indexes:
                                 index_scores[index] = max(index_scores.get(index, 0.0), 0.7)
                                 match_modes[index] = "folded"
@@ -1371,6 +1371,8 @@ def _dictionary_headword_partial_match(query_key: str, headword_key: str) -> boo
     if query_key in headword_key:
         return True
     if headword_key in query_key:
+        if len(headword_key) < 3 and query_key != headword_key:
+            return False
         return len(headword_tokens) >= 2 or len(query_tokens) == 1
     return False
 

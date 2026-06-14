@@ -531,6 +531,34 @@ def test_dictionary_graph_retriever_uses_strict_tone_for_partial_vietnamese_head
     assert japan.hits[1].doc_id != "first" or "dictionary_direct_score" not in japan.hits[1].metadata
 
 
+def test_dictionary_graph_retriever_does_not_promote_short_headword_inside_compact_lookup() -> None:
+    docs = [
+        Document(
+            doc_id="ctcc-entry",
+            title="CÔNG TÁC KHOA HỌC QUÂN SỰ",
+            text="Synthetic public entry containing the acronym CTCC in its body.",
+            metadata={"kind": "dictionary", "headword": "CÔNG TÁC KHOA HỌC QUÂN SỰ"},
+        ),
+        Document(
+            doc_id="short-headword",
+            title="NỔ",
+            text="NỔ, synthetic short headword.",
+            metadata={"kind": "dictionary", "headword": "NỔ"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "ctccxuathienodau"), top_k=2)
+    direct = retriever.search(Query("q2", "CTCC"), top_k=2)
+
+    assert result.hits[0].doc_id == "ctcc-entry"
+    short_hit = next(hit for hit in result.hits if hit.doc_id == "short-headword")
+    assert "dictionary_direct_score" not in short_hit.metadata
+    assert direct.hits[0].doc_id == "ctcc-entry"
+    assert direct.hits[0].metadata["dictionary_direct_score"] > 0
+
+
 def test_llm_multi_query_retriever_records_retrieval_llm_metadata() -> None:
     docs = [
         Document(doc_id="cat-doc", title="Cats", text="Cats purr and chase toys."),

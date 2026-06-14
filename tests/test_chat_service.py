@@ -757,6 +757,13 @@ def test_dictionary_mode_normalizes_short_acronym_definition_queries() -> None:
     assert result.response["query_plan"]["target_terms"] == ["KHCN"]
     assert dictionary_retriever.queries == ["KHCN xuất hiện ở đâu?", "KHCN"]
 
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "/dict CTCC xuất hiện ở đâu?"}], language="vi")
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["query_plan"]["target_terms"] == ["CTCC"]
+    assert dictionary_retriever.queries == ["CTCC xuất hiện ở đâu?", "CTCC"]
+
 
 def test_extract_alias_evidence_from_explicit_metadata() -> None:
     evidence = extract_alias_evidence_from_hits(
@@ -1908,7 +1915,12 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
         build_time_s = 0.0
 
         def search(self, query: Query, top_k: int) -> RetrievalResult:
-            assert query.text in {"KHCN xuất hiện ở đâu?", "khcnxuathienodau"}
+            assert query.text in {
+                "KHCN xuất hiện ở đâu?",
+                "khcnxuathienodau",
+                "CTCC xuất hiện ở đâu?",
+                "ctccxuathienodau",
+            }
             return RetrievalResult(
                 query=query,
                 hits=[
@@ -1935,19 +1947,19 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             self.queries.append(query.text)
             hits = []
-            if query.text == "KHCN":
+            if query.text in {"KHCN", "CTCC"}:
                 hits = [
                     RetrievalHit(
                         doc_id="dict-mention",
                         score=0.72,
                         rank=1,
                         title="Synthetic related entry",
-                        text="Synthetic entry mentioning KHCN.",
+                        text=f"Synthetic entry mentioning {query.text}.",
                         metadata={
                             "data_tier": "semi_private",
                             "kind": "dictionary",
                             "dictionary_match_mode": "lexical",
-                            "query_highlights": ["KHCN"],
+                            "query_highlights": [query.text],
                         },
                         data_tier="semi_private",
                     )
@@ -1985,6 +1997,21 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert dictionary_retriever.queries == ["khcnxuathienodau", "KHCN"]
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["KHCN"]
+
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "CTCC xuất hiện ở đâu?"}], response_mode="text")
+
+    assert dictionary_retriever.queries == ["CTCC xuất hiện ở đâu?", "CTCC"]
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["CTCC"]
+    assert "Synthetic entry mentioning CTCC." in llm.messages[-1]["content"]
+
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "ctccxuathienodau"}], response_mode="text")
+
+    assert dictionary_retriever.queries == ["ctccxuathienodau", "CTCC"]
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["CTCC"]
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:
