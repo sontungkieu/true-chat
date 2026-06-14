@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from rag_bench.dictionary_query_planner import (
+    DEFAULT_NORMALIZATION_ADAPTER,
+    DictionaryNormalizationAdapter,
     DictionaryQueryIntent,
     annotate_and_rank_dictionary_hits,
     dictionary_plan_prompt_instructions,
+    dictionary_lookup_normalization_candidates,
     plan_dictionary_query,
 )
 from rag_bench.types import RetrievalHit
@@ -95,6 +98,85 @@ def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
 
             assert plan.intent == DictionaryQueryIntent.DEFINITION
             assert plan.target_terms == [expected_target]
+
+
+def test_short_lookup_normalization_generalizes_across_unseen_targets() -> None:
+    target_queries = {
+        "AB": [
+            "AB là gì?",
+            "A B là gì?",
+            "AB nghĩa là gì?",
+            "AB viết tắt cho gì?",
+            "AB xuất hiện ở đâu?",
+            "vui lòng giải thích AB",
+            "ablaviettatcuagi",
+        ],
+        "XYZ": [
+            "XYZ là gì?",
+            "X Y Z xuất hiện ở đâu?",
+            "giải nghĩa XYZ",
+            "what does XYZ stand for?",
+            "xyzxuathienodau",
+            "giaithichxyz",
+        ],
+        "T7K": [
+            "T7K là gì?",
+            "T 7 K nghĩa là gì?",
+            "what does T7K mean?",
+            "t7knghialagi",
+        ],
+    }
+
+    for expected_target, queries in target_queries.items():
+        for query in queries:
+            plan = plan_dictionary_query(query)
+
+            assert plan.intent == DictionaryQueryIntent.DEFINITION
+            assert plan.target_terms == [expected_target]
+            assert plan.normalization["target_count"] == 1
+
+
+def test_short_lookup_normalization_does_not_extract_acronym_from_arbitrary_sentence() -> None:
+    plan = plan_dictionary_query("nội dung XYZ trong tài liệu này")
+
+    assert plan.target_terms != ["XYZ"]
+    candidates = dictionary_lookup_normalization_candidates("nội dung XYZ trong tài liệu này")
+    assert not any(row["target"] == "XYZ" and row["layer"] == "short_acronym_lookup_noise" for row in candidates)
+
+
+def test_short_lookup_normalization_records_layer_candidates() -> None:
+    compact = plan_dictionary_query("xyzxuathienodau")
+    noisy = plan_dictionary_query("vui lòng giải thích XYZ")
+
+    assert compact.target_terms == ["XYZ"]
+    assert compact.normalization["target_layer"] == "compact_lookup_affix"
+    assert noisy.target_terms == ["XYZ"]
+    assert noisy.normalization["target_layer"] == "short_acronym_lookup_noise"
+
+    candidates = dictionary_lookup_normalization_candidates("vui lòng giải thích XYZ")
+    assert any(
+        row["adapter"] == "generic"
+        and row["layer"] == "short_acronym_lookup_noise"
+        and row["target"] == "XYZ"
+        and row["changed"] is True
+        for row in candidates
+    )
+
+
+def test_short_lookup_normalization_accepts_pluggable_adapter_memory() -> None:
+    default_plan = plan_dictionary_query("please define XYZ")
+    adapter = DictionaryNormalizationAdapter(
+        name="toy-domain",
+        lookup_noise_tokens=frozenset({*DEFAULT_NORMALIZATION_ADAPTER.lookup_noise_tokens, "please"}),
+        compact_lookup_prefixes=DEFAULT_NORMALIZATION_ADAPTER.compact_lookup_prefixes,
+        compact_lookup_suffixes=DEFAULT_NORMALIZATION_ADAPTER.compact_lookup_suffixes,
+    )
+    adapted_plan = plan_dictionary_query("please define XYZ", normalization_adapter=adapter)
+
+    assert default_plan.target_terms != ["XYZ"]
+    assert adapted_plan.target_terms == ["XYZ"]
+    assert adapted_plan.normalization["target_adapter"] == "toy-domain"
+    assert adapted_plan.normalization["target_layer"] == "short_acronym_lookup_noise"
 
 
 def test_comparison_plan_has_both_terms_and_structured_answer_style() -> None:

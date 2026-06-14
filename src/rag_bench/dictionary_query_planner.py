@@ -42,6 +42,7 @@ class DictionaryQueryPlan:
     schema_gaps: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     structured_evidence: dict[str, Any] = field(default_factory=dict)
+    normalization: dict[str, Any] = field(default_factory=dict)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -60,6 +61,7 @@ class DictionaryQueryPlan:
             "schema_gaps": list(self.schema_gaps),
             "notes": list(self.notes),
             "structured_evidence": dict(self.structured_evidence),
+            "normalization": dict(self.normalization),
         }
 
     def with_structured_evidence(self, metadata: dict[str, Any]) -> "DictionaryQueryPlan":
@@ -96,7 +98,24 @@ class DictionaryQueryPlan:
             schema_gaps=schema_gaps,
             notes=list(self.notes),
             structured_evidence=dict(metadata),
+            normalization=dict(self.normalization),
         )
+
+
+@dataclass(frozen=True)
+class DictionaryTargetExtractionResult:
+    terms: list[str]
+    layer: str
+    changed: bool = False
+    adapter: str = "generic"
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "target_adapter": self.adapter,
+            "target_layer": self.layer,
+            "target_changed": self.changed,
+            "target_count": len(self.terms),
+        }
 
 
 DEFINITION_EDGES = ("has_alias", "has_concept", "in_category", "is_a")
@@ -119,33 +138,147 @@ RELATION_EDGES = (
 USAGE_EDGES = ("used_for", "supports", "controls", "measures", "fires")
 REQUIREMENT_EDGES = ("requires", "supports")
 ALIAS_EDGE_MIN_CONFIDENCE = 0.5
+LOOKUP_NOISE_TOKENS = {
+    "alias",
+    "biet",
+    "cai",
+    "cho",
+    "cua",
+    "cuu",
+    "dau",
+    "define",
+    "definition",
+    "does",
+    "explain",
+    "find",
+    "for",
+    "giai",
+    "gi",
+    "hay",
+    "hien",
+    "is",
+    "khai",
+    "khong",
+    "la",
+    "lagi",
+    "long",
+    "lookup",
+    "mean",
+    "meaning",
+    "means",
+    "muc",
+    "nghia",
+    "nhi",
+    "o",
+    "of",
+    "search",
+    "short",
+    "stand",
+    "stands",
+    "tat",
+    "the",
+    "thich",
+    "tim",
+    "toi",
+    "tra",
+    "tu",
+    "vay",
+    "viet",
+    "vui",
+    "what",
+    "xuat",
+}
+COMPACT_LOOKUP_PREFIXES = (
+    "chotoibiet",
+    "vuilong",
+    "giaithich",
+    "giainghia",
+    "dinhnghia",
+    "khainiem",
+    "tracuu",
+    "muctu",
+    "meaningof",
+    "definitionof",
+    "viettatcua",
+    "whatdoes",
+    "whatis",
+    "lookup",
+    "define",
+    "explain",
+    "find",
+    "tim",
+)
+COMPACT_LOOKUP_SUFFIXES = (
+    "conghialagi",
+    "nghialagi",
+    "xuathienodau",
+    "laviettatcuagi",
+    "viettatcuagi",
+    "viettatchogi",
+    "viettatlagi",
+    "viettat",
+    "lacaigi",
+    "cuagi",
+    "chogi",
+    "standsforwhat",
+    "standforwhat",
+    "shortfor",
+    "standfor",
+    "standsfor",
+    "definition",
+    "meaning",
+    "lagi",
+    "mean",
+    "means",
+)
 
 
-def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
+@dataclass(frozen=True)
+class DictionaryNormalizationAdapter:
+    name: str = "generic"
+    lookup_noise_tokens: frozenset[str] = field(default_factory=lambda: frozenset(LOOKUP_NOISE_TOKENS))
+    compact_lookup_prefixes: tuple[str, ...] = COMPACT_LOOKUP_PREFIXES
+    compact_lookup_suffixes: tuple[str, ...] = COMPACT_LOOKUP_SUFFIXES
+
+
+DEFAULT_NORMALIZATION_ADAPTER = DictionaryNormalizationAdapter()
+
+
+def plan_dictionary_query(
+    query: str,
+    *,
+    normalization_adapter: DictionaryNormalizationAdapter | None = None,
+) -> DictionaryQueryPlan:
+    adapter = normalization_adapter or DEFAULT_NORMALIZATION_ADAPTER
     original = normalize_spaces(query)
     normalized = _fold(original)
     if not normalized:
         return DictionaryQueryPlan(query=original, intent=DictionaryQueryIntent.UNKNOWN, confidence=0.0)
+    target_extraction = _extract_single_target_result(original, normalized, adapter=adapter)
+    target_terms = target_extraction.terms
+    normalization = target_extraction.to_payload()
 
     if _has_any(normalized, ("ngoai le", "exception")):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.EXCEPTION,
             confidence=0.82,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             answer_style="state_evidence_gap_if_needed",
             schema_gaps=["exception_schema_not_implemented"],
             notes=["Exception handling needs explicit exception/rule evidence."],
+            normalization=normalization,
         )
     if _has_any(normalized, ("ap dung", "rule", "when to apply", "khi nao ap dung")):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.RULE_APPLICATION,
             confidence=0.8,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             answer_style="state_evidence_gap_if_needed",
             schema_gaps=["rule_schema_not_implemented"],
             notes=["Rule application needs explicit rule evidence."],
+            normalization=normalization,
         )
     if _has_any(
         normalized,
@@ -155,20 +288,22 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             query=original,
             intent=DictionaryQueryIntent.CASE_BASED,
             confidence=0.78,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             answer_style="state_evidence_gap_if_needed",
             schema_gaps=["case_schema_not_implemented"],
             notes=["Case-based reasoning needs curated case/procedure evidence."],
+            normalization=normalization,
         )
     if _has_any(normalized, ("quy trinh", "cac buoc", "lam the nao de", "procedure", "how to", "steps")):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.PROCEDURE,
             confidence=0.84,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             answer_style="procedure_if_supported_else_evidence_gap",
             schema_gaps=["procedure_schema_not_implemented"],
             notes=["Procedure answers must not invent steps without procedural evidence."],
+            normalization=normalization,
         )
 
     comparison_terms = _extract_comparison_terms(original, normalized)
@@ -182,6 +317,11 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             max_graph_hops=2,
             require_comparison=True,
             answer_style="comparison_table_or_bullets",
+            normalization={
+                "target_layer": "comparison_pattern",
+                "target_changed": True,
+                "target_count": len(comparison_terms),
+            },
         )
     relation_terms = _extract_relation_terms(original, normalized)
     if relation_terms or _has_any(normalized, ("lien quan", "quan he", "tac dong", "related to", "how is")):
@@ -193,24 +333,31 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             preferred_edge_types=list(RELATION_EDGES),
             max_graph_hops=2,
             answer_style="relation_with_evidence_strength",
+            normalization={
+                "target_layer": "relation_pattern" if relation_terms else normalization["target_layer"],
+                "target_changed": bool(relation_terms) or normalization["target_changed"],
+                "target_count": len(relation_terms),
+            },
         )
     if _has_any(normalized, ("dung de lam gi", "vai tro", "chuc nang", "used for", "function of", "role of")):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.USAGE,
             confidence=0.82,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             preferred_edge_types=list(USAGE_EDGES),
             answer_style="usage_grounded_summary",
+            normalization=normalization,
         )
     if _has_any(normalized, ("can gi", "yeu cau gi", "dieu kien de", "require", "requires", "requirement")):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.REQUIREMENT,
             confidence=0.82,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             preferred_edge_types=list(REQUIREMENT_EDGES),
             answer_style="requirements_with_evidence",
+            normalization=normalization,
         )
     if _has_any(
         normalized,
@@ -220,50 +367,55 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             query=original,
             intent=DictionaryQueryIntent.ALIAS,
             confidence=0.86,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             preferred_edge_types=list(ALIAS_EDGES),
             answer_style="alias_direct",
             alias_requested=True,
             requires_alias_evidence=True,
             notes=["Alias answers require explicit has_alias/direct alias evidence."],
+            normalization=normalization,
         )
     if _has_any(normalized, ("thuoc nhom nao", "la loai gi", "category of", "type of")):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.CATEGORY,
             confidence=0.84,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             preferred_edge_types=list(CATEGORY_EDGES),
             answer_style="category_grounded_summary",
+            normalization=normalization,
         )
-    if _is_definition_lookup_query(original, normalized):
+    if _is_definition_lookup_query(original, normalized, adapter=adapter):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.DEFINITION,
             confidence=0.78,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             preferred_edge_types=list(DEFINITION_EDGES),
             answer_style="grounded_definition",
+            normalization=normalization,
         )
 
-    if _looks_bare_lookup_query(original):
+    if _looks_bare_lookup_query(original, adapter=adapter):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.DEFINITION,
             confidence=0.62,
-            target_terms=_extract_single_target(original, normalized),
+            target_terms=target_terms,
             preferred_edge_types=list(DEFINITION_EDGES),
             answer_style="grounded_definition",
             notes=["Bare dictionary lookup; using grounded definition behavior."],
+            normalization=normalization,
         )
 
     return DictionaryQueryPlan(
         query=original,
         intent=DictionaryQueryIntent.UNKNOWN,
         confidence=0.35,
-        target_terms=_extract_single_target(original, normalized),
+        target_terms=target_terms,
         preferred_edge_types=list(DEFINITION_EDGES),
         notes=["No high-confidence dictionary intent matched; using grounded summary behavior."],
+        normalization=normalization,
     )
 
 
@@ -356,6 +508,52 @@ def _missing_structured_evidence_instructions(kind: str) -> list[str]:
         "Do not invent steps, rules, exceptions, or cases.",
         "Do not fabricate rules, procedures, exceptions, or cases from definitions alone.",
     ]
+
+
+def dictionary_lookup_normalization_candidates(
+    query: str,
+    *,
+    normalization_adapter: DictionaryNormalizationAdapter | None = None,
+) -> list[dict[str, Any]]:
+    """Return safe target-normalization candidates for diagnostics/evaluation."""
+    adapter = normalization_adapter or DEFAULT_NORMALIZATION_ADAPTER
+    original = normalize_spaces(query)
+    normalized = _fold(original)
+    if not normalized:
+        return []
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(result: DictionaryTargetExtractionResult) -> None:
+        for term in result.terms:
+            key = (result.layer, term)
+            if not term or key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "adapter": result.adapter,
+                    "layer": result.layer,
+                    "target": term,
+                    "changed": result.changed,
+                }
+            )
+
+    raw_target = _normalize_short_lookup_target(_strip_terminal_question_punctuation(original))
+    if raw_target:
+        add(
+            DictionaryTargetExtractionResult(
+                terms=[raw_target.upper() if _looks_placeholder(raw_target) else raw_target],
+                layer="raw_or_bare_lookup",
+                changed=raw_target != _strip_terminal_question_punctuation(original),
+                adapter=adapter.name,
+            )
+        )
+    short_result = _extract_short_lookup_target_result(original, adapter=adapter)
+    if short_result:
+        add(short_result)
+    add(_extract_single_target_result(original, normalized, adapter=adapter))
+    return rows
 
 
 def annotate_and_rank_dictionary_hits(
@@ -664,8 +862,29 @@ def _extract_relation_terms(original: str, normalized: str) -> list[str]:
     return []
 
 
-def _extract_single_target(original: str, normalized: str) -> list[str]:
+def _extract_single_target(
+    original: str,
+    normalized: str,
+    *,
+    adapter: DictionaryNormalizationAdapter | None = None,
+) -> list[str]:
+    return _extract_single_target_result(
+        original,
+        normalized,
+        adapter=adapter or DEFAULT_NORMALIZATION_ADAPTER,
+    ).terms
+
+
+def _extract_single_target_result(
+    original: str,
+    normalized: str,
+    *,
+    adapter: DictionaryNormalizationAdapter,
+) -> DictionaryTargetExtractionResult:
     cleaned = _strip_terminal_question_punctuation(normalize_spaces(original))
+    short_lookup_target = _extract_short_lookup_target_result(cleaned, adapter=adapter)
+    if short_lookup_target:
+        return short_lookup_target
     prefix_pattern = (
         r"^(?:"
         r"giải thích|giai thich|giải nghĩa|giai nghia|định nghĩa|dinh nghia|khái niệm|khai niem|"
@@ -692,17 +911,41 @@ def _extract_single_target(original: str, normalized: str) -> list[str]:
         r"stand for|stands for|short for|used for|require|requires|mean|means|meaning|definition"
         r")$"
     )
+    before_regex = cleaned
     cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
     cleaned = re.sub(suffix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
-    if _fold(cleaned) == normalized:
-        cleaned = _strip_question_noise(cleaned)
-    else:
-        cleaned = _strip_question_noise(cleaned)
-    compact_target = _compact_lookup_target(cleaned)
-    cleaned = compact_target or _normalize_short_lookup_target(cleaned)
+    regex_changed = _fold(cleaned) != _fold(before_regex)
+    before_noise = cleaned
+    cleaned = _strip_question_noise(cleaned)
+    noise_changed = _fold(cleaned) != _fold(before_noise)
+    compact_target = _compact_lookup_target(cleaned, adapter=adapter)
+    if compact_target:
+        return DictionaryTargetExtractionResult(
+            terms=[compact_target],
+            layer="compact_lookup_affix",
+            changed=True,
+            adapter=adapter.name,
+        )
+    normalized_target = _normalize_short_lookup_target(cleaned)
+    short_changed = normalized_target != cleaned
+    cleaned = normalized_target
     if not cleaned:
-        return []
-    return [cleaned.upper() if _looks_placeholder(cleaned) else cleaned]
+        return DictionaryTargetExtractionResult(
+            terms=[],
+            layer="empty",
+            changed=regex_changed or noise_changed,
+            adapter=adapter.name,
+        )
+    layer = "regex_lookup_wrapper" if regex_changed or noise_changed else "raw_or_bare_lookup"
+    if short_changed:
+        layer = "spaced_or_bare_short_target"
+    term = cleaned.upper() if _looks_placeholder(cleaned) else cleaned
+    return DictionaryTargetExtractionResult(
+        terms=[term],
+        layer=layer,
+        changed=regex_changed or noise_changed or short_changed,
+        adapter=adapter.name,
+    )
 
 
 def _extract_terms_with_pattern(original: str, normalized: str, pattern: str) -> list[str]:
@@ -758,8 +1001,16 @@ def _strip_terminal_question_punctuation(text: str) -> str:
     return re.sub(r"[?？]+$", "", normalize_spaces(text)).strip()
 
 
-def _strip_lookup_wrappers(text: str) -> str:
+def _strip_lookup_wrappers(
+    text: str,
+    *,
+    adapter: DictionaryNormalizationAdapter | None = None,
+) -> str:
+    normalization_adapter = adapter or DEFAULT_NORMALIZATION_ADAPTER
     cleaned = _strip_terminal_question_punctuation(text)
+    short_lookup_target = _extract_short_lookup_target_result(cleaned, adapter=normalization_adapter)
+    if short_lookup_target:
+        return short_lookup_target.terms[0] if short_lookup_target.terms else ""
     polite_prefix = r"(?:hãy|hay|vui lòng|vui long)\s+"
     prefix_pattern = (
         r"^(?:"
@@ -787,71 +1038,128 @@ def _strip_lookup_wrappers(text: str) -> str:
         cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
         cleaned = re.sub(suffix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
         cleaned = _strip_terminal_question_punctuation(cleaned)
-    compact_target = _compact_lookup_target(cleaned)
+    compact_target = _compact_lookup_target(cleaned, adapter=normalization_adapter)
     if compact_target:
         return compact_target
     return cleaned
 
 
-def _compact_lookup_target(text: str) -> str:
+def _compact_lookup_target(
+    text: str,
+    *,
+    adapter: DictionaryNormalizationAdapter | None = None,
+) -> str:
+    normalization_adapter = adapter or DEFAULT_NORMALIZATION_ADAPTER
     compact = re.sub(r"[^a-z0-9]+", "", _fold(text))
     if not compact:
         return ""
-    prefixes = (
-        "chotoibiet",
-        "vuilong",
-        "hay",
-        "giaithich",
-        "giainghia",
-        "dinhnghia",
-        "khainiem",
-        "tracuu",
-        "muctu",
-        "meaningof",
-        "definitionof",
-        "viettatcua",
-        "whatdoes",
-        "whatis",
-        "lookup",
-        "define",
-        "explain",
-        "find",
-        "tim",
-    )
-    suffixes = (
-        "conghialagi",
-        "nghialagi",
-        "xuathienodau",
-        "laviettatcuagi",
-        "viettatcuagi",
-        "viettatchogi",
-        "viettatlagi",
-        "lacaigi",
-        "standsforwhat",
-        "standforwhat",
-        "shortfor",
-        "standfor",
-        "standsfor",
-        "definition",
-        "meaning",
-        "lagi",
-        "mean",
-        "means",
-    )
     changed = False
-    for prefix in sorted(prefixes, key=len, reverse=True):
-        if compact.startswith(prefix) and len(compact) > len(prefix) + 1:
-            compact = compact[len(prefix) :]
-            changed = True
-            break
-    for suffix in sorted(suffixes, key=len, reverse=True):
-        if compact.endswith(suffix) and len(compact) > len(suffix) + 1:
-            compact = compact[: -len(suffix)]
-            changed = True
-            break
+    previous = None
+    while previous != compact:
+        previous = compact
+        for prefix in sorted(normalization_adapter.compact_lookup_prefixes, key=len, reverse=True):
+            if compact.startswith(prefix) and len(compact) > len(prefix) + 1:
+                compact = compact[len(prefix) :]
+                changed = True
+                break
+        for suffix in sorted(normalization_adapter.compact_lookup_suffixes, key=len, reverse=True):
+            if compact.endswith(suffix) and len(compact) > len(suffix) + 1:
+                compact = compact[: -len(suffix)]
+                changed = True
+                break
     if changed and re.fullmatch(r"[a-z0-9]{2,12}", compact):
         return compact.upper()
     return ""
+
+
+def _extract_short_lookup_target(
+    text: str,
+    *,
+    adapter: DictionaryNormalizationAdapter | None = None,
+) -> str:
+    result = _extract_short_lookup_target_result(text, adapter=adapter or DEFAULT_NORMALIZATION_ADAPTER)
+    return result.terms[0] if result and result.terms else ""
+
+
+def _extract_short_lookup_target_result(
+    text: str,
+    *,
+    adapter: DictionaryNormalizationAdapter,
+) -> DictionaryTargetExtractionResult | None:
+    cleaned = _strip_terminal_question_punctuation(normalize_spaces(text))
+    if not cleaned:
+        return None
+
+    raw_tokens = re.findall(r"[^\W_]+", cleaned, flags=re.UNICODE)
+    if not raw_tokens:
+        return None
+    if len(raw_tokens) == 1:
+        compact_target = _compact_lookup_target(cleaned, adapter=adapter)
+        if compact_target:
+            return DictionaryTargetExtractionResult(
+                terms=[compact_target],
+                layer="compact_lookup_affix",
+                changed=True,
+                adapter=adapter.name,
+            )
+    folded_tokens = [_fold(token) for token in raw_tokens]
+    candidates: list[tuple[set[int], str]] = []
+    index = 0
+    while index < len(raw_tokens):
+        if _is_single_acronym_letter(raw_tokens[index]):
+            start = index
+            letters = []
+            while index < len(raw_tokens) and _is_single_acronym_letter(raw_tokens[index]):
+                letters.append(raw_tokens[index].upper())
+                index += 1
+            if len(letters) >= 2:
+                candidates.append((set(range(start, index)), "".join(letters)))
+            continue
+        if _is_acronym_like_token(raw_tokens[index]):
+            candidates.append(({index}, raw_tokens[index].upper()))
+        index += 1
+
+    if len(candidates) != 1:
+        if len(raw_tokens) == 1:
+            compact_target = _compact_lookup_target(cleaned, adapter=adapter)
+            if compact_target:
+                return DictionaryTargetExtractionResult(
+                    terms=[compact_target],
+                    layer="compact_lookup_affix",
+                    changed=True,
+                    adapter=adapter.name,
+                )
+        return None
+    candidate_indexes, target = candidates[0]
+    for token_index, folded in enumerate(folded_tokens):
+        if token_index in candidate_indexes:
+            continue
+        if folded not in adapter.lookup_noise_tokens:
+            if len(raw_tokens) == 1:
+                compact_target = _compact_lookup_target(cleaned, adapter=adapter)
+                if compact_target:
+                    return DictionaryTargetExtractionResult(
+                        terms=[compact_target],
+                        layer="compact_lookup_affix",
+                        changed=True,
+                        adapter=adapter.name,
+                    )
+            return None
+    bare_query = len(candidate_indexes) == len(raw_tokens)
+    layer = "spaced_or_bare_short_target" if bare_query else "short_acronym_lookup_noise"
+    return DictionaryTargetExtractionResult(terms=[target], layer=layer, changed=not bare_query, adapter=adapter.name)
+
+
+def _is_single_acronym_letter(token: str) -> bool:
+    return len(token) == 1 and token.isalnum() and (token.isupper() or token.isdigit())
+
+
+def _is_acronym_like_token(token: str) -> bool:
+    if not (2 <= len(token) <= 12):
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9Đđ]+", token):
+        return False
+    return token.isupper() or any(character.isdigit() for character in token)
 
 
 def _normalize_short_lookup_target(text: str) -> str:
@@ -870,7 +1178,16 @@ def _normalize_short_lookup_target(text: str) -> str:
     return cleaned
 
 
-def _is_definition_lookup_query(original: str, normalized: str) -> bool:
+def _is_definition_lookup_query(
+    original: str,
+    normalized: str,
+    *,
+    adapter: DictionaryNormalizationAdapter | None = None,
+) -> bool:
+    normalization_adapter = adapter or DEFAULT_NORMALIZATION_ADAPTER
+    short_lookup_target = _extract_short_lookup_target_result(original, adapter=normalization_adapter)
+    if short_lookup_target and short_lookup_target.changed:
+        return True
     if _has_any(
         normalized,
         (
@@ -900,12 +1217,16 @@ def _is_definition_lookup_query(original: str, normalized: str) -> bool:
         ),
     ):
         return True
-    stripped = _strip_lookup_wrappers(original)
+    stripped = _strip_lookup_wrappers(original, adapter=normalization_adapter)
     return bool(stripped and stripped != _strip_terminal_question_punctuation(original))
 
 
-def _looks_bare_lookup_query(text: str) -> bool:
-    cleaned = _strip_lookup_wrappers(text)
+def _looks_bare_lookup_query(
+    text: str,
+    *,
+    adapter: DictionaryNormalizationAdapter | None = None,
+) -> bool:
+    cleaned = _strip_lookup_wrappers(text, adapter=adapter or DEFAULT_NORMALIZATION_ADAPTER)
     if not cleaned:
         return False
     if re.search(r"[,;:]", cleaned):

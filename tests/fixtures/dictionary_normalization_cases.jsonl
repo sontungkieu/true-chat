@@ -1,0 +1,16 @@
+{"id":"short_vi_ab_definition","category":"short_lookup_wrapper","query":"AB là gì?","expected_target":"AB"}
+{"id":"short_vi_ab_spaced","category":"spaced_acronym","query":"A B là gì?","expected_target":"AB"}
+{"id":"short_vi_ab_meaning","category":"short_lookup_wrapper","query":"AB nghĩa là gì?","expected_target":"AB"}
+{"id":"short_vi_ab_expansion","category":"short_lookup_wrapper","query":"AB viết tắt cho gì?","expected_target":"AB"}
+{"id":"short_vi_ab_occurrence","category":"occurrence_lookup","query":"AB xuất hiện ở đâu?","expected_target":"AB"}
+{"id":"short_vi_ab_polite_prefix","category":"short_lookup_wrapper","query":"vui lòng giải thích AB","expected_target":"AB"}
+{"id":"compact_ab_expansion","category":"compact_lookup","query":"ablaviettatcuagi","expected_target":"AB"}
+{"id":"short_en_xyz_stand_for","category":"english_lookup_wrapper","query":"what does XYZ stand for?","expected_target":"XYZ"}
+{"id":"short_en_xyz_spaced_occurrence","category":"spaced_acronym","query":"X Y Z xuất hiện ở đâu?","expected_target":"XYZ"}
+{"id":"compact_xyz_occurrence","category":"compact_lookup","query":"xyzxuathienodau","expected_target":"XYZ"}
+{"id":"compact_xyz_prefix","category":"compact_lookup","query":"giaithichxyz","expected_target":"XYZ"}
+{"id":"alnum_t7k_mean","category":"alnum_acronym","query":"what does T7K mean?","expected_target":"T7K"}
+{"id":"alnum_t7k_spaced","category":"spaced_acronym","query":"T 7 K nghĩa là gì?","expected_target":"T7K"}
+{"id":"tone_sensitive_japan","category":"tone_sensitive","query":"nhật là gì","expected_target":"nhật"}
+{"id":"negative_arbitrary_sentence","category":"negative","query":"nội dung XYZ trong tài liệu này","expected_target":null,"forbidden_target":"XYZ"}
+{"id":"negative_multiple_acronyms","category":"negative","query":"nội dung AB và XYZ trong tài liệu này","expected_target":null,"forbidden_target":"AB"}

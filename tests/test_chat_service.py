@@ -704,19 +704,19 @@ def test_dictionary_lookup_uses_normalized_lookup_target_for_abbreviation_questi
                     data_tier="public",
                 )
             ]
-            if query.text == "PB":
+            if query.text in {"PB", "XYZ"}:
                 hits = [
                     RetrievalHit(
-                        doc_id="base:P-0023",
+                        doc_id=f"dict:{query.text}",
                         score=1.2,
                         rank=1,
-                        title="PHÁO BINH",
-                        text="Synthetic PHÁO BINH dictionary entry.",
+                        title=f"Synthetic {query.text}",
+                        text=f"Synthetic {query.text} dictionary entry.",
                         metadata={
                             "data_tier": "semi_private",
                             "kind": "dictionary",
-                            "headword": "PHÁO BINH",
-                            "aliases": ["PB"],
+                            "headword": query.text,
+                            "aliases": [query.text],
                             "dictionary_match_mode": "strict",
                         },
                         data_tier="semi_private",
@@ -743,7 +743,14 @@ def test_dictionary_lookup_uses_normalized_lookup_target_for_abbreviation_questi
 
     assert dictionary_retriever.queries == ["PB viết tắt cho gì?", "PB"]
     assert lookup["retrieval_metadata"]["query_plan"]["target_terms"] == ["PB"]
-    assert lookup["retrieved"][0]["doc_id"] == "base:P-0023"
+    assert lookup["retrieved"][0]["doc_id"] == "dict:PB"
+
+    dictionary_retriever.queries.clear()
+    lookup = service.lookup_dictionary("vui lòng giải thích XYZ", top_k=3)
+
+    assert dictionary_retriever.queries == ["vui lòng giải thích XYZ", "XYZ"]
+    assert lookup["retrieval_metadata"]["query_plan"]["target_terms"] == ["XYZ"]
+    assert lookup["retrieved"][0]["doc_id"] == "dict:XYZ"
 
 
 def test_dictionary_mode_exposes_safe_query_plan_metadata_and_prompt_instructions() -> None:
@@ -1992,6 +1999,7 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
                 "khcnxuathienodau",
                 "CTCC xuất hiện ở đâu?",
                 "ctccxuathienodau",
+                "xyzxuathienodau",
             }
             return RetrievalResult(
                 query=query,
@@ -2019,7 +2027,7 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             self.queries.append(query.text)
             hits = []
-            if query.text in {"PB", "KHCN", "CTCC"}:
+            if query.text in {"PB", "KHCN", "CTCC", "XYZ"}:
                 hits = [
                     RetrievalHit(
                         doc_id="dict-mention",
@@ -2099,6 +2107,13 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert dictionary_retriever.queries == ["pbviettatcuagi", "PB"]
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["PB"]
+
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "xyzxuathienodau"}], response_mode="text")
+
+    assert dictionary_retriever.queries == ["xyzxuathienodau", "XYZ"]
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["XYZ"]
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:

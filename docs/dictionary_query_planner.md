@@ -35,6 +35,39 @@ The planner currently recognizes:
 - `case_based`: "case này", "tình huống này", "scenario".
 - `unknown`: fallback grounded-summary behavior.
 
+## Target Normalization Layers
+
+The planner keeps target extraction separate from retrieval. The default generic normalizer handles low-effort short lookup questions by stripping lookup wording around one clear target:
+
+- bare or spaced short targets such as `PB`, `P B`, or `Q S P B`;
+- Vietnamese wrappers such as `X là gì`, `X nghĩa là gì`, `giải thích X`, `X viết tắt cho gì`, and `X xuất hiện ở đâu`;
+- compact low-effort forms such as `pblagi` or `khcnxuathienodau`;
+- English wrappers such as `what does X mean` or `what does X stand for`.
+
+The response `query_plan.normalization` metadata records the normalization adapter and layer, for example `generic / short_acronym_lookup_noise` or `generic / compact_lookup_affix`. This makes deployed behavior auditable without exposing raw private source text.
+
+Domain-specific normalization should be added as a pluggable adapter rather than by adding one more hard-coded corner case. An adapter may add safe lookup-noise tokens or compact affixes for one corpus/domain, and it should be evaluated on a redacted fixture before being enabled. This keeps corpus memory detachable: a PB adapter, a medical adapter, or a legal adapter can be compared, removed, or replaced without changing the core generic parser.
+
+Use `scripts/evaluate_dictionary_normalization_layers.py` to compare the generic adapter and optional adapter JSON files on synthetic/redacted cases:
+
+```bash
+uv run --frozen scripts/evaluate_dictionary_normalization_layers.py \
+  --cases tests/fixtures/dictionary_normalization_cases.jsonl
+```
+
+Adapter JSON files are additive and should contain only safe normalization vocabulary, for example:
+
+```json
+{
+  "name": "pb-local-memory",
+  "lookup_noise_tokens": ["please"],
+  "compact_lookup_prefixes": ["pleaseexplain"],
+  "compact_lookup_suffixes": ["appearswhere"]
+}
+```
+
+The script reports pass/fail counts by case category, current planner layer, and candidate layer signals. It measures normalization only, not retrieval or answer quality.
+
 ## Graph Evidence Use
 
 The planner does not rewrite graph scoring. It applies small, explainable boosts after normal retrieval:
