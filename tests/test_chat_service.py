@@ -713,6 +713,37 @@ def test_dictionary_mode_exposes_safe_query_plan_metadata_and_prompt_instruction
     assert llm.calls == 1
 
 
+def test_dictionary_mode_normalizes_short_acronym_definition_queries() -> None:
+    class RecordingDictionaryRetriever(FakeDictionaryRetriever):
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            self.queries.append(query.text)
+            return super().search(query, top_k)
+
+    dictionary_retriever = RecordingDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=CountingLLM(),
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict PB là gì?"}], language="vi")
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["query_plan"]["target_terms"] == ["PB"]
+    assert dictionary_retriever.queries == ["PB là gì?", "PB"]
+
+
 def test_extract_alias_evidence_from_explicit_metadata() -> None:
     evidence = extract_alias_evidence_from_hits(
         [

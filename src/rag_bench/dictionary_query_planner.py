@@ -236,7 +236,7 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             preferred_edge_types=list(CATEGORY_EDGES),
             answer_style="category_grounded_summary",
         )
-    if _has_any(normalized, (" la gi", "dinh nghia", "khai niem", "what is", "define ")):
+    if _has_any(normalized, (" la gi", "dinh nghia", "khai niem", "giai thich", "what is", "define ", "explain ")):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.DEFINITION,
@@ -244,6 +244,17 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             target_terms=_extract_single_target(original, normalized),
             preferred_edge_types=list(DEFINITION_EDGES),
             answer_style="grounded_definition",
+        )
+
+    if _looks_bare_lookup_query(original):
+        return DictionaryQueryPlan(
+            query=original,
+            intent=DictionaryQueryIntent.DEFINITION,
+            confidence=0.62,
+            target_terms=_extract_single_target(original, normalized),
+            preferred_edge_types=list(DEFINITION_EDGES),
+            answer_style="grounded_definition",
+            notes=["Bare dictionary lookup; using grounded definition behavior."],
         )
 
     return DictionaryQueryPlan(
@@ -654,12 +665,13 @@ def _extract_relation_terms(original: str, normalized: str) -> list[str]:
 
 
 def _extract_single_target(original: str, normalized: str) -> list[str]:
-    cleaned = normalize_spaces(original)
+    cleaned = _strip_terminal_question_punctuation(normalize_spaces(original))
     prefix_pattern = (
         r"^(?:"
-        r"định nghĩa|dinh nghia|khái niệm|khai niem|tên khác của|ten khac cua|tên gọi khác của|ten goi khac cua|"
+        r"giải thích|giai thich|định nghĩa|dinh nghia|khái niệm|khai niem|"
+        r"tên khác của|ten khac cua|tên gọi khác của|ten goi khac cua|"
         r"ngoại lệ của|ngoai le cua|trường hợp này áp dụng|truong hop nay ap dung|"
-        r"khi nào áp dụng|khi nao ap dung|category of|type of|define|what is|what does|"
+        r"khi nào áp dụng|khi nao ap dung|category of|type of|define|explain|what is|what does|"
         r"quy trình thực hiện|quy trinh thuc hien|quy trình xử lý|quy trinh xu ly|"
         r"quy trình|quy trinh|procedure for|exception for"
         r")\s+"
@@ -709,10 +721,37 @@ def _extract_pair_by_connectors(original: str) -> list[str]:
 
 def _strip_question_noise(text: str) -> str:
     text = normalize_spaces(text)
-    text = re.sub(r"[?？]+$", "", text).strip()
+    text = _strip_terminal_question_punctuation(text)
     text = re.sub(r"^(cua|của|of)\s+", "", text, flags=re.IGNORECASE).strip()
+    text = re.sub(
+        r"\s+(?:"
+        r"là gì|la gi|còn gọi là gì|con goi la gi|tên gọi khác là gì|ten goi khac la gi|"
+        r"thuộc nhóm nào|thuoc nhom nao|là loại gì|la loai gi|dùng để làm gì|dung de lam gi|"
+        r"yêu cầu gì|yeu cau gi|cần gì|can gi"
+        r")$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
     text = re.sub(r"\s+(khong|không)$", "", text, flags=re.IGNORECASE).strip()
     return text
+
+
+def _strip_terminal_question_punctuation(text: str) -> str:
+    return re.sub(r"[?？]+$", "", normalize_spaces(text)).strip()
+
+
+def _looks_bare_lookup_query(text: str) -> bool:
+    cleaned = _strip_question_noise(text)
+    if not cleaned:
+        return False
+    if re.search(r"[,;:]", cleaned):
+        return False
+    folded = _fold(cleaned)
+    if not folded:
+        return False
+    tokens = folded.split()
+    return len(tokens) <= 4
 
 
 def _normalize_term(text: str) -> str:

@@ -683,6 +683,7 @@ class DictionaryGraphRetriever:
         highlight_terms = _dictionary_highlight_terms(query.text)
         strict_canonical_match = False
         for query_key in strict_query_keys:
+            folded_query_key = _dictionary_fold_text(query_key)
             query_token_count = len(query_key.split())
             if query_token_count >= 2:
                 phrase = f" {query_key} "
@@ -704,6 +705,11 @@ class DictionaryGraphRetriever:
                 index_scores[index] = max(index_scores.get(index, 0.0), 1.35)
                 match_modes[index] = "strict"
                 strict_canonical_match = True
+            if folded_query_key:
+                for index, score in self._abbreviation_scores.get(folded_query_key, {}).items():
+                    index_scores[index] = max(index_scores.get(index, 0.0), max(score, 1.65))
+                    match_modes[index] = "strict"
+                    strict_canonical_match = True
             for index in self._concept_strict_indexes.get(query_key, []):
                 index_scores[index] = max(index_scores.get(index, 0.0), 0.85)
                 match_modes[index] = "strict"

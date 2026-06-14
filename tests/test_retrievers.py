@@ -352,6 +352,12 @@ def test_dictionary_graph_retriever_matches_accent_folded_headword() -> None:
 def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> None:
     docs = [
         Document(
+            doc_id="base:A-0001",
+            title="ALIAS ONLY",
+            text="ALIAS ONLY, synthetic entry that exposes PB as a secondary alias.",
+            metadata={"kind": "dictionary", "headword": "ALIAS ONLY", "aliases": ["PB"]},
+        ),
+        Document(
             doc_id="base:T-0130",
             title="THƯỚC PB-74",
             text="THƯỚC PB-74, khí tài tính toán của pháo binh.",
@@ -382,6 +388,7 @@ def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> 
     pbbc = retriever.search(Query("q2", "pbbc"), top_k=3)
 
     assert pb.hits[0].doc_id == "base:P-0023"
+    assert pb.hits[0].metadata["dictionary_direct_score"] > pb.hits[1].metadata["dictionary_direct_score"]
     assert pbbc.hits[0].doc_id == "base:P-0025"
 
 

@@ -12,6 +12,8 @@ from rag_bench.types import RetrievalHit
 def test_dictionary_query_planner_detects_vietnamese_and_english_intents() -> None:
     cases = {
         "TERM_A là gì": DictionaryQueryIntent.DEFINITION,
+        "giải thích TERM_A": DictionaryQueryIntent.DEFINITION,
+        "explain TERM_A": DictionaryQueryIntent.DEFINITION,
         "tên khác của TERM_A": DictionaryQueryIntent.ALIAS,
         "TERM_A thuộc nhóm nào": DictionaryQueryIntent.CATEGORY,
         "so sánh TERM_A và TERM_B": DictionaryQueryIntent.COMPARISON,
@@ -35,6 +37,16 @@ def test_dictionary_query_planner_detects_vietnamese_and_english_intents() -> No
 
     for query, expected in cases.items():
         assert plan_dictionary_query(query).intent == expected
+
+
+def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
+    cases = ["PB", "PB là gì?", "PB la gi?", "giải thích PB", "giai thich PB", "explain PB"]
+
+    for query in cases:
+        plan = plan_dictionary_query(query)
+
+        assert plan.intent == DictionaryQueryIntent.DEFINITION
+        assert plan.target_terms == ["PB"]
 
 
 def test_comparison_plan_has_both_terms_and_structured_answer_style() -> None:
