@@ -258,6 +258,9 @@ def test_chat_page() -> None:
     assert "renderDictionaryAnswer" in response.text
     assert "dictionary-inline" in response.text
     assert "dictionary-inline-list" in response.text
+    assert "flex-wrap: wrap" in response.text
+    assert "flex: 1 1 260px" in response.text
+    assert "overflow-x: hidden" in response.text
     assert "dictionary-relevance \" + relevance" in response.text
     assert "dictionaryRelevance" in response.text
     assert "Khớp" in response.text
@@ -396,6 +399,8 @@ def test_chat_page_includes_runtime_commit(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "runtimeVersionValue" in response.text
+    assert "shortRuntimeCommit" in response.text
+    assert 'parts.push("commit " + commit)' in response.text
     assert 'const APP_VERSION = "abc123def456"' in response.text
 
 

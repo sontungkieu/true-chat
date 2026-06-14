@@ -236,7 +236,7 @@ def plan_dictionary_query(query: str) -> DictionaryQueryPlan:
             preferred_edge_types=list(CATEGORY_EDGES),
             answer_style="category_grounded_summary",
         )
-    if _has_any(normalized, (" la gi", "dinh nghia", "khai niem", "giai thich", "what is", "define ", "explain ")):
+    if _is_definition_lookup_query(original, normalized):
         return DictionaryQueryPlan(
             query=original,
             intent=DictionaryQueryIntent.DEFINITION,
@@ -668,19 +668,25 @@ def _extract_single_target(original: str, normalized: str) -> list[str]:
     cleaned = _strip_terminal_question_punctuation(normalize_spaces(original))
     prefix_pattern = (
         r"^(?:"
-        r"giải thích|giai thich|định nghĩa|dinh nghia|khái niệm|khai niem|"
+        r"giải thích|giai thich|giải nghĩa|giai nghia|định nghĩa|dinh nghia|khái niệm|khai niem|"
+        r"cho tôi biết|cho toi biet|tra cứu|tra cuu|tìm|tim|mục từ|muc tu|"
         r"tên khác của|ten khac cua|tên gọi khác của|ten goi khac cua|"
         r"ngoại lệ của|ngoai le cua|trường hợp này áp dụng|truong hop nay ap dung|"
-        r"khi nào áp dụng|khi nao ap dung|category of|type of|define|explain|what is|what does|"
+        r"khi nào áp dụng|khi nao ap dung|category of|type of|meaning of|definition of|"
+        r"define|explain|lookup|look up|search for|find|what is|what does|"
         r"quy trình thực hiện|quy trinh thuc hien|quy trình xử lý|quy trinh xu ly|"
         r"quy trình|quy trinh|procedure for|exception for"
         r")\s+"
     )
     suffix_pattern = (
         r"\s+(?:"
-        r"là gì|la gi|còn gọi là gì|con goi la gi|tên gọi khác là gì|ten goi khac la gi|thuộc nhóm nào|thuoc nhom nao|"
-        r"là loại gì|la loai gi|dùng để làm gì|dung de lam gi|yêu cầu gì|yeu cau gi|"
-        r"cần gì|can gi|used for|require|requires"
+        r"còn gọi là gì|con goi la gi|tên gọi khác là gì|ten goi khac la gi|"
+        r"thuộc nhóm nào|thuoc nhom nao|là loại gì|la loai gi|dùng để làm gì|dung de lam gi|"
+        r"yêu cầu gì|yeu cau gi|cần gì|can gi|"
+        r"xuất hiện ở đâu|xuat hien o dau|"
+        r"là cái gì|la cai gi|nghĩa là gì|nghia la gi|có nghĩa là gì|co nghia la gi|"
+        r"là gì(?:\s+(?:vậy|nhỉ|thế))?|la gi(?:\s+(?:vay|nhi|the))?|"
+        r"used for|require|requires|mean|means|meaning|definition"
         r")$"
     )
     cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
@@ -725,9 +731,13 @@ def _strip_question_noise(text: str) -> str:
     text = re.sub(r"^(cua|của|of)\s+", "", text, flags=re.IGNORECASE).strip()
     text = re.sub(
         r"\s+(?:"
-        r"là gì|la gi|còn gọi là gì|con goi la gi|tên gọi khác là gì|ten goi khac la gi|"
+        r"còn gọi là gì|con goi la gi|tên gọi khác là gì|ten goi khac la gi|"
         r"thuộc nhóm nào|thuoc nhom nao|là loại gì|la loai gi|dùng để làm gì|dung de lam gi|"
-        r"yêu cầu gì|yeu cau gi|cần gì|can gi"
+        r"yêu cầu gì|yeu cau gi|cần gì|can gi|"
+        r"xuất hiện ở đâu|xuat hien o dau|"
+        r"là cái gì|la cai gi|nghĩa là gì|nghia la gi|có nghĩa là gì|co nghia la gi|"
+        r"là gì(?:\s+(?:vậy|nhỉ|thế))?|la gi(?:\s+(?:vay|nhi|the))?|"
+        r"mean|means|meaning|definition"
         r")$",
         "",
         text,
@@ -741,8 +751,67 @@ def _strip_terminal_question_punctuation(text: str) -> str:
     return re.sub(r"[?？]+$", "", normalize_spaces(text)).strip()
 
 
+def _strip_lookup_wrappers(text: str) -> str:
+    cleaned = _strip_terminal_question_punctuation(text)
+    polite_prefix = r"(?:hãy|hay|vui lòng|vui long)\s+"
+    prefix_pattern = (
+        r"^(?:"
+        + polite_prefix
+        + r")?(?:"
+        r"cho tôi biết|cho toi biet|tra cứu|tra cuu|tìm|tim|mục từ|muc tu|"
+        r"giải thích|giai thich|giải nghĩa|giai nghia|định nghĩa|dinh nghia|khái niệm|khai niem|"
+        r"meaning of|definition of|define|explain|lookup|look up|search for|find|what is|what does"
+        r")\s+"
+    )
+    suffix_pattern = (
+        r"\s+(?:"
+        r"là gì(?:\s+(?:vậy|nhỉ|thế))?|la gi(?:\s+(?:vay|nhi|the))?|"
+        r"là cái gì|la cai gi|nghĩa là gì|nghia la gi|có nghĩa là gì|co nghia la gi|"
+        r"xuất hiện ở đâu|xuat hien o dau|"
+        r"mean|means|meaning|definition"
+        r")$"
+    )
+    previous = None
+    while previous != cleaned:
+        previous = cleaned
+        cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(suffix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = _strip_terminal_question_punctuation(cleaned)
+    return cleaned
+
+
+def _is_definition_lookup_query(original: str, normalized: str) -> bool:
+    if _has_any(
+        normalized,
+        (
+            " la gi",
+            "la cai gi",
+            "nghia la gi",
+            "co nghia la gi",
+            "dinh nghia",
+            "khai niem",
+            "giai thich",
+            "giai nghia",
+            "cho toi biet",
+            "tra cuu",
+            "muc tu",
+            "what is",
+            "what does",
+            "define ",
+            "explain ",
+            "meaning of",
+            "definition of",
+            "lookup ",
+            "look up ",
+        ),
+    ):
+        return True
+    stripped = _strip_lookup_wrappers(original)
+    return bool(stripped and stripped != _strip_terminal_question_punctuation(original))
+
+
 def _looks_bare_lookup_query(text: str) -> bool:
-    cleaned = _strip_question_noise(text)
+    cleaned = _strip_lookup_wrappers(text)
     if not cleaned:
         return False
     if re.search(r"[,;:]", cleaned):

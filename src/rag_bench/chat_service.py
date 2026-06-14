@@ -728,15 +728,33 @@ class RagChatService:
         if not _looks_like_dictionary_text_query(question):
             return None
         request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
+        query_plan = plan_dictionary_query(question) if self.config.enable_dictionary_query_planner else None
         retrieval = dictionary_retriever.search(Query(query_id="chat-dict-fallback", text=question), request_top_k)
-        hits = [hit for hit in retrieval.hits if _strong_dictionary_text_fallback_hit(hit)]
+        if query_plan is not None:
+            extra_results = [
+                dictionary_retriever.search(Query(query_id=f"chat-dict-fallback-plan-{index}", text=term), request_top_k).hits
+                for index, term in enumerate(query_plan.target_terms[:3], 1)
+                if term and term.strip().lower() != question.strip().lower()
+            ]
+            if extra_results:
+                retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
+            retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
+        primary_top_score = max((hit.score for hit in primary_retrieval.hits), default=0.0)
+        allow_lexical_mentions = primary_top_score <= 0 and bool(query_plan and query_plan.target_terms)
+        hits = [
+            hit
+            for hit in retrieval.hits
+            if _strong_dictionary_text_fallback_hit(hit, allow_lexical=allow_lexical_mentions)
+        ]
         if not hits:
             return None
-        primary_top_score = max((hit.score for hit in primary_retrieval.hits), default=0.0)
         has_direct_dictionary_hit = any(float(hit.metadata.get("dictionary_direct_score") or 0.0) > 0 for hit in hits)
         if primary_top_score > 0 and not has_direct_dictionary_hit:
             return None
-        return RetrievalResult(query=retrieval.query, hits=hits, latency_s=retrieval.latency_s, metadata=retrieval.metadata)
+        metadata = dict(retrieval.metadata)
+        if query_plan is not None:
+            metadata["query_plan"] = query_plan.to_payload()
+        return RetrievalResult(query=retrieval.query, hits=hits, latency_s=retrieval.latency_s, metadata=metadata)
 
     def lookup_dictionary(
         self,
@@ -1244,14 +1262,19 @@ def _looks_like_dictionary_text_query(text: str) -> bool:
     return True
 
 
-def _strong_dictionary_text_fallback_hit(hit: RetrievalHit) -> bool:
+def _strong_dictionary_text_fallback_hit(hit: RetrievalHit, *, allow_lexical: bool = False) -> bool:
     if hit.score <= 0:
         return False
     metadata = hit.metadata or {}
     mode = str(metadata.get("dictionary_match_mode") or "")
     direct_score = float(metadata.get("dictionary_direct_score") or 0.0)
     graph_score = float(metadata.get("dictionary_graph_score") or 0.0)
-    return mode in {"strict", "folded"} or direct_score > 0 or (mode == "graph" and graph_score >= 0.35)
+    return (
+        mode in {"strict", "folded"}
+        or direct_score > 0
+        or (mode == "graph" and graph_score >= 0.35)
+        or (allow_lexical and mode == "lexical")
+    )
 
 
 def _normalize_retrieval_score_controls(

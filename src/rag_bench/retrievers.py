@@ -696,6 +696,8 @@ class DictionaryGraphRetriever:
                 for index, strict_text in enumerate(self._strict_texts):
                     if phrase in f" {strict_text} ":
                         index_scores[index] = max(index_scores.get(index, 0.0), 0.45)
+                    elif _dictionary_compact_short_token_match(query_key, strict_text):
+                        index_scores[index] = max(index_scores.get(index, 0.0), 0.86)
 
             for index in self._headword_strict_indexes.get(query_key, []):
                 index_scores[index] = max(index_scores.get(index, 0.0), 1.8)
@@ -739,6 +741,8 @@ class DictionaryGraphRetriever:
                     for index, folded_text in enumerate(self._folded_texts):
                         if phrase in f" {folded_text} ":
                             index_scores[index] = max(index_scores.get(index, 0.0), 0.45)
+                        elif _dictionary_compact_short_token_match(query_key, folded_text):
+                            index_scores[index] = max(index_scores.get(index, 0.0), 0.86)
 
                 for index in self._headword_indexes.get(query_key, []):
                     index_scores[index] = max(index_scores.get(index, 0.0), 1.55)
@@ -1368,6 +1372,21 @@ def _dictionary_headword_partial_match(query_key: str, headword_key: str) -> boo
         return True
     if headword_key in query_key:
         return len(headword_tokens) >= 2 or len(query_tokens) == 1
+    return False
+
+
+def _dictionary_compact_short_token_match(query_key: str, text_key: str) -> bool:
+    compact_query = re.sub(r"[^a-z0-9]+", "", _dictionary_fold_text(query_key))
+    if not (3 <= len(compact_query) <= 12):
+        return False
+    if " " in query_key.strip():
+        return False
+    tokens = _dictionary_fold_text(text_key).split()
+    for width in range(2, min(4, len(tokens)) + 1):
+        for start in range(0, len(tokens) - width + 1):
+            window = tokens[start : start + width]
+            if all(1 <= len(token) <= 3 for token in window) and "".join(window) == compact_query:
+                return True
     return False
 
 

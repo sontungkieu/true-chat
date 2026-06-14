@@ -40,13 +40,28 @@ def test_dictionary_query_planner_detects_vietnamese_and_english_intents() -> No
 
 
 def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
-    cases = ["PB", "PB là gì?", "PB la gi?", "giải thích PB", "giai thich PB", "explain PB"]
+    cases = {
+        "PB": ["PB", "PB là gì?", "PB la gi?", "giải thích PB", "giai thich PB", "explain PB"],
+        "CVHL": [
+            "CVHL",
+            "CVHL là gì?",
+            "CVHL la gi?",
+            "giải thích CVHL",
+            "giai thich CVHL",
+            "CVHL nghĩa là gì?",
+            "cho tôi biết CVHL là gì",
+        ],
+        "SPG9": ["SPG9 là gì?", "meaning of SPG9", "what does SPG9 mean?"],
+        "ĐKZ": ["ĐKZ là gì?", "giải nghĩa ĐKZ"],
+        "KHCN": ["KHCN", "KHCN là gì?", "KHCN xuất hiện ở đâu?", "KHCN xuat hien o dau?"],
+    }
 
-    for query in cases:
-        plan = plan_dictionary_query(query)
+    for expected_target, queries in cases.items():
+        for query in queries:
+            plan = plan_dictionary_query(query)
 
-        assert plan.intent == DictionaryQueryIntent.DEFINITION
-        assert plan.target_terms == ["PB"]
+            assert plan.intent == DictionaryQueryIntent.DEFINITION
+            assert plan.target_terms == [expected_target]
 
 
 def test_comparison_plan_has_both_terms_and_structured_answer_style() -> None:

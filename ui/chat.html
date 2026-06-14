@@ -1492,6 +1492,7 @@
       display: grid;
       gap: 10px;
       max-width: min(760px, 100%);
+      min-width: 0;
       margin: 2px 0 14px;
       border: 1px solid var(--border);
       border-radius: 14px;
@@ -1504,6 +1505,7 @@
       display: grid;
       gap: 10px;
       max-width: min(760px, 100%);
+      min-width: 0;
       margin: 2px 0 14px;
     }
 
@@ -1516,24 +1518,27 @@
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
+      flex-wrap: wrap;
       gap: 12px;
+      min-width: 0;
       border-bottom: 1px solid var(--border);
       padding: 12px 14px 10px;
     }
 
     .dictionary-inline-title {
+      flex: 1 1 260px;
       min-width: 0;
+      max-width: 100%;
     }
 
     .dictionary-inline-title strong {
       display: block;
-      overflow: hidden;
       color: var(--text);
       font-size: 15px;
       font-weight: 760;
       line-height: 1.2;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .dictionary-inline-meta {
@@ -1541,14 +1546,19 @@
       align-items: center;
       flex-wrap: wrap;
       gap: 5px;
+      min-width: 0;
+      max-width: 100%;
       margin-top: 3px;
     }
 
     .dictionary-inline-meta-text {
+      min-width: 0;
+      max-width: 100%;
       color: var(--muted);
       font-size: 11px;
       line-height: 1.25;
       overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .dictionary-relevance {
@@ -1576,7 +1586,8 @@
     .dictionary-open {
       display: inline-flex;
       align-items: center;
-      flex: 0 0 auto;
+      flex: 0 1 auto;
+      min-width: 0;
       min-height: calc(28px * var(--font-scale));
       border: 1px solid var(--border);
       border-radius: 999px;
@@ -1598,11 +1609,16 @@
     }
 
     .dictionary-inline-body {
+      min-width: 0;
+      max-width: 100%;
       padding: 13px 14px 14px;
       color: var(--text);
       font-size: 15px;
       line-height: 1.7;
+      overflow-x: hidden;
       overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: normal;
     }
 
     .dictionary-inline-body .rich-table-cell {
@@ -3596,10 +3612,19 @@
 
     function updateRuntimeVersion() {
       if (!runtimeVersion || !runtimeVersionValue) return;
-      const version = String(APP_VERSION || "").trim();
+      const version = runtimeCommit();
       runtimeVersion.hidden = !version;
       runtimeVersionValue.textContent = version;
       runtimeVersionValue.title = version;
+    }
+
+    function runtimeCommit() {
+      return String(APP_VERSION || "").trim();
+    }
+
+    function shortRuntimeCommit() {
+      const commit = runtimeCommit();
+      return commit.length > 12 ? commit.slice(0, 12) : commit;
     }
 
     function clampNumber(value, min, max, fallback) {
@@ -5334,6 +5359,8 @@
     function formatMeta(meta) {
       const parts = [];
       if (settings.devMode) {
+        const commit = shortRuntimeCommit();
+        if (commit) parts.push("commit " + commit);
         if (meta.key_alias) parts.push("key " + meta.key_alias);
         if (Array.isArray(meta.rejected_aliases) && meta.rejected_aliases.length) {
           parts.push("rejected " + meta.rejected_aliases.join(", "));

@@ -743,6 +743,20 @@ def test_dictionary_mode_normalizes_short_acronym_definition_queries() -> None:
     assert result.response["query_plan"]["target_terms"] == ["PB"]
     assert dictionary_retriever.queries == ["PB là gì?", "PB"]
 
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "/dict CVHL nghĩa là gì?"}], language="vi")
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["query_plan"]["target_terms"] == ["CVHL"]
+    assert dictionary_retriever.queries == ["CVHL nghĩa là gì?", "CVHL"]
+
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "/dict KHCN xuất hiện ở đâu?"}], language="vi")
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["query_plan"]["target_terms"] == ["KHCN"]
+    assert dictionary_retriever.queries == ["KHCN xuất hiện ở đâu?", "KHCN"]
+
 
 def test_extract_alias_evidence_from_explicit_metadata() -> None:
     evidence = extract_alias_evidence_from_hits(
@@ -1886,6 +1900,84 @@ def test_text_mode_adds_dictionary_fallback_for_short_terms() -> None:
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieved"][0]["doc_id"] == "base:P-0023"
     assert "PHÁO BINH, lực lượng tác chiến." in llm.messages[1]["content"]
+
+
+def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mentions() -> None:
+    class WeakTextRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert query.text == "KHCN xuất hiện ở đâu?"
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="bench-noise",
+                        score=0.0,
+                        rank=1,
+                        title="Noise",
+                        text="No useful context.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    )
+                ],
+                latency_s=0.02,
+            )
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            self.queries.append(query.text)
+            hits = []
+            if query.text == "KHCN":
+                hits = [
+                    RetrievalHit(
+                        doc_id="dict-mention",
+                        score=0.72,
+                        rank=1,
+                        title="Synthetic related entry",
+                        text="Synthetic entry mentioning KHCN.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "dictionary_match_mode": "lexical",
+                            "query_highlights": ["KHCN"],
+                        },
+                        data_tier="semi_private",
+                    )
+                ]
+            return RetrievalResult(query=query, hits=hits, latency_s=0.01, metadata={"kind": "dictionary"})
+
+    text_retriever = WeakTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    llm = FakeLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=llm,
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "KHCN xuất hiện ở đâu?"}], response_mode="text")
+
+    assert dictionary_retriever.queries == ["KHCN xuất hiện ở đâu?", "KHCN"]
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["KHCN"]
+    assert result.response["rag"]["retrieved"][0]["doc_id"] == "dict-mention"
+    assert "Synthetic entry mentioning KHCN." in llm.messages[1]["content"]
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:

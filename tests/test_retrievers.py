@@ -380,16 +380,28 @@ def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> 
             text="PHÁO BINH BIÊN CHẾ, gọi chung các phân đội pháo binh.",
             metadata={"kind": "dictionary", "headword": "PHÁO BINH BIÊN CHẾ", "aliases": ["PBBC"]},
         ),
+        Document(
+            doc_id="base:Q-0001",
+            title="SYNTHETIC QS PB MENTION",
+            text="SYNTHETIC QS PB MENTION, entry text contains the spaced acronym QS PB.",
+            metadata={"kind": "dictionary", "headword": "SYNTHETIC QS PB MENTION"},
+        ),
     ]
     retriever = DictionaryGraphRetriever()
     retriever.build(docs)
 
     pb = retriever.search(Query("q1", "pb"), top_k=3)
     pbbc = retriever.search(Query("q2", "pbbc"), top_k=3)
+    qspb = retriever.search(Query("q3", "qspb"), top_k=3)
+    qs_pb = retriever.search(Query("q4", "QS PB"), top_k=3)
 
     assert pb.hits[0].doc_id == "base:P-0023"
     assert pb.hits[0].metadata["dictionary_direct_score"] > pb.hits[1].metadata["dictionary_direct_score"]
     assert pbbc.hits[0].doc_id == "base:P-0025"
+    assert qspb.hits[0].doc_id == "base:Q-0001"
+    assert qs_pb.hits[0].doc_id == "base:Q-0001"
+    assert qspb.hits[0].metadata["dictionary_direct_score"] >= 0.8
+    assert qs_pb.hits[0].metadata["dictionary_direct_score"] >= 0.8
 
 
 def test_dictionary_graph_retriever_prefers_exact_phrase_mentions_over_generic_headwords() -> None:
