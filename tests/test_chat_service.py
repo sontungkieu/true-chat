@@ -11,6 +11,7 @@ from rag_bench.chat_service import (
     _build_mimo_client,
     _mimo_base_url_for_key,
     _format_context,
+    _strong_dictionary_text_fallback_hit,
     build_dictionary_rag_messages,
     extract_alias_evidence_from_hits,
     last_user_text,
@@ -2299,6 +2300,45 @@ def test_text_dictionary_fallback_replaces_internal_query_leak_for_ambiguous_acr
     assert "ALPHA ENTRY [dict-pb-0]" in answer
     assert "[dict-pb-0]" in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_internal_query_leak_fallback"] is True
+
+
+def test_text_dictionary_fallback_rejects_weak_lexical_hits_without_highlights() -> None:
+    weak_hit = RetrievalHit(
+        doc_id="weak",
+        score=0.03,
+        rank=1,
+        title="Weak lexical",
+        text="Synthetic weak lexical context.",
+        metadata={"dictionary_match_mode": "lexical", "data_tier": "semi_private"},
+        data_tier="semi_private",
+    )
+    highlighted_hit = RetrievalHit(
+        doc_id="highlighted",
+        score=0.03,
+        rank=2,
+        title="Highlighted lexical",
+        text="Synthetic highlighted context.",
+        metadata={
+            "dictionary_match_mode": "lexical",
+            "query_highlights": ["pháo đài"],
+            "data_tier": "semi_private",
+        },
+        data_tier="semi_private",
+    )
+    strong_hit = RetrievalHit(
+        doc_id="strong",
+        score=0.3,
+        rank=3,
+        title="Strong lexical",
+        text="Synthetic strong lexical context.",
+        metadata={"dictionary_match_mode": "lexical", "data_tier": "semi_private"},
+        data_tier="semi_private",
+    )
+
+    assert not _strong_dictionary_text_fallback_hit(weak_hit, allow_lexical=True)
+    assert _strong_dictionary_text_fallback_hit(highlighted_hit, allow_lexical=True)
+    assert _strong_dictionary_text_fallback_hit(strong_hit, allow_lexical=True)
+    assert not _strong_dictionary_text_fallback_hit(highlighted_hit, allow_lexical=False)
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:

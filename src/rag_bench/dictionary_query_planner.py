@@ -950,6 +950,9 @@ def _extract_single_target_result(
     before_noise = cleaned
     cleaned = _strip_question_noise(cleaned)
     noise_changed = _fold(cleaned) != _fold(before_noise)
+    before_plural = cleaned
+    cleaned = _strip_plural_lookup_prefix(cleaned)
+    plural_changed = _fold(cleaned) != _fold(before_plural)
     compact_target = _compact_lookup_target(cleaned, adapter=adapter)
     if compact_target:
         return DictionaryTargetExtractionResult(
@@ -965,17 +968,17 @@ def _extract_single_target_result(
         return DictionaryTargetExtractionResult(
             terms=[],
             layer="empty",
-            changed=regex_changed or noise_changed,
+            changed=regex_changed or noise_changed or plural_changed,
             adapter=adapter.name,
         )
-    layer = "regex_lookup_wrapper" if regex_changed or noise_changed else "raw_or_bare_lookup"
+    layer = "regex_lookup_wrapper" if regex_changed or noise_changed or plural_changed else "raw_or_bare_lookup"
     if short_changed:
         layer = "spaced_or_bare_short_target"
     term = cleaned.upper() if _looks_placeholder(cleaned) else cleaned
     return DictionaryTargetExtractionResult(
         terms=[term],
         layer=layer,
-        changed=regex_changed or noise_changed or short_changed,
+        changed=regex_changed or noise_changed or plural_changed or short_changed,
         adapter=adapter.name,
     )
 
@@ -1029,6 +1032,13 @@ def _strip_question_noise(text: str) -> str:
     return text
 
 
+def _strip_plural_lookup_prefix(text: str) -> str:
+    cleaned = normalize_spaces(text)
+    if len(cleaned.split()) > 4:
+        return cleaned
+    return re.sub(r"^(?:các|cac|những|nhung)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+
+
 def _strip_terminal_question_punctuation(text: str) -> str:
     return re.sub(r"[?？]+$", "", normalize_spaces(text)).strip()
 
@@ -1070,6 +1080,7 @@ def _strip_lookup_wrappers(
         cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
         cleaned = re.sub(suffix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
         cleaned = _strip_terminal_question_punctuation(cleaned)
+        cleaned = _strip_plural_lookup_prefix(cleaned)
     compact_target = _compact_lookup_target(cleaned, adapter=normalization_adapter)
     if compact_target:
         return compact_target

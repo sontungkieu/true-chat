@@ -100,6 +100,22 @@ def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
             assert plan.target_terms == [expected_target]
 
 
+def test_definition_plan_strips_plural_lookup_wrapper_for_short_phrases() -> None:
+    cases = {
+        "các pháo đài": "pháo đài",
+        "những pháo đài": "pháo đài",
+        "cac phao dai": "phao dai",
+        "nhung phao dai": "phao dai",
+    }
+
+    for query, expected_target in cases.items():
+        plan = plan_dictionary_query(query)
+
+        assert plan.intent == DictionaryQueryIntent.DEFINITION
+        assert plan.target_terms == [expected_target]
+        assert plan.normalization["target_changed"] is True
+
+
 def test_short_lookup_normalization_generalizes_across_unseen_targets() -> None:
     target_queries = {
         "AB": [
