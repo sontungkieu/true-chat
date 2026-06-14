@@ -1146,6 +1146,83 @@ def test_dictionary_prompt_preserves_near_match_acronym_targets() -> None:
     assert "Roman-numeral suffixes" in system_prompt
     assert "Preserve detected target terms exactly as listed" in user_prompt
     assert "Do not merge a target acronym with a nearby but different acronym" in user_prompt
+    assert "do not say the target was not found" in user_prompt
+
+
+def test_dictionary_mode_replaces_refusal_when_direct_entry_exists() -> None:
+    class DirectEntryDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            hits = []
+            if query.text in {"chi tiết TERMII", "TERMII"}:
+                hits = [
+                    RetrievalHit(
+                        doc_id="TERMII_ENTRY",
+                        score=1.4,
+                        rank=1,
+                        title="TERMII TITLE",
+                        text="TERMII synthetic direct dictionary entry.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "headword": "TERMII TITLE",
+                            "dictionary_match_mode": "strict",
+                            "dictionary_direct_score": 1.2,
+                            "raw_docx_text": "TERMII synthetic direct dictionary entry.",
+                        },
+                        data_tier="semi_private",
+                        doc_type="dictionary",
+                    )
+                ]
+            return RetrievalResult(query=query, hits=hits, latency_s=0.01, metadata={"kind": "dictionary"})
+
+    class RefusalLLM(FakeLLM):
+        def generate(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            model: str | None = None,
+            temperature: float = 0.0,
+            max_completion_tokens: int = 512,
+        ) -> GenerationResult:
+            self.messages = messages
+            return GenerationResult(
+                answer='Không tìm thấy định nghĩa hoặc thông tin chính xác cho thuật ngữ "TERMII" trong các tài liệu được cung cấp.',
+                key_alias=self.alias,
+                attempted_aliases=[self.alias],
+                latency_s=0.03,
+                retry_count=0,
+                prompt_tokens=20,
+                completion_tokens=14,
+                total_tokens=34,
+            )
+
+    retriever = DirectEntryDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=3,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=retriever,
+        llm=RefusalLLM(),
+        retrievers={"dictionary-graph": retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "/dict chi tiết TERMII"}], language="vi")
+
+    answer = result.response["choices"][0]["message"]["content"]
+    assert "Không tìm thấy định nghĩa" not in answer
+    assert "Tìm thấy mục từ hoặc bằng chứng trực tiếp phù hợp" in answer
+    assert "TERMII TITLE [TERMII_ENTRY]" in answer
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_refusal_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_direct_refusal_fallback"] is True
+    assert result.response["query_plan"]["target_terms"] == ["TERMII"]
 
 
 def test_dictionary_alias_mode_uses_direct_prompt_and_alias_metadata() -> None:
@@ -2175,6 +2252,7 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert "Dictionary fallback guidance:" in llm.messages[-1]["content"]
     assert "Preserve the target term(s) exactly as written above" in llm.messages[-1]["content"]
     assert "Do not merge the target with a nearby but different acronym" in llm.messages[-1]["content"]
+    assert "do not answer that the target was not found" in llm.messages[-1]["content"]
     assert "If the target term is mentioned" in llm.messages[-1]["content"]
     assert "Never refer to internal planned searches" in llm.messages[-1]["content"]
 
@@ -2258,7 +2336,7 @@ def test_text_dictionary_fallback_replaces_llm_refusal_for_mention_evidence() ->
         ) -> GenerationResult:
             self.messages = messages
             return GenerationResult(
-                answer='Tôi không thể trả lời được câu hỏi "CTCC" dựa trên các văn bản được cung cấp.',
+                answer='Không tìm thấy định nghĩa hoặc thông tin chính xác cho thuật ngữ "CTCC" trong các tài liệu được cung cấp.',
                 key_alias=self.alias,
                 attempted_aliases=[self.alias],
                 latency_s=0.03,
@@ -2287,7 +2365,7 @@ def test_text_dictionary_fallback_replaces_llm_refusal_for_mention_evidence() ->
     result = service.answer([{"role": "user", "content": "CTCC xuất hiện ở đâu?"}], response_mode="text", language="vi")
 
     answer = result.response["choices"][0]["message"]["content"]
-    assert "Tôi không thể trả lời" not in answer
+    assert "Không tìm thấy định nghĩa" not in answer
     assert "CTCC" in answer
     assert "chưa thấy định nghĩa" in answer
     assert "xuất hiện trong phần giải thích" in answer

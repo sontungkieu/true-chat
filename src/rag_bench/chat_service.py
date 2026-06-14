@@ -448,6 +448,19 @@ class RagChatService:
                     )
                     if generation.error:
                         raise RuntimeError(generation.error)
+                    if _looks_like_grounding_refusal(generation.answer) and any(
+                        _hit_has_direct_dictionary_match(hit) for hit in retrieval.hits
+                    ):
+                        grounded_occurrence_answer = _format_dictionary_occurrence_fallback_answer(
+                            question,
+                            retrieval.hits,
+                            retrieval_metadata,
+                            language=response_language,
+                        )
+                        if grounded_occurrence_answer:
+                            generation = replace(generation, answer=grounded_occurrence_answer)
+                            retrieval_metadata["dictionary_refusal_fallback"] = True
+                            retrieval_metadata["dictionary_direct_refusal_fallback"] = True
                     answer = _format_dictionary_answer(retrieval.hits, generation.answer)
             else:
                 privacy_decision = self._record_no_generation_privacy(
@@ -1634,6 +1647,8 @@ def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) 
         "hyphens, or Roman-numeral suffixes.\n"
         "- Do not merge the target with a nearby but different acronym. If retrieved entries mention a near-match "
         "instead, say it is a near-match rather than treating it as the target.\n"
+        "- If a retrieved dictionary entry directly matches the target term, do not answer that the target was not found. "
+        "Summarize the cited entry and state only unsupported details as missing.\n"
         "- Some retrieved contexts are local dictionary entries. For short acronym or term-only questions, "
         "distinguish a formal definition/alias from occurrence evidence.\n"
         "- If the target term is mentioned in retrieved dictionary entries but is not explicitly defined, "
@@ -1707,6 +1722,7 @@ def _dictionary_final_instruction(query_plan: DictionaryQueryPlan | None) -> str
         )
     return (
         "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
+        "If a retrieved entry directly matches the target term, do not say the target was not found; summarize the cited entry and state only unsupported details as missing. "
         "Do not invent content not supported by the retrieved dictionary entries."
     )
 
@@ -2139,9 +2155,18 @@ def _looks_like_grounding_refusal(answer: str) -> bool:
         "khong du thong tin",
         "khong co du thong tin",
         "khong biet",
+        "khong tim thay dinh nghia",
+        "khong tim thay thong tin",
+        "khong co dinh nghia",
+        "khong co thong tin chinh xac",
+        "khong co dinh nghia chinh thuc",
         "khong the xac dinh",
         "dua tren cac van ban duoc cung cap",
         "dua tren ngu canh duoc cung cap",
+        "no definition was found",
+        "no exact definition",
+        "no precise information",
+        "not found in the provided",
     )
     return any(marker in folded for marker in refusal_markers)
 

@@ -295,6 +295,7 @@ def test_dictionary_prompt_instructions_preserve_exact_short_targets() -> None:
     assert "Preserve detected target terms exactly as listed" in instructions
     assert "Roman-numeral suffixes" in instructions
     assert "Do not merge a target acronym with a nearby but different acronym" in instructions
+    assert "do not say the target was not found" in instructions
 
 
 def test_procedure_plan_marks_schema_gap_and_prompt_blocks_hallucinated_steps() -> None:

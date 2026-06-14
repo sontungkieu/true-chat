@@ -437,6 +437,7 @@ def dictionary_plan_prompt_instructions(plan: DictionaryQueryPlan) -> str:
         "If evidence is incomplete, say what is missing instead of filling gaps.",
         "Preserve detected target terms exactly as listed; do not change letters, digits, diacritics, casing, hyphens, or Roman-numeral suffixes.",
         "Do not merge a target acronym with a nearby but different acronym; describe near-match evidence as near-match evidence, not as the target.",
+        "If a retrieved entry directly matches a target term, do not say the target was not found; summarize the cited entry and state only unsupported details as missing.",
     ]
     if plan.intent == DictionaryQueryIntent.COMPARISON:
         specific = [
