@@ -842,6 +842,13 @@ def test_dictionary_mode_normalizes_short_acronym_definition_queries() -> None:
     assert result.response["query_plan"]["target_terms"] == ["CTCC"]
     assert dictionary_retriever.queries == ["CTCC xuất hiện ở đâu?", "CTCC"]
 
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "/dict chi tiết AB"}], language="vi")
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["query_plan"]["target_terms"] == ["AB"]
+    assert dictionary_retriever.queries == ["chi tiết AB", "AB"]
+
 
 def test_extract_alias_evidence_from_explicit_metadata() -> None:
     evidence = extract_alias_evidence_from_hits(

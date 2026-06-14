@@ -143,9 +143,12 @@ LOOKUP_NOISE_TOKENS = {
     "biet",
     "cai",
     "cho",
+    "chi",
     "cua",
     "cuu",
     "dau",
+    "detail",
+    "details",
     "define",
     "definition",
     "does",
@@ -176,14 +179,18 @@ LOOKUP_NOISE_TOKENS = {
     "stand",
     "stands",
     "tat",
+    "thong",
     "the",
     "thich",
+    "tin",
+    "tiet",
     "tim",
     "toi",
     "tra",
     "tu",
     "vay",
     "viet",
+    "ve",
     "vui",
     "what",
     "xuat",
@@ -197,8 +204,12 @@ COMPACT_LOOKUP_PREFIXES = (
     "khainiem",
     "tracuu",
     "muctu",
+    "chitiet",
+    "thongtin",
+    "thongtinve",
     "meaningof",
     "definitionof",
+    "detailsof",
     "viettatcua",
     "whatdoes",
     "whatis",
@@ -921,11 +932,12 @@ def _extract_single_target_result(
         r"^(?:"
         r"giải thích|giai thich|giải nghĩa|giai nghia|định nghĩa|dinh nghia|khái niệm|khai niem|"
         r"cho tôi biết|cho toi biet|tra cứu|tra cuu|tìm|tim|mục từ|muc tu|"
+        r"chi tiết|chi tiet|thông tin về|thong tin ve|thông tin|thong tin|"
         r"tên khác của|ten khac cua|tên gọi khác của|ten goi khac cua|"
         r"viết tắt của|viet tat cua|"
         r"ngoại lệ của|ngoai le cua|trường hợp này áp dụng|truong hop nay ap dung|"
         r"khi nào áp dụng|khi nao ap dung|category of|type of|meaning of|definition of|"
-        r"define|explain|lookup|look up|search for|find|what is|what does|"
+        r"define|explain|details of|detail of|details|detail|about|lookup|look up|search for|find|what is|what does|"
         r"quy trình thực hiện|quy trinh thuc hien|quy trình xử lý|quy trinh xu ly|"
         r"quy trình|quy trinh|procedure for|exception for"
         r")\s+"
@@ -1060,8 +1072,9 @@ def _strip_lookup_wrappers(
         + r")?(?:"
         r"cho tôi biết|cho toi biet|tra cứu|tra cuu|tìm|tim|mục từ|muc tu|"
         r"giải thích|giai thich|giải nghĩa|giai nghia|định nghĩa|dinh nghia|khái niệm|khai niem|"
+        r"chi tiết|chi tiet|thông tin về|thong tin ve|thông tin|thong tin|"
         r"viết tắt của|viet tat cua|"
-        r"meaning of|definition of|define|explain|lookup|look up|search for|find|what is|what does"
+        r"meaning of|definition of|details of|detail of|define|explain|details|detail|about|lookup|look up|search for|find|what is|what does"
         r")\s+"
     )
     suffix_pattern = (
@@ -1242,6 +1255,9 @@ def _is_definition_lookup_query(
             "khai niem",
             "giai thich",
             "giai nghia",
+            "chi tiet",
+            "thong tin",
+            "thong tin ve",
             "viet tat",
             "stand for",
             "stands for",
@@ -1255,6 +1271,11 @@ def _is_definition_lookup_query(
             "explain ",
             "meaning of",
             "definition of",
+            "details of",
+            "detail of",
+            "details ",
+            "detail ",
+            "about ",
             "lookup ",
             "look up ",
         ),

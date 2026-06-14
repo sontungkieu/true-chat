@@ -55,6 +55,11 @@ def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
             "PB là viết tắt của gì?",
             "PB la viet tat cua gi?",
             "pbviettatcuagi",
+            "chi tiết PB",
+            "chi tiet PB",
+            "thông tin về PB",
+            "thong tin ve PB",
+            "details of PB",
             "what does PB stand for?",
             "giải thích PB",
             "giai thich PB",
@@ -125,13 +130,20 @@ def test_short_lookup_normalization_generalizes_across_unseen_targets() -> None:
             "AB viết tắt cho gì?",
             "AB xuất hiện ở đâu?",
             "vui lòng giải thích AB",
+            "chi tiết AB",
+            "thông tin về AB",
+            "details of AB",
+            "about AB",
             "ablaviettatcuagi",
+            "chitietab",
+            "thongtinveab",
         ],
         "XYZ": [
             "XYZ là gì?",
             "X Y Z xuất hiện ở đâu?",
             "giải nghĩa XYZ",
             "what does XYZ stand for?",
+            "details XYZ",
             "xyzxuathienodau",
             "giaithichxyz",
         ],
@@ -180,10 +192,14 @@ def test_compact_acronym_planner_rerank_is_stable_across_score_noise() -> None:
 
 def test_short_lookup_normalization_does_not_extract_acronym_from_arbitrary_sentence() -> None:
     plan = plan_dictionary_query("nội dung XYZ trong tài liệu này")
+    detail_plan = plan_dictionary_query("chi tiết XYZ trong tài liệu này")
 
     assert plan.target_terms != ["XYZ"]
+    assert detail_plan.target_terms != ["XYZ"]
     candidates = dictionary_lookup_normalization_candidates("nội dung XYZ trong tài liệu này")
     assert not any(row["target"] == "XYZ" and row["layer"] == "short_acronym_lookup_noise" for row in candidates)
+    detail_candidates = dictionary_lookup_normalization_candidates("chi tiết XYZ trong tài liệu này")
+    assert not any(row["target"] == "XYZ" and row["layer"] == "short_acronym_lookup_noise" for row in detail_candidates)
 
 
 def test_short_lookup_normalization_records_layer_candidates() -> None:
