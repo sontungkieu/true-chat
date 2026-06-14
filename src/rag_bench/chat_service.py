@@ -558,6 +558,7 @@ class RagChatService:
             max_context_chars=self.config.max_context_chars,
             history_messages=history_messages,
             language=response_language,
+            dictionary_fallback_metadata=dictionary_fallback.metadata if dictionary_fallback is not None else None,
         )
         generation = self.llm.generate(
             prompt_messages,
@@ -567,6 +568,17 @@ class RagChatService:
         )
         if generation.error:
             raise RuntimeError(generation.error)
+        dictionary_refusal_fallback_used = False
+        if dictionary_fallback is not None and _looks_like_grounding_refusal(generation.answer):
+            grounded_occurrence_answer = _format_dictionary_occurrence_fallback_answer(
+                question,
+                dictionary_fallback.hits,
+                dictionary_fallback.metadata,
+                language=response_language,
+            )
+            if grounded_occurrence_answer:
+                generation = replace(generation, answer=grounded_occurrence_answer)
+                dictionary_refusal_fallback_used = True
 
         combined_hits = list(prompt_hits)
         retrieval_metadata = {**retriever_privacy_metadata, **retrieval.metadata, **score_filter_metadata}
@@ -579,6 +591,8 @@ class RagChatService:
                     "dictionary_fallback_metadata": dictionary_fallback.metadata,
                 }
             )
+            if dictionary_refusal_fallback_used:
+                retrieval_metadata["dictionary_refusal_fallback"] = True
             if dictionary_score_filter_metadata:
                 retrieval_metadata["dictionary_fallback_score_filter"] = dictionary_score_filter_metadata["score_filter"]
         if mode == "text_image":
@@ -1567,21 +1581,44 @@ def build_chat_rag_messages(
     max_context_chars: int,
     history_messages: int,
     language: str | None = None,
+    dictionary_fallback_metadata: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     question = last_user_text(messages)
     context = _format_context(hits, max_context_chars=max_context_chars)
     history = _format_history(messages[:-1], history_messages=history_messages)
     language_instruction = _language_instruction(language)
+    dictionary_instruction = _text_mode_dictionary_fallback_instruction(dictionary_fallback_metadata)
     user_prompt = (
         f"Recent conversation:\n{history}\n\n"
         f"Question:\n{question}\n\n"
         f"Retrieved contexts:\n{context}\n\n"
+        f"{dictionary_instruction}"
         "Answer:"
     )
     return [
         {"role": "system", "content": _join_prompt_parts(SYSTEM_PROMPT, language_instruction)},
         {"role": "user", "content": user_prompt},
     ]
+
+
+def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) -> str:
+    if not metadata:
+        return ""
+    query_plan = metadata.get("query_plan") if isinstance(metadata, dict) else None
+    if not isinstance(query_plan, dict):
+        return ""
+    target_terms = [str(term).strip() for term in query_plan.get("target_terms") or [] if str(term).strip()]
+    target = ", ".join(target_terms) if target_terms else "the target term"
+    return (
+        "Dictionary fallback guidance:\n"
+        f"- Target term(s): {target}.\n"
+        "- Some retrieved contexts are local dictionary entries. For short acronym or term-only questions, "
+        "distinguish a formal definition/alias from occurrence evidence.\n"
+        "- If the target term is mentioned in retrieved dictionary entries but is not explicitly defined, "
+        "do not answer that the context is unusable. State that no formal definition or expansion is shown in the "
+        "retrieved entries, then say it appears in the explanation/body of the cited entry or entries.\n"
+        "- Do not infer an expansion, alias, or meaning unless the retrieved entries explicitly support it.\n\n"
+    )
 
 
 def build_dictionary_rag_messages(
@@ -2056,6 +2093,101 @@ def _format_alias_answer(alias_evidence: AliasEvidence, hits: Sequence[Retrieval
         "No supported alternate name/alias was found in the retrieved sources. "
         f"The available sources only provide definitions or related information. {citations}"
     ).strip()
+
+
+def _looks_like_grounding_refusal(answer: str) -> bool:
+    cleaned = str(answer or "").strip()
+    if not cleaned:
+        return True
+    if re.search(r"\[[^\]]+\]", cleaned):
+        return False
+    folded = _fold_prompt_text(cleaned)
+    refusal_markers = (
+        "i do not know",
+        "i don't know",
+        "cannot answer",
+        "can't answer",
+        "not enough information",
+        "insufficient context",
+        "khong the tra loi",
+        "khong du thong tin",
+        "khong co du thong tin",
+        "khong biet",
+        "khong the xac dinh",
+        "dua tren cac van ban duoc cung cap",
+        "dua tren ngu canh duoc cung cap",
+    )
+    return any(marker in folded for marker in refusal_markers)
+
+
+def _fold_prompt_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text)
+    stripped = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    stripped = stripped.replace("đ", "d").replace("Đ", "D")
+    return re.sub(r"\s+", " ", stripped).strip().lower()
+
+
+def _format_dictionary_occurrence_fallback_answer(
+    question: str,
+    hits: Sequence[RetrievalHit],
+    metadata: dict[str, Any] | None,
+    *,
+    language: str | None = None,
+) -> str:
+    if not hits:
+        return ""
+    response_language = _normalize_response_language(language)
+    query_plan = metadata.get("query_plan") if isinstance(metadata, dict) else None
+    target_terms = (
+        [str(term).strip() for term in query_plan.get("target_terms") or [] if str(term).strip()]
+        if isinstance(query_plan, dict)
+        else []
+    )
+    target = target_terms[0] if target_terms else _strip_command_prefix(question).strip()
+    citations = _format_source_citations([hit.doc_id for hit in hits[:3]])
+    titles = _format_source_title_citations(hits[:3])
+    has_direct_entry = any(_hit_has_direct_dictionary_match(hit) for hit in hits[:3])
+    if response_language == "vi":
+        if has_direct_entry:
+            return (
+                f"Tìm thấy mục từ hoặc bằng chứng trực tiếp phù hợp với “{target}” trong từ điển: {titles}. "
+                f"Chỉ sử dụng các nguồn đã truy hồi; không suy rộng ngoài nội dung được trích dẫn. {citations}"
+            ).strip()
+        return (
+            f"Trong các mục từ điển được truy hồi, chưa thấy định nghĩa hoặc phần mở rộng chính thức cho “{target}”. "
+            f"Tuy nhiên “{target}” xuất hiện trong phần giải thích/nội dung của: {titles}. "
+            f"Vì vậy chỉ có thể xác nhận sự xuất hiện/ngữ cảnh được trích dẫn, không suy rộng nghĩa viết tắt nếu nguồn không nêu rõ. {citations}"
+        ).strip()
+    if has_direct_entry:
+        return (
+            f"The retrieved dictionary contains direct evidence for “{target}”: {titles}. "
+            f"I only use the cited retrieved sources and do not infer beyond them. {citations}"
+        ).strip()
+    return (
+        f"The retrieved dictionary entries do not show a formal definition or expansion for “{target}”. "
+        f"They do show that it appears in the explanation/body of: {titles}. "
+        f"I can confirm only that cited occurrence/context, not infer an unstated abbreviation meaning. {citations}"
+    ).strip()
+
+
+def _hit_has_direct_dictionary_match(hit: RetrievalHit) -> bool:
+    metadata = hit.metadata or {}
+    mode = str(metadata.get("dictionary_match_mode") or "")
+    direct_score = float(metadata.get("dictionary_direct_score") or 0.0)
+    return mode in {"strict", "folded"} or direct_score >= 1.0
+
+
+def _format_source_title_citations(hits: Sequence[RetrievalHit]) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for hit in hits:
+        doc_id = str(hit.doc_id or "").strip()
+        if not doc_id or doc_id in seen:
+            continue
+        seen.add(doc_id)
+        title = str(hit.title or doc_id).strip()
+        parts.append(f"{title} [{doc_id}]")
+    return "; ".join(parts)
 
 
 def _format_source_citations(doc_ids: Sequence[str]) -> str:

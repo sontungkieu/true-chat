@@ -2093,6 +2093,8 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["CTCC"]
     assert "Synthetic entry mentioning CTCC." in llm.messages[-1]["content"]
+    assert "Dictionary fallback guidance:" in llm.messages[-1]["content"]
+    assert "If the target term is mentioned" in llm.messages[-1]["content"]
 
     dictionary_retriever.queries.clear()
     result = service.answer([{"role": "user", "content": "ctccxuathienodau"}], response_mode="text")
@@ -2114,6 +2116,101 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert dictionary_retriever.queries == ["xyzxuathienodau", "XYZ"]
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["XYZ"]
+
+
+def test_text_dictionary_fallback_replaces_llm_refusal_for_mention_evidence() -> None:
+    class WeakTextRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="bench-noise",
+                        score=0.0,
+                        rank=1,
+                        title="Noise",
+                        text="No useful context.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    )
+                ],
+                latency_s=0.02,
+            )
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            hits = []
+            if query.text == "CTCC":
+                hits = [
+                    RetrievalHit(
+                        doc_id="dict-mention",
+                        score=0.72,
+                        rank=1,
+                        title="Synthetic occurrence entry",
+                        text="Synthetic entry mentioning CTCC without defining it.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "dictionary_match_mode": "lexical",
+                            "query_highlights": ["CTCC"],
+                        },
+                        data_tier="semi_private",
+                    )
+                ]
+            return RetrievalResult(query=query, hits=hits, latency_s=0.01, metadata={"kind": "dictionary"})
+
+    class RefusalLLM(FakeLLM):
+        def generate(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            model: str | None = None,
+            temperature: float = 0.0,
+            max_completion_tokens: int = 512,
+        ) -> GenerationResult:
+            self.messages = messages
+            return GenerationResult(
+                answer='Tôi không thể trả lời được câu hỏi "CTCC" dựa trên các văn bản được cung cấp.',
+                key_alias=self.alias,
+                attempted_aliases=[self.alias],
+                latency_s=0.03,
+                retry_count=0,
+                prompt_tokens=20,
+                completion_tokens=12,
+                total_tokens=32,
+            )
+
+    text_retriever = WeakTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=RefusalLLM(),
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer([{"role": "user", "content": "CTCC xuất hiện ở đâu?"}], response_mode="text", language="vi")
+
+    answer = result.response["choices"][0]["message"]["content"]
+    assert "Tôi không thể trả lời" not in answer
+    assert "CTCC" in answer
+    assert "chưa thấy định nghĩa" in answer
+    assert "xuất hiện trong phần giải thích" in answer
+    assert "[dict-mention]" in answer
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_refusal_fallback"] is True
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:
