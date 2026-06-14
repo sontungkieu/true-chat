@@ -1,0 +1,33 @@
+{
+  "profile_id": "scifact_public",
+  "description": "Public BEIR SciFact benchmark profile for retrieval experiments and RAG smoke tests.",
+  "data": {
+    "tier": "public",
+    "kind": "benchmark",
+    "dataset_id": "beir/scifact/test",
+    "cache_root": "${RAG_BENCH_DATA_CACHE:-~/.cache/true-chat-rag-bench}"
+  },
+  "data_aux": {
+    "graph": null,
+    "statistics": "runs/*_scifact_*/metrics.json",
+    "embeddings": "external_or_runtime_cache",
+    "structured_evidence": null
+  },
+  "adapters": {
+    "normalization": [],
+    "retrieval": []
+  },
+  "serve_defaults": {
+    "bench": "scifact",
+    "retriever": "bm25",
+    "model_id": "rag-scifact-bm25"
+  },
+  "gen": {
+    "runs_root": "runs",
+    "benchmark_root": "benchmark_results/budgetrag"
+  },
+  "post_alignment": {
+    "rlaif_root": "benchmark_results/rlaif",
+    "reports_root": "docs/reports"
+  }
+}

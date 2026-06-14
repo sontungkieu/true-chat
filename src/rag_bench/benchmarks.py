@@ -21,6 +21,7 @@ class BenchmarkSpec:
 
 
 BENCHMARKS: dict[str, BenchmarkSpec] = {
+    "none": BenchmarkSpec(name="none", dataset_id="none/empty"),
     "fixture": BenchmarkSpec(name="fixture", dataset_id="fixture/empty"),
     "scifact": BenchmarkSpec(name="scifact", dataset_id="beir/scifact/test"),
     "nfcorpus": BenchmarkSpec(name="nfcorpus", dataset_id="beir/nfcorpus/test"),
@@ -39,14 +40,14 @@ def load_benchmark(name: str, *, limit: int | None = None, allow_large: bool = F
     if spec is None:
         choices = ", ".join(sorted(BENCHMARKS))
         raise ValueError(f"Unknown benchmark '{name}'. Choices: {choices}")
-    if spec.name == "fixture":
+    if spec.name in {"fixture", "none"}:
         return BenchmarkData(
             name=spec.name,
             dataset_id=spec.dataset_id,
             queries=[],
             documents=[],
             qrels={},
-            metadata={"limit": limit, "document_count": 0, "query_count": 0, "source": "fixture"},
+            metadata={"limit": limit, "document_count": 0, "query_count": 0, "source": spec.name},
         )
     if spec.is_large and not allow_large:
         raise ValueError("hotpotqa is large; rerun with --allow-large-bench")

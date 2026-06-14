@@ -2387,3 +2387,27 @@ def test_parse_chat_command_supports_img_alias() -> None:
     assert parse_chat_command("/image cats") == ("img", "cats")
     assert parse_chat_command("/dict AMONIT") == ("dict", "AMONIT")
     assert parse_chat_command("plain text") is None
+
+
+def test_service_from_config_can_run_with_no_benchmark_corpus(tmp_path) -> None:
+    keys_path = tmp_path / "groq.env"
+    keys_path.write_text("test=gsk_test\n", encoding="utf-8")
+
+    service = RagChatService.from_config(
+        ChatProxyConfig(
+            bench="none",
+            retriever="bm25",
+            available_retrievers=("bm25",),
+            groq_keys_path=keys_path,
+            dictionary_artifact=None,
+            dictionary_source_dir=None,
+        ),
+        llm_factory=lambda _keys: FakeLLM(),
+    )
+
+    retrieval = service.retriever.search(Query("q", "anything"), top_k=3)
+
+    assert service.benchmark.name == "none"
+    assert service.benchmark.dataset_id == "none/empty"
+    assert retrieval.hits == []
+    assert retrieval.metadata["empty_corpus"] is True

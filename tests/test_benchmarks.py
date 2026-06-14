@@ -71,6 +71,17 @@ def test_hotpotqa_requires_large_benchmark_flag() -> None:
         benchmarks.load_benchmark("hotpotqa", limit=1, allow_large=False)
 
 
+def test_none_benchmark_loads_empty_runtime_corpus() -> None:
+    data = benchmarks.load_benchmark("none")
+
+    assert data.name == "none"
+    assert data.dataset_id == "none/empty"
+    assert data.documents == []
+    assert data.queries == []
+    assert data.qrels == {}
+    assert data.metadata["source"] == "none"
+
+
 def test_hotpotqa_loads_when_large_benchmark_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     seen = {}
 

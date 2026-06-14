@@ -27,8 +27,11 @@ DEFAULT_MIMO_MODELS = "mimo-v2.5"
 DEFAULT_DICTIONARY_ARTIFACT = Path("runs/pb_dictionary_base_supp2021_prod_graph")
 DEFAULT_AVAILABLE_RETRIEVERS = "bm25,tfidf,keyword-match,multi-query,graph-bm25,dictionary-graph,image-digits"
 DEFAULT_SERVE_BENCH = "scifact"
+DEFAULT_DICTIONARY_SERVE_BENCH = "none"
 DEFAULT_SERVE_RETRIEVER = "bm25"
 DEFAULT_DICTIONARY_SERVE_RETRIEVER = "dictionary-graph"
+DEFAULT_SERVE_MODEL_ID = "rag-scifact-bm25"
+DEFAULT_DICTIONARY_SERVE_MODEL_ID = "rag-dictionary-graph"
 TOKEN_ENV_NAMES = (
     "CLOUDFLARE_TUNNEL_TOKEN",
     "CF_TUNNEL_TOKEN",
@@ -93,6 +96,12 @@ def main(argv: list[str] | None = None) -> int:
     serve_retriever = args.serve_retriever or (
         DEFAULT_DICTIONARY_SERVE_RETRIEVER if args.dictionary_dataset_source else DEFAULT_SERVE_RETRIEVER
     )
+    serve_bench = args.serve_bench or (
+        DEFAULT_DICTIONARY_SERVE_BENCH if args.dictionary_dataset_source else DEFAULT_SERVE_BENCH
+    )
+    serve_model_id = args.serve_model_id or (
+        DEFAULT_DICTIONARY_SERVE_MODEL_ID if args.dictionary_dataset_source else DEFAULT_SERVE_MODEL_ID
+    )
     dataset_sources = dedupe_nonempty([*args.dataset_source, args.dictionary_dataset_source])
 
     if args.keep_staging_dir:
@@ -123,8 +132,9 @@ def main(argv: list[str] | None = None) -> int:
             dictionary_artifact=args.dictionary_artifact,
             dictionary_required=args.dictionary_required,
             available_retrievers=available_retrievers,
-            serve_bench=args.serve_bench,
+            serve_bench=serve_bench,
             serve_retriever=serve_retriever,
+            serve_model_id=serve_model_id,
             allow_external_semi_private=args.allow_external_semi_private,
             enable_mimo=enable_mimo,
             mimo_models=args.mimo_models,
@@ -158,8 +168,9 @@ def main(argv: list[str] | None = None) -> int:
                 "dictionary_artifact": args.dictionary_artifact,
                 "dictionary_required": bool(args.dictionary_required),
                 "available_retrievers": available_retrievers,
-                "serve_bench": args.serve_bench,
+                "serve_bench": serve_bench,
                 "serve_retriever": serve_retriever,
+                "serve_model_id": serve_model_id,
                 "allow_external_semi_private": bool(args.allow_external_semi_private),
                 "enable_mimo": enable_mimo,
                 "mimo_models": args.mimo_models if enable_mimo else "",
@@ -225,8 +236,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--serve-bench",
-        default=DEFAULT_SERVE_BENCH,
-        help="Benchmark corpus loaded by rag-bench serve. Full dictionary deploys still keep scifact only as a harmless base corpus.",
+        default=None,
+        help=(
+            "Benchmark corpus loaded by rag-bench serve. Defaults to scifact normally, "
+            "or none for dictionary runtime deploys."
+        ),
     )
     parser.add_argument(
         "--serve-retriever",
@@ -235,6 +249,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Default retriever passed to rag-bench serve. Defaults to bm25 normally, "
             "or dictionary-graph when --dictionary-dataset-source is attached."
         ),
+    )
+    parser.add_argument(
+        "--serve-model-id",
+        default=None,
+        help="Model id exposed by the proxy. Defaults to rag-dictionary-graph for dictionary runtime deploys.",
     )
     parser.add_argument(
         "--allow-external-semi-private",
@@ -516,14 +535,22 @@ def write_staging_files(
     dictionary_artifact: str | None = None,
     dictionary_required: bool = False,
     available_retrievers: str | None = None,
-    serve_bench: str = DEFAULT_SERVE_BENCH,
-    serve_retriever: str = DEFAULT_SERVE_RETRIEVER,
+    serve_bench: str | None = None,
+    serve_retriever: str | None = None,
+    serve_model_id: str | None = None,
     allow_external_semi_private: bool = False,
     enable_mimo: bool = False,
     mimo_models: str = DEFAULT_MIMO_MODELS,
 ) -> None:
     notebook_name = "true_chat_rag_proxy_kaggle.ipynb"
     dataset_sources = dedupe_nonempty([*(dataset_sources or []), dictionary_dataset_source])
+    serve_bench = serve_bench or (DEFAULT_DICTIONARY_SERVE_BENCH if dictionary_dataset_source else DEFAULT_SERVE_BENCH)
+    serve_retriever = serve_retriever or (
+        DEFAULT_DICTIONARY_SERVE_RETRIEVER if dictionary_dataset_source else DEFAULT_SERVE_RETRIEVER
+    )
+    serve_model_id = serve_model_id or (
+        DEFAULT_DICTIONARY_SERVE_MODEL_ID if dictionary_dataset_source else DEFAULT_SERVE_MODEL_ID
+    )
     (staging_dir / notebook_name).write_text(
         json.dumps(
             build_notebook(
@@ -541,6 +568,7 @@ def write_staging_files(
                 available_retrievers=available_retrievers,
                 serve_bench=serve_bench,
                 serve_retriever=serve_retriever,
+                serve_model_id=serve_model_id,
                 allow_external_semi_private=allow_external_semi_private,
                 enable_mimo=enable_mimo,
                 mimo_models=mimo_models,
@@ -587,6 +615,7 @@ def build_notebook(
     available_retrievers: str | None = None,
     serve_bench: str = DEFAULT_SERVE_BENCH,
     serve_retriever: str = DEFAULT_SERVE_RETRIEVER,
+    serve_model_id: str = DEFAULT_SERVE_MODEL_ID,
     allow_external_semi_private: bool = False,
     enable_mimo: bool = False,
     mimo_models: str = DEFAULT_MIMO_MODELS,
@@ -776,11 +805,13 @@ def build_notebook(
                 "    print('--- end proxy log tail ---')\n"
                 f"SERVE_BENCH = {serve_bench!r}\n"
                 f"SERVE_RETRIEVER = {serve_retriever!r}\n"
+                f"SERVE_MODEL_ID = {serve_model_id!r}\n"
                 "proxy_cmd = [\n"
                 "    'uv', 'run', '--frozen', '--no-sync', 'rag-bench', 'serve',\n"
                 "    '--host', '0.0.0.0', '--port', '8000',\n"
                 "    '--bench', SERVE_BENCH, '--retriever', SERVE_RETRIEVER, '--top-k', '3', '--image-top-k', '5',\n"
-                "    '--model', 'qwen/qwen3-32b', '--max-context-chars', '2500', '--max-completion-tokens', '4096',\n"
+                "    '--model', 'qwen/qwen3-32b', '--model-id', SERVE_MODEL_ID,\n"
+                "    '--max-context-chars', '2500', '--max-completion-tokens', '4096',\n"
                 "    '--key-tpm', '6000', '--key-rpm', '30', '--rate-limit-scope', 'per-key',\n"
                 "]\n"
                 f"AVAILABLE_RETRIEVERS = {available_retrievers!r}\n"

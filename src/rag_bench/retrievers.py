@@ -104,6 +104,26 @@ class QueryExpansionClient(Protocol):
 
 
 @dataclass
+class EmptyCorpusRetriever:
+    name: str
+    build_time_s: float = 0.0
+
+    def build(self, documents: list[Document]) -> None:
+        started = time.perf_counter()
+        self._documents = list(documents)
+        self.build_time_s = time.perf_counter() - started
+
+    def search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        return RetrievalResult(
+            query=query,
+            hits=[],
+            latency_s=time.perf_counter() - started,
+            metadata={"empty_corpus": True, "retriever": self.name},
+        )
+
+
+@dataclass
 class BM25Retriever:
     name: str = "bm25"
     build_time_s: float = 0.0

@@ -195,6 +195,35 @@ def test_cli_serve_defaults_use_qwen_and_long_completion(monkeypatch) -> None:
     assert seen["config"].chat.available_models[0] == "qwen/qwen3-32b"
 
 
+def test_cli_serve_accepts_none_benchmark_with_dictionary_model_id(monkeypatch) -> None:
+    seen = {}
+
+    def fake_serve_proxy(config):
+        seen["config"] = config
+
+    monkeypatch.setattr(cli, "serve_proxy", fake_serve_proxy)
+
+    exit_code = cli.main(
+        [
+            "serve",
+            "--bench",
+            "none",
+            "--retriever",
+            "dictionary-graph",
+            "--model-id",
+            "rag-dictionary-graph",
+            "--dictionary-artifact",
+            "runs/dict",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen["config"].chat.bench == "none"
+    assert seen["config"].chat.retriever == "dictionary-graph"
+    assert seen["config"].chat.model_id == "rag-dictionary-graph"
+    assert seen["config"].chat.dictionary_artifact == Path("runs/dict")
+
+
 def test_cli_model_bench_smoke_with_mocked_runner(monkeypatch, tmp_path: Path, capsys) -> None:
     seen = {}
 

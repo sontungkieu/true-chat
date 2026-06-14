@@ -45,7 +45,7 @@ from rag_bench.privacy import (
     safe_source_payload,
 )
 from rag_bench.retriever_registry import create_retriever, get_retriever_spec, normalize_retriever_id
-from rag_bench.retrievers import Retriever
+from rag_bench.retrievers import EmptyCorpusRetriever, Retriever
 from rag_bench.secrets import ApiKey, load_env_api_key_chain, load_groq_keys
 from rag_bench.structured_evidence import (
     StructuredEvidenceIndex,
@@ -1487,13 +1487,16 @@ def _build_retrievers(
     retrievers: dict[str, Retriever] = {}
     for name in _dedupe_normalized_retriever_ids((config.retriever, *config.available_retrievers)):
         spec = get_retriever_spec(name)
-        retriever = create_retriever(
-            name,
-            vector_model=config.vector_model,
-            query_expander=llm,
-            query_model=config.model,
-        )
         documents = dictionary.documents if spec.category == "dictionary" and dictionary is not None else benchmark.documents
+        if not documents and spec.category in {"text", "keyword"}:
+            retriever = EmptyCorpusRetriever(name=spec.id)
+        else:
+            retriever = create_retriever(
+                name,
+                vector_model=config.vector_model,
+                query_expander=llm,
+                query_model=config.model,
+            )
         retriever.build(documents)
         retrievers[retriever.name] = retriever
     return retrievers

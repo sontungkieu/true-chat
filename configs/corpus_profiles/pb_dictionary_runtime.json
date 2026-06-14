@@ -1,0 +1,49 @@
+{
+  "profile_id": "pb_dictionary_runtime",
+  "description": "Semi-private PB dictionary runtime profile. This manifest stores paths and layer boundaries only, not raw dictionary content.",
+  "data": {
+    "tier": "semi_private",
+    "kind": "dictionary",
+    "raw_root": "data/semi_private/File Từ điển PB_2021",
+    "runtime_artifact": "runs/pb_dictionary_base_supp2021_prod_graph"
+  },
+  "data_aux": {
+    "graph": {
+      "nodes": "runs/pb_dictionary_base_supp2021_prod_graph/nodes.jsonl",
+      "edges": "runs/pb_dictionary_base_supp2021_prod_graph/edges.jsonl"
+    },
+    "rich_entries": "runs/pb_dictionary_base_supp2021_prod_graph/rich_entries.jsonl",
+    "entries": "runs/pb_dictionary_base_supp2021_prod_graph/entries.jsonl",
+    "statistics": "runs/pb_dictionary_base_supp2021_prod_graph/manifest.json",
+    "embeddings": null,
+    "structured_evidence": null
+  },
+  "adapters": {
+    "normalization": [],
+    "retrieval": [],
+    "privacy_policy": "semi_private_external_requires_allow_flag"
+  },
+  "serve_defaults": {
+    "bench": "none",
+    "retriever": "dictionary-graph",
+    "model_id": "rag-dictionary-graph",
+    "available_retrievers": [
+      "bm25",
+      "tfidf",
+      "keyword-match",
+      "multi-query",
+      "graph-bm25",
+      "dictionary-graph",
+      "image-digits"
+    ]
+  },
+  "gen": {
+    "runs_root": "runs/pb_dictionary",
+    "eval_root": "eval_results/rag_eval",
+    "benchmark_root": "benchmark_results"
+  },
+  "post_alignment": {
+    "rlaif_root": "benchmark_results/rlaif",
+    "reports_root": "docs/reports"
+  }
+}

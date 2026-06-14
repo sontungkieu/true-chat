@@ -52,8 +52,10 @@ def test_build_notebook_checks_expected_commit_and_injects_tunnel_token() -> Non
     assert "uv', 'sync', '--frozen', '--no-dev'" in source
     assert "uv', 'run', '--frozen', '--no-sync'" in source
     assert "'--model', 'qwen/qwen3-32b'" in source
+    assert "'--model-id', SERVE_MODEL_ID" in source
     assert "'--max-completion-tokens', '4096'" in source
     assert "SERVE_RETRIEVER = 'bm25'" in source
+    assert "SERVE_MODEL_ID = 'rag-scifact-bm25'" in source
     assert "print_proxy_log_tail" in source
     assert "LOCAL_PATCH" not in source
     assert "UserSecretsClient" in source
@@ -121,6 +123,8 @@ def test_build_notebook_can_attach_dictionary_and_mimo() -> None:
     assert f"MIMO_ENV_B64 = '{mimo_payload}'" in source
     assert "'--available-retrievers', AVAILABLE_RETRIEVERS" in source
     assert "SERVE_RETRIEVER = 'dictionary-graph'" in source
+    assert "SERVE_BENCH = 'scifact'" in source
+    assert "SERVE_MODEL_ID = 'rag-scifact-bm25'" in source
     assert "'--dictionary-artifact', DICTIONARY_ARTIFACT" in source
     assert "proxy_cmd.append('--dictionary-required')" in source
     assert "proxy_cmd.append('--allow-external-semi-private')" in source
@@ -186,8 +190,39 @@ def test_write_staging_files_adds_dataset_sources_without_raw_secrets(tmp_path: 
 
     assert metadata["dataset_sources"] == ["codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732"]
     assert "SERVE_RETRIEVER = 'dictionary-graph'" in notebook_text
+    assert "SERVE_BENCH = 'none'" in notebook_text
+    assert "SERVE_MODEL_ID = 'rag-dictionary-graph'" in notebook_text
     assert "secret-mimo" not in metadata_text
     assert "secret-mimo" not in notebook_text
+
+
+def test_dictionary_upload_defaults_to_empty_base_corpus(tmp_path: Path) -> None:
+    upload_script.write_staging_files(
+        tmp_path,
+        kernel_id="codemaivanngu/true-chat-dict",
+        title="True Chat Dict",
+        repo_url="https://github.com/example/repo.git",
+        repo_ref="main",
+        expected_commit="abc123",
+        cloudflare_token="cf-token",
+        hostname="https://chat.example.com",
+        proxy_startup_timeout_s=900,
+        groq_key_env_b64=None,
+        dataset_sources=[],
+        dictionary_dataset_source="codemaivanngu/true-chat-dictionary-runtime-full-20260529-1732",
+        dictionary_artifact="runs/pb_dictionary_base_supp2021_prod_graph",
+        dictionary_required=True,
+        available_retrievers="bm25,dictionary-graph",
+        serve_bench=upload_script.DEFAULT_DICTIONARY_SERVE_BENCH,
+        serve_retriever=upload_script.DEFAULT_DICTIONARY_SERVE_RETRIEVER,
+        serve_model_id=upload_script.DEFAULT_DICTIONARY_SERVE_MODEL_ID,
+    )
+
+    notebook_text = (tmp_path / "true_chat_rag_proxy_kaggle.ipynb").read_text(encoding="utf-8")
+
+    assert "SERVE_BENCH = 'none'" in notebook_text
+    assert "SERVE_RETRIEVER = 'dictionary-graph'" in notebook_text
+    assert "SERVE_MODEL_ID = 'rag-dictionary-graph'" in notebook_text
 
 
 def test_upload_registry_marks_deleted_records(tmp_path: Path) -> None:
