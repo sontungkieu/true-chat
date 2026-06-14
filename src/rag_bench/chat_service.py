@@ -569,6 +569,7 @@ class RagChatService:
         if generation.error:
             raise RuntimeError(generation.error)
         dictionary_refusal_fallback_used = False
+        dictionary_internal_query_leak_fallback_used = False
         if dictionary_fallback is not None and _looks_like_grounding_refusal(generation.answer):
             grounded_occurrence_answer = _format_dictionary_occurrence_fallback_answer(
                 question,
@@ -579,6 +580,20 @@ class RagChatService:
             if grounded_occurrence_answer:
                 generation = replace(generation, answer=grounded_occurrence_answer)
                 dictionary_refusal_fallback_used = True
+        if (
+            dictionary_fallback is not None
+            and not dictionary_refusal_fallback_used
+            and _looks_like_internal_query_leak(generation.answer)
+        ):
+            grounded_disambiguation_answer = _format_dictionary_disambiguation_fallback_answer(
+                question,
+                dictionary_fallback.hits,
+                dictionary_fallback.metadata,
+                language=response_language,
+            )
+            if grounded_disambiguation_answer:
+                generation = replace(generation, answer=grounded_disambiguation_answer)
+                dictionary_internal_query_leak_fallback_used = True
 
         combined_hits = list(prompt_hits)
         retrieval_metadata = {**retriever_privacy_metadata, **retrieval.metadata, **score_filter_metadata}
@@ -593,6 +608,8 @@ class RagChatService:
             )
             if dictionary_refusal_fallback_used:
                 retrieval_metadata["dictionary_refusal_fallback"] = True
+            if dictionary_internal_query_leak_fallback_used:
+                retrieval_metadata["dictionary_internal_query_leak_fallback"] = True
             if dictionary_score_filter_metadata:
                 retrieval_metadata["dictionary_fallback_score_filter"] = dictionary_score_filter_metadata["score_filter"]
         if mode == "text_image":
@@ -1617,6 +1634,9 @@ def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) 
         "- If the target term is mentioned in retrieved dictionary entries but is not explicitly defined, "
         "do not answer that the context is unusable. State that no formal definition or expansion is shown in the "
         "retrieved entries, then say it appears in the explanation/body of the cited entry or entries.\n"
+        "- Never refer to internal planned searches, fallback retrieval, source rank, or multiple retrieved entries as "
+        "\"first/second/third questions\". If several dictionary entries match one short acronym, present them as "
+        "possible dictionary entries or senses for the same user question.\n"
         "- Do not infer an expansion, alias, or meaning unless the retrieved entries explicitly support it.\n\n"
     )
 
@@ -2120,6 +2140,25 @@ def _looks_like_grounding_refusal(answer: str) -> bool:
     return any(marker in folded for marker in refusal_markers)
 
 
+def _looks_like_internal_query_leak(answer: str) -> bool:
+    folded = _fold_prompt_text(answer)
+    leak_markers = (
+        "cau hoi dau tien",
+        "cau hoi thu nhat",
+        "cau hoi thu hai",
+        "cau hoi thu ba",
+        "first question",
+        "second question",
+        "third question",
+        "query 1",
+        "query 2",
+        "query 3",
+        "internal query",
+        "planned search",
+    )
+    return any(marker in folded for marker in leak_markers)
+
+
 def _fold_prompt_text(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text)
     stripped = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
@@ -2167,6 +2206,39 @@ def _format_dictionary_occurrence_fallback_answer(
         f"The retrieved dictionary entries do not show a formal definition or expansion for “{target}”. "
         f"They do show that it appears in the explanation/body of: {titles}. "
         f"I can confirm only that cited occurrence/context, not infer an unstated abbreviation meaning. {citations}"
+    ).strip()
+
+
+def _format_dictionary_disambiguation_fallback_answer(
+    question: str,
+    hits: Sequence[RetrievalHit],
+    metadata: dict[str, Any] | None,
+    *,
+    language: str | None = None,
+) -> str:
+    if not hits:
+        return ""
+    response_language = _normalize_response_language(language)
+    query_plan = metadata.get("query_plan") if isinstance(metadata, dict) else None
+    target_terms = (
+        [str(term).strip() for term in query_plan.get("target_terms") or [] if str(term).strip()]
+        if isinstance(query_plan, dict)
+        else []
+    )
+    target = target_terms[0] if target_terms else _strip_command_prefix(question).strip()
+    cited_hits = hits[:3]
+    citations = _format_source_citations([hit.doc_id for hit in cited_hits])
+    entries = _format_source_title_citations(cited_hits)
+    if response_language == "vi":
+        return (
+            f"“{target}” là một truy vấn ngắn có thể khớp nhiều mục từ trong các nguồn đã truy hồi. "
+            f"Các mục phù hợp gồm: {entries}. "
+            f"Nếu cần một nghĩa duy nhất, cần thêm ngữ cảnh; tôi không coi các mục này là các câu hỏi riêng biệt. {citations}"
+        ).strip()
+    return (
+        f"“{target}” is a short query that can match multiple retrieved dictionary entries. "
+        f"Supported entries include: {entries}. "
+        f"A single sense requires more context; I do not treat these entries as separate user questions. {citations}"
     ).strip()
 
 

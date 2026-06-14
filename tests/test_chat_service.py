@@ -2095,6 +2095,7 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert "Synthetic entry mentioning CTCC." in llm.messages[-1]["content"]
     assert "Dictionary fallback guidance:" in llm.messages[-1]["content"]
     assert "If the target term is mentioned" in llm.messages[-1]["content"]
+    assert "Never refer to internal planned searches" in llm.messages[-1]["content"]
 
     dictionary_retriever.queries.clear()
     result = service.answer([{"role": "user", "content": "ctccxuathienodau"}], response_mode="text")
@@ -2211,6 +2212,93 @@ def test_text_dictionary_fallback_replaces_llm_refusal_for_mention_evidence() ->
     assert "xuất hiện trong phần giải thích" in answer
     assert "[dict-mention]" in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_refusal_fallback"] is True
+
+
+def test_text_dictionary_fallback_replaces_internal_query_leak_for_ambiguous_acronym() -> None:
+    class WeakTextRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(query=query, hits=[], latency_s=0.02)
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            hits = []
+            if query.text == "PB":
+                titles = ["ALPHA ENTRY", "BETA ENTRY", "GAMMA ENTRY"]
+                hits = [
+                    RetrievalHit(
+                        doc_id=f"dict-pb-{index}",
+                        score=1.2 - index * 0.01,
+                        rank=index + 1,
+                        title=title,
+                        text=f"Synthetic definition for {title}.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "dictionary_match_mode": "strict",
+                            "dictionary_direct_score": 1.2,
+                        },
+                        data_tier="semi_private",
+                    )
+                    for index, title in enumerate(titles)
+                ]
+            return RetrievalResult(query=query, hits=hits, latency_s=0.01, metadata={"kind": "dictionary"})
+
+    class InternalLeakLLM(FakeLLM):
+        def generate(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            model: str | None = None,
+            temperature: float = 0.0,
+            max_completion_tokens: int = 512,
+        ) -> GenerationResult:
+            self.messages = messages
+            return GenerationResult(
+                answer=(
+                    "PB trong câu hỏi đầu tiên là ALPHA. "
+                    "Trong câu hỏi thứ hai, PB là BETA. "
+                    "Trong câu hỏi thứ ba, PB là GAMMA."
+                ),
+                key_alias=self.alias,
+                attempted_aliases=[self.alias],
+                latency_s=0.03,
+                retry_count=0,
+                prompt_tokens=20,
+                completion_tokens=20,
+                total_tokens=40,
+            )
+
+    text_retriever = WeakTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=3,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=InternalLeakLLM(),
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 3},
+    )
+
+    result = service.answer([{"role": "user", "content": "PB là gì?"}], response_mode="text", language="vi")
+
+    answer = result.response["choices"][0]["message"]["content"]
+    assert "câu hỏi đầu tiên" not in answer
+    assert "câu hỏi thứ hai" not in answer
+    assert "“PB” là một truy vấn ngắn" in answer
+    assert "ALPHA ENTRY [dict-pb-0]" in answer
+    assert "[dict-pb-0]" in answer
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_internal_query_leak_fallback"] is True
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:
