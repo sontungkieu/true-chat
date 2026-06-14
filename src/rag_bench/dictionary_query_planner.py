@@ -793,6 +793,8 @@ def _planner_score_band(
         return 2.0 + min(max(direct_score, 0.0), 1.5) * 0.25
     if role == "comparison_term":
         return 1.2
+    if mode == "roman_sibling":
+        return 1.0
     if role in {"structured_evidence", "graph_neighbor"} or matched_edges:
         return 0.6
     if mode == "graph":

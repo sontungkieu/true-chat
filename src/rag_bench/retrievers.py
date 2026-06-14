@@ -420,6 +420,7 @@ class DictionaryGraphRetriever:
         self._typed_graph_node_labels: dict[str, str] = {}
         self._typed_graph_node_types: dict[str, str] = {}
         self._abbreviation_scores: dict[str, dict[int, float]] = {}
+        self._roman_sibling_indexes: dict[str, set[int]] = {}
         self._folded_texts: list[str] = []
         self._strict_texts: list[str] = []
         for index, doc in enumerate(self._documents):
@@ -427,6 +428,9 @@ class DictionaryGraphRetriever:
             headword = str(doc.metadata.get("headword") or doc.title or "")
             self._index_typed_graph_node(doc.doc_id, headword or doc.title or doc.doc_id, "entry")
             headword_key = _dictionary_query_key(headword)
+            roman_family = _dictionary_roman_suffix_family_key(headword_key)
+            if roman_family:
+                self._roman_sibling_indexes.setdefault(roman_family, set()).add(index)
             for key in _dictionary_query_keys(headword):
                 self._headword_indexes.setdefault(key, []).append(index)
             for key in _dictionary_strict_query_keys(headword):
@@ -804,15 +808,22 @@ class DictionaryGraphRetriever:
         if match_modes and query_has_multi_token_key:
             index_scores = {index: score for index, score in index_scores.items() if index in match_modes}
 
+        self._add_roman_sibling_matches(index_scores, match_modes)
         ranked = sorted(index_scores, key=lambda index: (-index_scores[index], self._documents[index].doc_id))
         hits = []
         for rank, index in enumerate(ranked[:top_k], 1):
             doc = self._documents[index]
             metadata = dict(doc.metadata)
-            metadata["dictionary_direct_score"] = index_scores[index]
-            if match_modes.get(index):
-                metadata["dictionary_match_mode"] = match_modes[index]
-            if highlight_terms:
+            match_mode = match_modes.get(index)
+            if match_mode == "roman_sibling":
+                metadata["dictionary_match_mode"] = "roman_sibling"
+                metadata["dictionary_related_score"] = index_scores[index]
+                metadata["dictionary_relation"] = "roman_sibling"
+            else:
+                metadata["dictionary_direct_score"] = index_scores[index]
+                if match_mode:
+                    metadata["dictionary_match_mode"] = match_mode
+            if highlight_terms and match_mode != "roman_sibling":
                 metadata["query_highlights"] = list(highlight_terms)
             hits.append(
                 RetrievalHit(
@@ -826,6 +837,26 @@ class DictionaryGraphRetriever:
                 )
             )
         return RetrievalResult(query=query, hits=hits, latency_s=time.perf_counter() - started)
+
+    def _add_roman_sibling_matches(self, index_scores: dict[int, float], match_modes: dict[int, str]) -> None:
+        if not match_modes:
+            return
+        source_indexes = [
+            index
+            for index, mode in list(match_modes.items())
+            if mode in {"strict", "folded"} and 0 <= index < len(self._documents)
+        ]
+        for source_index in source_indexes:
+            source_doc = self._documents[source_index]
+            headword = str(source_doc.metadata.get("headword") or source_doc.title or "")
+            family_key = _dictionary_roman_suffix_family_key(_dictionary_query_key(headword))
+            if not family_key:
+                continue
+            for sibling_index in sorted(self._roman_sibling_indexes.get(family_key, set())):
+                if sibling_index == source_index or sibling_index in match_modes:
+                    continue
+                index_scores[sibling_index] = max(index_scores.get(sibling_index, 0.0), 0.45)
+                match_modes[sibling_index] = "roman_sibling"
 
 
 @dataclass
@@ -1295,11 +1326,13 @@ def _dictionary_merge(
     for weight, result in ((1.0, lexical), (0.75, graph), (0.95, typed_graph), (1.25, direct)):
         for hit in result.hits:
             direct_score = float(hit.metadata.get("dictionary_direct_score") or 0.0)
+            related_score = float(hit.metadata.get("dictionary_related_score") or 0.0)
             typed_graph_score = float(hit.metadata.get("dictionary_graph_score") or 0.0)
             scores[hit.doc_id] = (
                 scores.get(hit.doc_id, 0.0)
                 + weight / (rrf_k + hit.rank)
                 + direct_score
+                + related_score * 0.9
                 + typed_graph_score * 0.7
             )
             best_rank[hit.doc_id] = min(best_rank.get(hit.doc_id, hit.rank), hit.rank)
@@ -1659,6 +1692,18 @@ def _dictionary_roman_suffix_key_variants(key: str) -> list[str]:
     if alpha_chars < 4:
         return []
     return [" ".join([*tokens[:-1], suffix])]
+
+
+def _dictionary_roman_suffix_family_key(key: str) -> str:
+    tokens = key.split()
+    if len(tokens) < 2:
+        return ""
+    if tokens[-1] not in set(DICTIONARY_ROMAN_SUFFIX_BY_DIGIT.values()):
+        return ""
+    alpha_chars = sum(1 for token in tokens[:-1] for character in token if character.isalpha())
+    if alpha_chars < 4:
+        return ""
+    return " ".join(tokens[:-1])
 
 
 def _dictionary_display_roman_suffix_variants(text: str) -> list[str]:

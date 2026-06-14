@@ -1344,6 +1344,7 @@ def _strong_dictionary_text_fallback_hit(hit: RetrievalHit, *, allow_lexical: bo
     has_highlights = bool(metadata.get("query_highlights"))
     return (
         mode in {"strict", "folded"}
+        or mode == "roman_sibling"
         or direct_score > 0
         or (mode == "graph" and graph_score >= 0.35)
         or (allow_lexical and mode == "lexical" and (has_highlights or hit.score >= 0.25))

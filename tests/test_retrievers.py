@@ -413,13 +413,13 @@ def test_dictionary_graph_retriever_maps_trailing_digits_to_roman_headwords() ->
             doc_id="roman-i",
             title="TERM GROUP I",
             text="TERM GROUP I, synthetic canonical entry.",
-            metadata={"kind": "dictionary", "headword": "TERM GROUP I"},
+            metadata={"kind": "dictionary", "headword": "TERM GROUP I", "aliases": ["TGI"]},
         ),
         Document(
             doc_id="roman-ii",
             title="TERM GROUP II",
             text="TERM GROUP II, synthetic sibling entry.",
-            metadata={"kind": "dictionary", "headword": "TERM GROUP II"},
+            metadata={"kind": "dictionary", "headword": "TERM GROUP II", "aliases": ["TGII"]},
         ),
         Document(
             doc_id="body-mention",
@@ -434,6 +434,7 @@ def test_dictionary_graph_retriever_maps_trailing_digits_to_roman_headwords() ->
     digit_one = retriever.search(Query("q1", "TERM GROUP 1"), top_k=3)
     ascii_digit_one = retriever.search(Query("q2", "term group 1"), top_k=3)
     digit_two = retriever.search(Query("q3", "TERM GROUP 2"), top_k=3)
+    compact_roman_two = retriever.search(Query("q4", "TGII"), top_k=3)
 
     assert digit_one.hits[0].doc_id == "roman-i"
     assert digit_one.hits[0].metadata["dictionary_match_mode"] == "strict"
@@ -442,6 +443,12 @@ def test_dictionary_graph_retriever_maps_trailing_digits_to_roman_headwords() ->
     assert "dictionary_direct_score" not in body_hit.metadata
     assert ascii_digit_one.hits[0].doc_id == "roman-i"
     assert digit_two.hits[0].doc_id == "roman-ii"
+    assert compact_roman_two.hits[0].doc_id == "roman-ii"
+    assert compact_roman_two.hits[1].doc_id == "roman-i"
+    assert compact_roman_two.hits[1].metadata["dictionary_match_mode"] == "roman_sibling"
+    assert compact_roman_two.hits[1].metadata["dictionary_relation"] == "roman_sibling"
+    assert "dictionary_direct_score" not in compact_roman_two.hits[1].metadata
+    assert "query_highlights" not in compact_roman_two.hits[1].metadata
 
 
 def test_dictionary_graph_retriever_keeps_phrase_mentions_when_no_canonical_match_exists() -> None:
