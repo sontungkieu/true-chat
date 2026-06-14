@@ -1514,6 +1514,10 @@
       margin: 0;
     }
 
+    .dictionary-inline-related {
+      gap: 0;
+    }
+
     .dictionary-inline-head {
       display: flex;
       align-items: flex-start;
@@ -1625,6 +1629,45 @@
       border-color: transparent;
       background: transparent;
       padding: 0;
+    }
+
+    .dictionary-related-details {
+      min-width: 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .dictionary-related-details > summary {
+      display: flex;
+      align-items: center;
+      min-height: calc(34px * var(--font-scale));
+      cursor: pointer;
+      padding: 0 14px;
+      color: var(--muted-strong);
+      font-size: 12px;
+      font-weight: 650;
+      list-style: none;
+      user-select: none;
+    }
+
+    .dictionary-related-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .dictionary-related-summary-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .dictionary-related-summary-label::before {
+      content: "▸";
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .dictionary-related-details[open] .dictionary-related-summary-label::before {
+      content: "▾";
     }
 
     .dictionary-explanation-label {
@@ -2758,6 +2801,7 @@
         feedbackLabel: "Feedback",
         match: "Match",
         related: "Related",
+        expandRelatedDictionary: "Show related entry",
         rewrite: "Rewrite",
         rename: "Rename",
         renameChat: "Rename chat",
@@ -2839,6 +2883,7 @@
         feedbackLabel: "Ghi chú",
         match: "Khớp",
         related: "Liên quan",
+        expandRelatedDictionary: "Mở nguồn liên quan",
         rewrite: "Viết lại",
         rename: "Đổi tên",
         renameChat: "Đổi tên đoạn chat",
@@ -4446,7 +4491,8 @@
 
     function renderDictionaryCard(source) {
       const card = document.createElement("section");
-      card.className = "dictionary-inline";
+      const relevance = dictionaryRelevance(source);
+      card.className = "dictionary-inline" + (relevance === "related" ? " dictionary-inline-related" : "");
       const head = document.createElement("div");
       head.className = "dictionary-inline-head";
       const title = document.createElement("div");
@@ -4462,7 +4508,7 @@
         metaText.textContent = (source.doc_id || t("source")) + score;
         meta.appendChild(metaText);
       }
-      meta.appendChild(renderDictionaryRelevance(source));
+      meta.appendChild(renderDictionaryRelevance(source, relevance));
       title.append(strong, meta);
       const open = document.createElement("button");
       open.type = "button";
@@ -4486,12 +4532,24 @@
       }
       card.append(head);
       if (graphPath) card.appendChild(graphPath);
-      card.appendChild(body);
+      if (relevance === "related") {
+        const details = document.createElement("details");
+        details.className = "dictionary-related-details";
+        const summary = document.createElement("summary");
+        const label = document.createElement("span");
+        label.className = "dictionary-related-summary-label";
+        label.textContent = t("expandRelatedDictionary");
+        summary.appendChild(label);
+        details.append(summary, body);
+        card.appendChild(details);
+      } else {
+        card.appendChild(body);
+      }
       return card;
     }
 
-    function renderDictionaryRelevance(source) {
-      const relevance = dictionaryRelevance(source);
+    function renderDictionaryRelevance(source, knownRelevance) {
+      const relevance = knownRelevance || dictionaryRelevance(source);
       const pill = document.createElement("span");
       pill.className = "dictionary-relevance " + relevance;
       pill.textContent = relevance === "match" ? t("match") : t("related");

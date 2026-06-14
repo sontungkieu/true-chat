@@ -258,6 +258,9 @@ def test_chat_page() -> None:
     assert "renderDictionaryAnswer" in response.text
     assert "dictionary-inline" in response.text
     assert "dictionary-inline-list" in response.text
+    assert "dictionary-inline-related" in response.text
+    assert "dictionary-related-details" in response.text
+    assert "expandRelatedDictionary" in response.text
     assert "flex-wrap: wrap" in response.text
     assert "flex: 1 1 260px" in response.text
     assert "overflow-x: hidden" in response.text
