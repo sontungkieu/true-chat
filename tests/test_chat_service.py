@@ -1908,7 +1908,7 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
         build_time_s = 0.0
 
         def search(self, query: Query, top_k: int) -> RetrievalResult:
-            assert query.text == "KHCN xuất hiện ở đâu?"
+            assert query.text in {"KHCN xuất hiện ở đâu?", "khcnxuathienodau"}
             return RetrievalResult(
                 query=query,
                 hits=[
@@ -1978,6 +1978,13 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["KHCN"]
     assert result.response["rag"]["retrieved"][0]["doc_id"] == "dict-mention"
     assert "Synthetic entry mentioning KHCN." in llm.messages[1]["content"]
+
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "khcnxuathienodau"}], response_mode="text")
+
+    assert dictionary_retriever.queries == ["khcnxuathienodau", "KHCN"]
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["KHCN"]
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:

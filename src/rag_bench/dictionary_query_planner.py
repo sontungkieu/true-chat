@@ -695,6 +695,8 @@ def _extract_single_target(original: str, normalized: str) -> list[str]:
         cleaned = _strip_question_noise(cleaned)
     else:
         cleaned = _strip_question_noise(cleaned)
+    compact_target = _compact_lookup_target(cleaned)
+    cleaned = compact_target or _normalize_short_lookup_target(cleaned)
     if not cleaned:
         return []
     return [cleaned.upper() if _looks_placeholder(cleaned) else cleaned]
@@ -777,6 +779,76 @@ def _strip_lookup_wrappers(text: str) -> str:
         cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
         cleaned = re.sub(suffix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
         cleaned = _strip_terminal_question_punctuation(cleaned)
+    compact_target = _compact_lookup_target(cleaned)
+    if compact_target:
+        return compact_target
+    return cleaned
+
+
+def _compact_lookup_target(text: str) -> str:
+    compact = re.sub(r"[^a-z0-9]+", "", _fold(text))
+    if not compact:
+        return ""
+    prefixes = (
+        "chotoibiet",
+        "vuilong",
+        "hay",
+        "giaithich",
+        "giainghia",
+        "dinhnghia",
+        "khainiem",
+        "tracuu",
+        "muctu",
+        "meaningof",
+        "definitionof",
+        "whatdoes",
+        "whatis",
+        "lookup",
+        "define",
+        "explain",
+        "find",
+        "tim",
+    )
+    suffixes = (
+        "conghialagi",
+        "nghialagi",
+        "xuathienodau",
+        "lacaigi",
+        "definition",
+        "meaning",
+        "lagi",
+        "mean",
+        "means",
+    )
+    changed = False
+    for prefix in sorted(prefixes, key=len, reverse=True):
+        if compact.startswith(prefix) and len(compact) > len(prefix) + 1:
+            compact = compact[len(prefix) :]
+            changed = True
+            break
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        if compact.endswith(suffix) and len(compact) > len(suffix) + 1:
+            compact = compact[: -len(suffix)]
+            changed = True
+            break
+    if changed and re.fullmatch(r"[a-z0-9]{2,12}", compact):
+        return compact.upper()
+    return ""
+
+
+def _normalize_short_lookup_target(text: str) -> str:
+    cleaned = normalize_spaces(text)
+    folded_tokens = _fold(cleaned).split()
+    if 2 <= len(folded_tokens) <= 8 and all(len(token) == 1 and token.isalnum() for token in folded_tokens):
+        return "".join(folded_tokens).upper()
+    compact = re.sub(r"[^A-Za-z0-9]+", "", cleaned)
+    if (
+        compact
+        and compact == cleaned
+        and 2 <= len(compact) <= 12
+        and (any(character.isupper() for character in compact) or any(character.isdigit() for character in compact))
+    ):
+        return compact.upper()
     return cleaned
 
 

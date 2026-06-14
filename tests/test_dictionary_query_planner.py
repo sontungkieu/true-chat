@@ -41,7 +41,17 @@ def test_dictionary_query_planner_detects_vietnamese_and_english_intents() -> No
 
 def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
     cases = {
-        "PB": ["PB", "PB là gì?", "PB la gi?", "giải thích PB", "giai thich PB", "explain PB"],
+        "PB": [
+            "PB",
+            "P B",
+            "PB là gì?",
+            "PB la gi?",
+            "pblagi",
+            "giải thích PB",
+            "giai thich PB",
+            "giaithichpb",
+            "explain PB",
+        ],
         "CVHL": [
             "CVHL",
             "CVHL là gì?",
@@ -50,10 +60,20 @@ def test_definition_plan_strips_question_noise_for_short_acronyms() -> None:
             "giai thich CVHL",
             "CVHL nghĩa là gì?",
             "cho tôi biết CVHL là gì",
+            "cvhlnghialagi",
         ],
         "SPG9": ["SPG9 là gì?", "meaning of SPG9", "what does SPG9 mean?"],
         "ĐKZ": ["ĐKZ là gì?", "giải nghĩa ĐKZ"],
-        "KHCN": ["KHCN", "KHCN là gì?", "KHCN xuất hiện ở đâu?", "KHCN xuat hien o dau?"],
+        "KHCN": [
+            "KHCN",
+            "K H C N",
+            "KHCN là gì?",
+            "KHCN xuất hiện ở đâu?",
+            "KHCN xuat hien o dau?",
+            "K H C N xuat hien o dau?",
+            "khcnxuathienodau",
+        ],
+        "QSPB": ["QSPB", "Q S P B", "QSPB là gì?", "qspblagi"],
     }
 
     for expected_target, queries in cases.items():
