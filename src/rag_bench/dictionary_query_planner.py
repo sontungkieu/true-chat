@@ -435,6 +435,8 @@ def dictionary_plan_prompt_instructions(plan: DictionaryQueryPlan) -> str:
         "Use only the retrieved dictionary/graph evidence.",
         "Cite dictionary entries with their ids in square brackets.",
         "If evidence is incomplete, say what is missing instead of filling gaps.",
+        "Preserve detected target terms exactly as listed; do not change letters, digits, diacritics, casing, hyphens, or Roman-numeral suffixes.",
+        "Do not merge a target acronym with a nearby but different acronym; describe near-match evidence as near-match evidence, not as the target.",
     ]
     if plan.intent == DictionaryQueryIntent.COMPARISON:
         specific = [

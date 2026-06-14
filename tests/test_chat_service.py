@@ -1109,6 +1109,45 @@ def test_dictionary_alias_prompt_includes_explicit_alias_block_when_used() -> No
     assert "Explain the term in the required response language" not in prompt
 
 
+def test_dictionary_prompt_preserves_near_match_acronym_targets() -> None:
+    messages = [{"role": "user", "content": "/dict chi tiết TERMII"}]
+    plan = plan_dictionary_query("chi tiết TERMII")
+    prompt_messages = build_dictionary_rag_messages(
+        messages,
+        [
+            RetrievalHit(
+                doc_id="TERMII_ENTRY",
+                score=1.0,
+                rank=1,
+                title="TERMII",
+                text="Synthetic entry for TERMII.",
+                metadata={"headword": "TERMII"},
+            ),
+            RetrievalHit(
+                doc_id="TERMI_NEAR_MATCH",
+                score=0.5,
+                rank=2,
+                title="TERMI",
+                text="Synthetic near-match entry.",
+                metadata={"headword": "TERMI"},
+            ),
+        ],
+        query="chi tiết TERMII",
+        max_context_chars=1000,
+        history_messages=0,
+        language="vi",
+        query_plan=plan,
+    )
+    system_prompt = prompt_messages[0]["content"]
+    user_prompt = prompt_messages[1]["content"]
+
+    assert plan.target_terms == ["TERMII"]
+    assert "Target terms: TERMII" in user_prompt
+    assert "Roman-numeral suffixes" in system_prompt
+    assert "Preserve detected target terms exactly as listed" in user_prompt
+    assert "Do not merge a target acronym with a nearby but different acronym" in user_prompt
+
+
 def test_dictionary_alias_mode_uses_direct_prompt_and_alias_metadata() -> None:
     class AliasDictionaryRetriever:
         name = "dictionary-graph"
@@ -2134,6 +2173,8 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["CTCC"]
     assert "Synthetic entry mentioning CTCC." in llm.messages[-1]["content"]
     assert "Dictionary fallback guidance:" in llm.messages[-1]["content"]
+    assert "Preserve the target term(s) exactly as written above" in llm.messages[-1]["content"]
+    assert "Do not merge the target with a nearby but different acronym" in llm.messages[-1]["content"]
     assert "If the target term is mentioned" in llm.messages[-1]["content"]
     assert "Never refer to internal planned searches" in llm.messages[-1]["content"]
 

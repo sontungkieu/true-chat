@@ -1630,6 +1630,10 @@ def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) 
     return (
         "Dictionary fallback guidance:\n"
         f"- Target term(s): {target}.\n"
+        "- Preserve the target term(s) exactly as written above; do not change letters, digits, diacritics, casing, "
+        "hyphens, or Roman-numeral suffixes.\n"
+        "- Do not merge the target with a nearby but different acronym. If retrieved entries mention a near-match "
+        "instead, say it is a near-match rather than treating it as the target.\n"
         "- Some retrieved contexts are local dictionary entries. For short acronym or term-only questions, "
         "distinguish a formal definition/alias from occurrence evidence.\n"
         "- If the target term is mentioned in retrieved dictionary entries but is not explicitly defined, "
@@ -1683,7 +1687,8 @@ def build_dictionary_rag_messages(
             "role": "system",
             "content": _join_prompt_parts(
                 "You are a careful military dictionary assistant. Use the retrieved local dictionary entries first. "
-                "Keep abbreviations, casing, and Vietnamese diacritics intact. Cite sources as [entry-id].",
+                "Keep target abbreviations, letters, digits, casing, Roman-numeral suffixes, and Vietnamese diacritics intact. "
+                "Do not rewrite one acronym into a nearby acronym. Cite sources as [entry-id].",
                 language_instruction,
             ),
         },

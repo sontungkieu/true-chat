@@ -287,6 +287,16 @@ def test_alias_prompt_instructions_are_direct_and_evidence_bound() -> None:
     assert "Cite source ids." in instructions
 
 
+def test_dictionary_prompt_instructions_preserve_exact_short_targets() -> None:
+    plan = plan_dictionary_query("chi tiết TERMII")
+    instructions = dictionary_plan_prompt_instructions(plan)
+
+    assert plan.target_terms == ["TERMII"]
+    assert "Preserve detected target terms exactly as listed" in instructions
+    assert "Roman-numeral suffixes" in instructions
+    assert "Do not merge a target acronym with a nearby but different acronym" in instructions
+
+
 def test_procedure_plan_marks_schema_gap_and_prompt_blocks_hallucinated_steps() -> None:
     plan = plan_dictionary_query("quy trình xử lý TERM_A là gì")
     instructions = dictionary_plan_prompt_instructions(plan)
