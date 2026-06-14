@@ -2316,25 +2316,41 @@ def _format_dictionary_occurrence_fallback_answer(
         else []
     )
     target = target_terms[0] if target_terms else _strip_command_prefix(question).strip()
-    citations = _format_source_citations([hit.doc_id for hit in hits])
-    titles = _format_source_title_citations(hits)
-    has_direct_entry = any(_hit_has_direct_dictionary_match(hit) for hit in hits)
+    direct_hits = [hit for hit in hits if _hit_has_direct_dictionary_match(hit)]
+    direct_citations = _format_source_citations([hit.doc_id for hit in direct_hits])
+    direct_titles = _format_source_titles(direct_hits)
     if response_language == "vi":
-        if has_direct_entry:
+        if direct_hits:
+            direct_summary = _dictionary_hit_lead_summary(direct_hits[0])
+            if direct_summary:
+                return (
+                    f"“{target}” khớp trực tiếp với mục từ {direct_titles}. "
+                    f"Nội dung chính của mục này: {direct_summary} {direct_citations}"
+                ).strip()
             return (
-                f"Tìm thấy mục từ hoặc bằng chứng trực tiếp phù hợp với “{target}” trong từ điển: {titles}. "
-                f"Chỉ sử dụng các nguồn đã truy hồi; không suy rộng ngoài nội dung được trích dẫn. {citations}"
+                f"“{target}” khớp trực tiếp với mục từ {direct_titles}. "
+                f"Có thể đọc câu hỏi theo mục từ này; các nguồn liên quan khác chỉ nên dùng làm ngữ cảnh, không dùng để đổi nghĩa của mục khớp trực tiếp. {direct_citations}"
             ).strip()
+        citations = _format_source_citations([hit.doc_id for hit in hits])
+        titles = _format_source_title_citations(hits)
         return (
             f"Trong các mục từ điển được truy hồi, chưa thấy định nghĩa hoặc phần mở rộng chính thức cho “{target}”. "
             f"Tuy nhiên “{target}” xuất hiện trong phần giải thích/nội dung của: {titles}. "
             f"Vì vậy chỉ có thể xác nhận sự xuất hiện/ngữ cảnh được trích dẫn, không suy rộng nghĩa viết tắt nếu nguồn không nêu rõ. {citations}"
         ).strip()
-    if has_direct_entry:
+    if direct_hits:
+        direct_summary = _dictionary_hit_lead_summary(direct_hits[0])
+        if direct_summary:
+            return (
+                f"“{target}” directly matches the dictionary entry {direct_titles}. "
+                f"The entry says: {direct_summary} {direct_citations}"
+            ).strip()
         return (
-            f"The retrieved dictionary contains direct evidence for “{target}”: {titles}. "
-            f"I only use the cited retrieved sources and do not infer beyond them. {citations}"
+            f"“{target}” directly matches the dictionary entry {direct_titles}. "
+            f"Read the question through that entry; other related sources should only provide context, not change the direct-match meaning. {direct_citations}"
         ).strip()
+    citations = _format_source_citations([hit.doc_id for hit in hits])
+    titles = _format_source_title_citations(hits)
     return (
         f"The retrieved dictionary entries do not show a formal definition or expansion for “{target}”. "
         f"They do show that it appears in the explanation/body of: {titles}. "
@@ -2395,6 +2411,18 @@ def _format_source_title_citations(hits: Sequence[RetrievalHit]) -> str:
     return "; ".join(parts)
 
 
+def _format_source_titles(hits: Sequence[RetrievalHit]) -> str:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for hit in hits:
+        doc_id = str(hit.doc_id or "").strip()
+        if not doc_id or doc_id in seen:
+            continue
+        seen.add(doc_id)
+        parts.append(str(hit.title or doc_id).strip())
+    return "; ".join(parts)
+
+
 def _format_source_citations(doc_ids: Sequence[str]) -> str:
     seen: set[str] = set()
     citations: list[str] = []
@@ -2405,6 +2433,24 @@ def _format_source_citations(doc_ids: Sequence[str]) -> str:
         seen.add(doc_id)
         citations.append(f"[{doc_id}]")
     return ", ".join(citations)
+
+
+def _dictionary_hit_lead_summary(hit: RetrievalHit, *, max_chars: int = 320) -> str:
+    raw = str(hit.metadata.get("raw_docx_text") or hit.text or "").strip()
+    if not raw:
+        return ""
+    text = re.sub(r"\s+", " ", raw)
+    title = str(hit.title or hit.metadata.get("headword") or "").strip()
+    if title:
+        title_pattern = re.escape(re.sub(r"\s+", " ", title))
+        text = re.sub(rf"^{title_pattern}\s*[,;:.-]?\s*", "", text, count=1, flags=re.IGNORECASE)
+    if not text:
+        return ""
+    sentence_match = re.search(r"^(.{40,}?[.!?。])(?:\s|$)", text)
+    summary = sentence_match.group(1) if sentence_match else text
+    if len(summary) > max_chars:
+        summary = summary[:max_chars].rstrip(" ,;:") + "..."
+    return summary.strip()
 
 
 def _format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str:

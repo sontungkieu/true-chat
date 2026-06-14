@@ -1197,18 +1197,33 @@ def test_dictionary_mode_replaces_refusal_when_direct_entry_exists() -> None:
                         score=1.4,
                         rank=1,
                         title="TERMII TITLE",
-                        text="TERMII synthetic direct dictionary entry.",
+                        text="TERMII TITLE, synthetic direct dictionary entry explains the target term.",
                         metadata={
                             "data_tier": "semi_private",
                             "kind": "dictionary",
                             "headword": "TERMII TITLE",
                             "dictionary_match_mode": "strict",
                             "dictionary_direct_score": 1.2,
-                            "raw_docx_text": "TERMII synthetic direct dictionary entry.",
+                            "raw_docx_text": "TERMII TITLE, synthetic direct dictionary entry explains the target term.",
                         },
                         data_tier="semi_private",
                         doc_type="dictionary",
-                    )
+                    ),
+                    RetrievalHit(
+                        doc_id="RELATED_CONTEXT",
+                        score=0.9,
+                        rank=2,
+                        title="RELATED CONTEXT",
+                        text="Synthetic related context that mentions TERMII but is not the direct entry.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "dictionary_match_mode": "graph",
+                            "dictionary_graph_score": 0.8,
+                        },
+                        data_tier="semi_private",
+                        doc_type="dictionary",
+                    ),
                 ]
             return RetrievalResult(query=query, hits=hits, latency_s=0.01, metadata={"kind": "dictionary"})
 
@@ -1252,8 +1267,11 @@ def test_dictionary_mode_replaces_refusal_when_direct_entry_exists() -> None:
 
     answer = result.response["choices"][0]["message"]["content"]
     assert "Không tìm thấy định nghĩa" not in answer
-    assert "Tìm thấy mục từ hoặc bằng chứng trực tiếp phù hợp" in answer
-    assert "TERMII TITLE [TERMII_ENTRY]" in answer
+    assert "Tìm thấy mục từ hoặc bằng chứng trực tiếp phù hợp" not in answer
+    assert "TERMII” khớp trực tiếp với mục từ TERMII TITLE" in answer
+    assert "synthetic direct dictionary entry explains the target term" in answer
+    assert "[TERMII_ENTRY]" in answer
+    assert "RELATED CONTEXT" not in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_refusal_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_direct_refusal_fallback"] is True
     assert result.response["query_plan"]["target_terms"] == ["TERMII"]
