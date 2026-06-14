@@ -136,6 +136,32 @@ def test_short_lookup_normalization_generalizes_across_unseen_targets() -> None:
             assert plan.normalization["target_count"] == 1
 
 
+def test_compact_acronym_planner_rerank_is_stable_across_score_noise() -> None:
+    plan = plan_dictionary_query("QSPB")
+    hits = [
+        RetrievalHit(
+            doc_id="base:H-0001",
+            score=5.0,
+            rank=1,
+            title="SYNTHETIC H",
+            text="Synthetic text with a compact/spaced acronym mention.",
+            metadata={"dictionary_direct_score": 0.86, "dictionary_match_mode": "lexical"},
+        ),
+        RetrievalHit(
+            doc_id="base:C-0001",
+            score=1.0,
+            rank=2,
+            title="SYNTHETIC C",
+            text="Synthetic text with the same compact/spaced acronym evidence.",
+            metadata={"dictionary_direct_score": 0.86, "dictionary_match_mode": "lexical"},
+        ),
+    ]
+
+    ranked = annotate_and_rank_dictionary_hits(hits, plan, max_hits=2)
+
+    assert ranked[0].doc_id == "base:C-0001"
+
+
 def test_short_lookup_normalization_does_not_extract_acronym_from_arbitrary_sentence() -> None:
     plan = plan_dictionary_query("nội dung XYZ trong tài liệu này")
 

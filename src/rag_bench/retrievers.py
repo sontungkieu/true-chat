@@ -1270,6 +1270,7 @@ def _dictionary_merge(
 ) -> list[RetrievalHit]:
     query_keys = _dictionary_query_keys(query.text)
     strict_query_keys = _dictionary_strict_query_keys(query.text)
+    compact_acronym_key = _dictionary_compact_acronym_query_key(query.text)
     scores: dict[str, float] = {}
     best_rank: dict[str, int] = {}
     hits_by_doc_id: dict[str, RetrievalHit] = {}
@@ -1308,7 +1309,18 @@ def _dictionary_merge(
                 for headword_key in headword_keys
             ):
                 scores[doc_id] = scores.get(doc_id, 0.0) + 0.35
-    ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank.get(doc_id, 9999), doc_id))
+    if compact_acronym_key and not strict_canonical_match:
+        ranked = sorted(
+            scores,
+            key=lambda doc_id: _dictionary_compact_acronym_rank_key(
+                doc_id,
+                scores=scores,
+                best_rank=best_rank,
+                hits_by_doc_id=hits_by_doc_id,
+            ),
+        )
+    else:
+        ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank.get(doc_id, 9999), doc_id))
     return [
         RetrievalHit(
             doc_id=doc_id,
@@ -1338,6 +1350,19 @@ def _merge_dictionary_metadata(existing: dict[str, Any], incoming: dict[str, Any
         if existing_direct and existing_exactish and not incoming_direct and _is_dictionary_graph_match_key(key):
             continue
         existing[key] = value
+
+
+def _dictionary_compact_acronym_rank_key(
+    doc_id: str,
+    *,
+    scores: dict[str, float],
+    best_rank: dict[str, int],
+    hits_by_doc_id: dict[str, RetrievalHit],
+) -> tuple[int, float, float, int, str]:
+    direct_score = float(hits_by_doc_id[doc_id].metadata.get("dictionary_direct_score") or 0.0)
+    if direct_score >= 0.8:
+        return (0, -round(direct_score, 6), 0.0, 0, doc_id)
+    return (1, 0.0, -scores[doc_id], best_rank.get(doc_id, 9999), doc_id)
 
 
 def _clear_dictionary_graph_match_metadata(metadata: dict[str, Any]) -> None:
@@ -1410,6 +1435,22 @@ def _dictionary_compact_short_token_match(query_key: str, text_key: str) -> bool
             if all(1 <= len(token) <= 3 for token in window) and "".join(window) == compact_query:
                 return True
     return False
+
+
+def _dictionary_compact_acronym_query_key(text: str) -> str:
+    folded = _dictionary_fold_text(text)
+    if not folded:
+        return ""
+    tokens = folded.split()
+    if len(tokens) == 1:
+        compact = tokens[0]
+    elif all(1 <= len(token) <= 3 for token in tokens):
+        compact = "".join(tokens)
+    else:
+        return ""
+    if 3 <= len(compact) <= 12 and re.fullmatch(r"[a-z0-9]+", compact):
+        return compact
+    return ""
 
 
 def _dictionary_document_key(doc: Document, *, strict: bool = False) -> str:

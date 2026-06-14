@@ -46,6 +46,8 @@ The planner keeps target extraction separate from retrieval. The default generic
 
 The response `query_plan.normalization` metadata records the normalization adapter and layer, for example `generic / short_acronym_lookup_noise` or `generic / compact_lookup_affix`. This makes deployed behavior auditable without exposing raw private source text.
 
+For short acronym targets, compact and spaced forms are treated as one lookup family during the final dictionary rerank. If a query has only compact/spaced acronym evidence and no strict canonical headword or alias match, direct evidence is ranked stably before BM25/RRF tie noise, so variants such as `AB`, `A B`, and `A B C`-style spacing do not flip the top entry just because the user typed spaces differently.
+
 Domain-specific normalization should be added as a pluggable adapter rather than by adding one more hard-coded corner case. An adapter may add safe lookup-noise tokens or compact affixes for one corpus/domain, and it should be evaluated on a redacted fixture before being enabled. This keeps corpus memory detachable: a PB adapter, a medical adapter, or a legal adapter can be compared, removed, or replaced without changing the core generic parser.
 
 Use `scripts/evaluate_dictionary_normalization_layers.py` to compare the generic adapter and optional adapter JSON files on synthetic/redacted cases:

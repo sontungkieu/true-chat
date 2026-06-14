@@ -566,6 +566,7 @@ def annotate_and_rank_dictionary_hits(
     preferred_edges = set(plan.preferred_edge_types)
     target_keys = {_term_key(term) for term in plan.target_terms if _term_key(term)}
     target_strict_keys = {_strict_term_key(term) for term in plan.target_terms if _strict_term_key(term)}
+    compact_acronym_target = _compact_acronym_target_key(plan.target_terms)
     has_tone_sensitive_targets = any(_strict_term_key(term) != _term_key(term) for term in plan.target_terms)
     for position, hit in enumerate(hits):
         metadata = dict(hit.metadata)
@@ -596,7 +597,10 @@ def annotate_and_rank_dictionary_hits(
         planned_score = float(hit.score) + boost
         metadata["query_plan_score"] = planned_score
         rows.append((planned_score, float(hit.score), -position, hit, metadata))
-    rows.sort(key=lambda item: (-item[0], -item[1], item[2], item[3].doc_id))
+    if compact_acronym_target:
+        rows.sort(key=_compact_acronym_planner_rank_key)
+    else:
+        rows.sort(key=lambda item: (-item[0], -item[1], item[2], item[3].doc_id))
     ranked: list[RetrievalHit] = []
     for rank, (_planned, _score, _position, hit, metadata) in enumerate(rows[:max_hits], 1):
         ranked.append(
@@ -643,6 +647,34 @@ def merge_planned_dictionary_results(primary: list[RetrievalHit], extra_results:
                     redaction_policy=hit.redaction_policy,
                 )
     return list(merged.values())
+
+
+def _compact_acronym_target_key(target_terms: list[str]) -> str:
+    if len(target_terms) != 1:
+        return ""
+    folded = re.sub(r"[^a-z0-9]+", " ", _fold(target_terms[0])).strip()
+    if not folded:
+        return ""
+    tokens = folded.split()
+    if len(tokens) == 1:
+        compact = tokens[0]
+    elif all(1 <= len(token) <= 3 for token in tokens):
+        compact = "".join(tokens)
+    else:
+        return ""
+    if 3 <= len(compact) <= 12 and re.fullmatch(r"[a-z0-9]+", compact):
+        return compact
+    return ""
+
+
+def _compact_acronym_planner_rank_key(
+    item: tuple[float, float, int, RetrievalHit, dict[str, Any]],
+) -> tuple[int, float, float, float, int, str]:
+    planned_score, hit_score, neg_position, hit, metadata = item
+    direct_score = _safe_float(metadata.get("dictionary_direct_score"), default=0.0)
+    if direct_score >= 0.8:
+        return (0, -round(direct_score, 6), 0.0, 0.0, 0, hit.doc_id)
+    return (1, 0.0, -planned_score, -hit_score, neg_position, hit.doc_id)
 
 
 def _planner_boost(

@@ -402,6 +402,7 @@ def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> 
     assert qspb.hits[0].doc_id == "base:Q-0001"
     assert qs_pb.hits[0].doc_id == "base:Q-0001"
     assert q_s_p_b.hits[0].doc_id == "base:Q-0001"
+    assert {qspb.hits[0].doc_id, qs_pb.hits[0].doc_id, q_s_p_b.hits[0].doc_id} == {"base:Q-0001"}
     assert qspb.hits[0].metadata["dictionary_direct_score"] >= 0.8
     assert qs_pb.hits[0].metadata["dictionary_direct_score"] >= 0.8
 
