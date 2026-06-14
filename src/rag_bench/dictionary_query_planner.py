@@ -671,6 +671,7 @@ def _extract_single_target(original: str, normalized: str) -> list[str]:
         r"giải thích|giai thich|giải nghĩa|giai nghia|định nghĩa|dinh nghia|khái niệm|khai niem|"
         r"cho tôi biết|cho toi biet|tra cứu|tra cuu|tìm|tim|mục từ|muc tu|"
         r"tên khác của|ten khac cua|tên gọi khác của|ten goi khac cua|"
+        r"viết tắt của|viet tat cua|"
         r"ngoại lệ của|ngoai le cua|trường hợp này áp dụng|truong hop nay ap dung|"
         r"khi nào áp dụng|khi nao ap dung|category of|type of|meaning of|definition of|"
         r"define|explain|lookup|look up|search for|find|what is|what does|"
@@ -684,9 +685,11 @@ def _extract_single_target(original: str, normalized: str) -> list[str]:
         r"thuộc nhóm nào|thuoc nhom nao|là loại gì|la loai gi|dùng để làm gì|dung de lam gi|"
         r"yêu cầu gì|yeu cau gi|cần gì|can gi|"
         r"xuất hiện ở đâu|xuat hien o dau|"
+        r"là viết tắt của gì|la viet tat cua gi|viết tắt của gì|viet tat cua gi|"
+        r"viết tắt cho gì|viet tat cho gi|viết tắt là gì|viet tat la gi|"
         r"là cái gì|la cai gi|nghĩa là gì|nghia la gi|có nghĩa là gì|co nghia la gi|"
         r"là gì(?:\s+(?:vậy|nhỉ|thế))?|la gi(?:\s+(?:vay|nhi|the))?|"
-        r"used for|require|requires|mean|means|meaning|definition"
+        r"stand for|stands for|short for|used for|require|requires|mean|means|meaning|definition"
         r")$"
     )
     cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
@@ -737,9 +740,11 @@ def _strip_question_noise(text: str) -> str:
         r"thuộc nhóm nào|thuoc nhom nao|là loại gì|la loai gi|dùng để làm gì|dung de lam gi|"
         r"yêu cầu gì|yeu cau gi|cần gì|can gi|"
         r"xuất hiện ở đâu|xuat hien o dau|"
+        r"là viết tắt của gì|la viet tat cua gi|viết tắt của gì|viet tat cua gi|"
+        r"viết tắt cho gì|viet tat cho gi|viết tắt là gì|viet tat la gi|"
         r"là cái gì|la cai gi|nghĩa là gì|nghia la gi|có nghĩa là gì|co nghia la gi|"
         r"là gì(?:\s+(?:vậy|nhỉ|thế))?|la gi(?:\s+(?:vay|nhi|the))?|"
-        r"mean|means|meaning|definition"
+        r"stand for|stands for|short for|mean|means|meaning|definition"
         r")$",
         "",
         text,
@@ -762,6 +767,7 @@ def _strip_lookup_wrappers(text: str) -> str:
         + r")?(?:"
         r"cho tôi biết|cho toi biet|tra cứu|tra cuu|tìm|tim|mục từ|muc tu|"
         r"giải thích|giai thich|giải nghĩa|giai nghia|định nghĩa|dinh nghia|khái niệm|khai niem|"
+        r"viết tắt của|viet tat cua|"
         r"meaning of|definition of|define|explain|lookup|look up|search for|find|what is|what does"
         r")\s+"
     )
@@ -770,7 +776,9 @@ def _strip_lookup_wrappers(text: str) -> str:
         r"là gì(?:\s+(?:vậy|nhỉ|thế))?|la gi(?:\s+(?:vay|nhi|the))?|"
         r"là cái gì|la cai gi|nghĩa là gì|nghia la gi|có nghĩa là gì|co nghia la gi|"
         r"xuất hiện ở đâu|xuat hien o dau|"
-        r"mean|means|meaning|definition"
+        r"là viết tắt của gì|la viet tat cua gi|viết tắt của gì|viet tat cua gi|"
+        r"viết tắt cho gì|viet tat cho gi|viết tắt là gì|viet tat la gi|"
+        r"stand for|stands for|short for|mean|means|meaning|definition"
         r")$"
     )
     previous = None
@@ -801,6 +809,7 @@ def _compact_lookup_target(text: str) -> str:
         "muctu",
         "meaningof",
         "definitionof",
+        "viettatcua",
         "whatdoes",
         "whatis",
         "lookup",
@@ -813,7 +822,16 @@ def _compact_lookup_target(text: str) -> str:
         "conghialagi",
         "nghialagi",
         "xuathienodau",
+        "laviettatcuagi",
+        "viettatcuagi",
+        "viettatchogi",
+        "viettatlagi",
         "lacaigi",
+        "standsforwhat",
+        "standforwhat",
+        "shortfor",
+        "standfor",
+        "standsfor",
         "definition",
         "meaning",
         "lagi",
@@ -864,6 +882,10 @@ def _is_definition_lookup_query(original: str, normalized: str) -> bool:
             "khai niem",
             "giai thich",
             "giai nghia",
+            "viet tat",
+            "stand for",
+            "stands for",
+            "short for",
             "cho toi biet",
             "tra cuu",
             "muc tu",

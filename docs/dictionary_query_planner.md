@@ -22,7 +22,7 @@ The planner classifies these intents deterministically and gives downstream retr
 
 The planner currently recognizes:
 
-- `definition`: "X là gì", "định nghĩa X", "what is X", "define X".
+- `definition`: "X là gì", "X viết tắt cho gì", "X là viết tắt của gì", "what is X", "what does X stand for", "define X".
 - `alias`: "X còn gọi là gì", "tên khác của X", "tên gọi khác của X", "alias of X", "synonym of X".
 - `category`: "X thuộc nhóm nào", "X là loại gì", "category of X".
 - `comparison`: "so sánh X và Y", "X khác Y như thế nào", "difference between X and Y".

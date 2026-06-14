@@ -683,6 +683,69 @@ def test_dict_command_routes_to_dictionary_retriever_with_rich_metadata() -> Non
     assert lookup["retrieved"][0]["rich_blocks"][0]["runs"][0]["bold"] is True
 
 
+def test_dictionary_lookup_uses_normalized_lookup_target_for_abbreviation_questions() -> None:
+    class RecordingDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            self.queries.append(query.text)
+            hits = [
+                RetrievalHit(
+                    doc_id="noise",
+                    score=0.02,
+                    rank=1,
+                    title="Noise",
+                    text="Synthetic weak lexical noise.",
+                    metadata={"data_tier": "public", "kind": "dictionary"},
+                    data_tier="public",
+                )
+            ]
+            if query.text == "PB":
+                hits = [
+                    RetrievalHit(
+                        doc_id="base:P-0023",
+                        score=1.2,
+                        rank=1,
+                        title="PHÁO BINH",
+                        text="Synthetic PHÁO BINH dictionary entry.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "headword": "PHÁO BINH",
+                            "aliases": ["PB"],
+                            "dictionary_match_mode": "strict",
+                        },
+                        data_tier="semi_private",
+                    )
+                ]
+            return RetrievalResult(query=query, hits=hits, latency_s=0.01, metadata={"kind": "dictionary"})
+
+    dictionary_retriever = RecordingDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=2,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=CountingLLM(),
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    lookup = service.lookup_dictionary("PB viết tắt cho gì?", top_k=3)
+
+    assert dictionary_retriever.queries == ["PB viết tắt cho gì?", "PB"]
+    assert lookup["retrieval_metadata"]["query_plan"]["target_terms"] == ["PB"]
+    assert lookup["retrieved"][0]["doc_id"] == "base:P-0023"
+
+
 def test_dictionary_mode_exposes_safe_query_plan_metadata_and_prompt_instructions() -> None:
     dictionary_retriever = FakeDictionaryRetriever()
     llm = CountingLLM()
@@ -742,6 +805,13 @@ def test_dictionary_mode_normalizes_short_acronym_definition_queries() -> None:
     assert result.response["query_plan"]["intent"] == "definition"
     assert result.response["query_plan"]["target_terms"] == ["PB"]
     assert dictionary_retriever.queries == ["PB là gì?", "PB"]
+
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "/dict PB viết tắt cho gì?"}], language="vi")
+
+    assert result.response["query_plan"]["intent"] == "definition"
+    assert result.response["query_plan"]["target_terms"] == ["PB"]
+    assert dictionary_retriever.queries == ["PB viết tắt cho gì?", "PB"]
 
     dictionary_retriever.queries.clear()
     result = service.answer([{"role": "user", "content": "/dict CVHL nghĩa là gì?"}], language="vi")
@@ -1916,6 +1986,8 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
 
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             assert query.text in {
+                "PB viết tắt cho gì?",
+                "pbviettatcuagi",
                 "KHCN xuất hiện ở đâu?",
                 "khcnxuathienodau",
                 "CTCC xuất hiện ở đâu?",
@@ -1947,7 +2019,7 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             self.queries.append(query.text)
             hits = []
-            if query.text in {"KHCN", "CTCC"}:
+            if query.text in {"PB", "KHCN", "CTCC"}:
                 hits = [
                     RetrievalHit(
                         doc_id="dict-mention",
@@ -1992,6 +2064,14 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert "Synthetic entry mentioning KHCN." in llm.messages[1]["content"]
 
     dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "PB viết tắt cho gì?"}], response_mode="text")
+
+    assert dictionary_retriever.queries == ["PB viết tắt cho gì?", "PB"]
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["PB"]
+    assert "Synthetic entry mentioning PB." in llm.messages[-1]["content"]
+
+    dictionary_retriever.queries.clear()
     result = service.answer([{"role": "user", "content": "khcnxuathienodau"}], response_mode="text")
 
     assert dictionary_retriever.queries == ["khcnxuathienodau", "KHCN"]
@@ -2012,6 +2092,13 @@ def test_text_mode_dictionary_fallback_uses_normalized_lookup_target_for_mention
     assert dictionary_retriever.queries == ["ctccxuathienodau", "CTCC"]
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["CTCC"]
+
+    dictionary_retriever.queries.clear()
+    result = service.answer([{"role": "user", "content": "pbviettatcuagi"}], response_mode="text")
+
+    assert dictionary_retriever.queries == ["pbviettatcuagi", "PB"]
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]["target_terms"] == ["PB"]
 
 
 def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hits() -> None:

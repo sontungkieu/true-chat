@@ -771,20 +771,34 @@ class RagChatService:
         retriever = self.resolve_request_retriever("dictionary-graph")
         score_controls = _normalize_retrieval_score_controls(score_min, score_max, sort_by_score)
         request_top_k = _clamp_top_k(top_k, fallback=1)
+        query_plan = plan_dictionary_query(query) if self.config.enable_dictionary_query_planner else None
         retrieval = retriever.search(Query(query_id="dictionary-lookup", text=query), request_top_k)
+        if query_plan is not None:
+            extra_results = [
+                retriever.search(Query(query_id=f"dictionary-lookup-plan-{index}", text=term), request_top_k).hits
+                for index, term in enumerate(query_plan.target_terms[:3], 1)
+                if term and term.strip().lower() != query.strip().lower()
+            ]
+            if extra_results:
+                retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
         retrieval, score_filter_metadata = _apply_retrieval_score_controls(
             retrieval,
             score_controls,
             max_hits=request_top_k,
         )
+        if query_plan is not None:
+            retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
         hits = [hit for hit in retrieval.hits if hit.score > 0 or score_controls.has_score_range]
+        retrieval_metadata = {**retrieval.metadata, **score_filter_metadata}
+        if query_plan is not None:
+            retrieval_metadata["query_plan"] = query_plan.to_payload()
         return {
             "object": "dictionary.lookup",
             "query": query,
             "retriever": retriever.name,
             "top_k": request_top_k,
             "retrieval_latency_s": retrieval.latency_s,
-            "retrieval_metadata": {**retrieval.metadata, **score_filter_metadata},
+            "retrieval_metadata": retrieval_metadata,
             "dictionary": self.dictionary_status,
             "retrieved": [_hit_source_payload(hit) for hit in hits],
         }
