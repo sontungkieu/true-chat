@@ -72,7 +72,7 @@ The script reports pass/fail counts by case category, current planner layer, and
 
 ## Graph Evidence Use
 
-The planner does not rewrite graph scoring. It applies small, explainable boosts after normal retrieval:
+The planner keeps scoring deterministic but treats dictionary evidence as a query-specific score, not a raw retriever score. Direct headword/alias evidence is placed in a higher score band than weaker graph or lexical evidence, then the raw retriever score is used as a tie-breaker inside that band:
 
 - definition: prefer direct headword/alias/concept/category evidence;
 - alias: prefer explicit `has_alias` or direct alias metadata; related terms, concepts, categories, arbitrary lexical overlap, and see-also links are not counted as aliases;
@@ -89,13 +89,15 @@ Each returned dictionary hit can carry safe metadata such as:
   "query_plan_intent": "comparison",
   "query_plan_role": "comparison_term",
   "query_plan_edge_types": ["is_a"],
+  "raw_retrieval_score": 0.92,
+  "query_plan_score_band": 1.2,
   "query_plan_score": 1.42,
   "has_alias_evidence": false,
   "alias_evidence_count": 0
 }
 ```
 
-These fields are labels and scores, not raw private source text.
+The final `RetrievalHit.score` returned after planning is the calibrated `query_plan_score`; `raw_retrieval_score` preserves the original retriever score for debugging. These fields are labels and scores, not raw private source text.
 
 ## Prompt Behavior
 

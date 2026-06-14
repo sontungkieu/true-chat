@@ -357,13 +357,13 @@ class RagChatService:
                 ]
                 if extra_results:
                     retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
+            if query_plan is not None:
+                retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
             retrieval, score_filter_metadata = _apply_retrieval_score_controls(
                 retrieval,
                 score_controls,
                 max_hits=request_top_k,
             )
-            if query_plan is not None:
-                retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
             alias_evidence = (
                 extract_alias_evidence_from_hits(retrieval.hits, target_terms=query_plan.target_terms)
                 if query_plan is not None and query_plan.intent == DictionaryQueryIntent.ALIAS
@@ -825,13 +825,13 @@ class RagChatService:
             ]
             if extra_results:
                 retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
+        if query_plan is not None:
+            retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
         retrieval, score_filter_metadata = _apply_retrieval_score_controls(
             retrieval,
             score_controls,
             max_hits=request_top_k,
         )
-        if query_plan is not None:
-            retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
         hits = [hit for hit in retrieval.hits if hit.score > 0 or score_controls.has_score_range]
         retrieval_metadata = {**retrieval.metadata, **score_filter_metadata}
         if query_plan is not None:
@@ -1375,8 +1375,10 @@ def _apply_retrieval_score_controls(
         if (controls.min_score is None or hit.score >= controls.min_score)
         and (controls.max_score is None or hit.score <= controls.max_score)
     ]
+    sort_strategy = "input_order"
     if controls.sort_by_score:
         filtered = sorted(filtered, key=lambda hit: (-hit.score, hit.rank, hit.doc_id))
+        sort_strategy = "score_desc"
     if max_hits is not None:
         filtered = filtered[: _clamp_top_k(max_hits, fallback=max_hits)]
     reranked = [
@@ -1388,6 +1390,7 @@ def _apply_retrieval_score_controls(
             "min_score": controls.min_score,
             "max_score": controls.max_score,
             "sort_by_score": controls.sort_by_score,
+            "sort_strategy": sort_strategy,
             "input_count": len(retrieval.hits),
             "output_count": len(reranked),
         }

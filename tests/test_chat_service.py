@@ -2589,6 +2589,102 @@ def test_text_dictionary_fallback_caps_total_sources_and_drops_tiny_benchmark_hi
     assert "Tiny benchmark" not in llm.messages[1]["content"]
 
 
+def test_text_dictionary_fallback_sort_by_calibrated_score_keeps_direct_match_first() -> None:
+    class EmptyTextRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="bench-zero",
+                        score=0.0,
+                        rank=1,
+                        title="Benchmark zero",
+                        text="No useful benchmark evidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    )
+                ],
+                latency_s=0.01,
+            )
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            assert top_k == 3
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="graph-high",
+                        score=2.0,
+                        rank=1,
+                        title="TERM_RELATED",
+                        text="Synthetic graph neighbor.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "dictionary_match_mode": "graph",
+                            "dictionary_graph_score": 0.8,
+                        },
+                        data_tier="semi_private",
+                    ),
+                    RetrievalHit(
+                        doc_id="direct-low",
+                        score=0.4,
+                        rank=2,
+                        title="TERM_A",
+                        text="Synthetic direct dictionary entry.",
+                        metadata={
+                            "data_tier": "semi_private",
+                            "kind": "dictionary",
+                            "headword": "TERM_A",
+                            "dictionary_match_mode": "strict",
+                            "dictionary_direct_score": 1.0,
+                        },
+                        data_tier="semi_private",
+                    ),
+                ],
+                latency_s=0.01,
+                metadata={"kind": "dictionary"},
+            )
+
+    text_retriever = EmptyTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=3,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=FakeLLM(),
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 2},
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "TERM_A là gì?"}],
+        response_mode="text",
+        top_k=3,
+        sort_by_score=True,
+    )
+
+    retrieved = result.response["rag"]["retrieved"]
+    assert [source["doc_id"] for source in retrieved[:2]] == ["direct-low", "graph-high"]
+    assert retrieved[0]["score"] > retrieved[1]["score"]
+    assert retrieved[0]["metadata"]["raw_retrieval_score"] == 0.4
+    assert retrieved[1]["metadata"]["raw_retrieval_score"] == 2.0
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback_score_filter"]["sort_strategy"] == "score_desc"
+
+
 def test_format_context_distributes_budget_across_all_hits() -> None:
     hits = [
         RetrievalHit(
@@ -2751,6 +2847,7 @@ def test_score_controls_filter_sort_prompt_and_display_sources() -> None:
         "min_score": 0.5,
         "max_score": 2.5,
         "sort_by_score": True,
+        "sort_strategy": "score_desc",
         "input_count": 4,
         "output_count": 2,
     }

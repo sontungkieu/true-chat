@@ -584,6 +584,8 @@ def annotate_and_rank_dictionary_hits(
     has_tone_sensitive_targets = any(_strict_term_key(term) != _term_key(term) for term in plan.target_terms)
     for position, hit in enumerate(hits):
         metadata = dict(hit.metadata)
+        raw_score = _safe_float(metadata.get("raw_retrieval_score"), default=float(hit.score))
+        metadata["raw_retrieval_score"] = raw_score
         boost, role, matched_edges = _planner_boost(
             hit,
             plan,
@@ -608,9 +610,16 @@ def annotate_and_rank_dictionary_hits(
                 role = "alias_evidence"
         metadata["query_plan_role"] = role
         metadata["query_plan_edge_types"] = matched_edges
-        planned_score = float(hit.score) + boost
+        score_band = _planner_score_band(
+            role=role,
+            mode=str(metadata.get("dictionary_match_mode") or ""),
+            metadata=metadata,
+            matched_edges=matched_edges,
+        )
+        metadata["query_plan_score_band"] = score_band
+        planned_score = score_band + raw_score + boost
         metadata["query_plan_score"] = planned_score
-        rows.append((planned_score, float(hit.score), -position, hit, metadata))
+        rows.append((planned_score, raw_score, -position, hit, metadata))
     if compact_acronym_target:
         rows.sort(key=_compact_acronym_planner_rank_key)
     else:
@@ -620,7 +629,7 @@ def annotate_and_rank_dictionary_hits(
         ranked.append(
             RetrievalHit(
                 doc_id=hit.doc_id,
-                score=hit.score,
+                score=_planned,
                 rank=rank,
                 title=hit.title,
                 text=hit.text,
@@ -752,6 +761,27 @@ def _planner_boost(
     if relation == "related_to" and preferred_edges and any(edge != "related_to" for edge in preferred_edges):
         boost -= 0.08
     return boost, role, edge_matches
+
+
+def _planner_score_band(
+    *,
+    role: str,
+    mode: str,
+    metadata: dict[str, Any],
+    matched_edges: list[str],
+) -> float:
+    direct_score = _safe_float(metadata.get("dictionary_direct_score"), default=0.0)
+    if role in {"primary_term", "alias_evidence"} or mode in {"strict", "folded"} or direct_score > 0:
+        return 2.0 + min(max(direct_score, 0.0), 1.5) * 0.25
+    if role == "comparison_term":
+        return 1.2
+    if role in {"structured_evidence", "graph_neighbor"} or matched_edges:
+        return 0.6
+    if mode == "graph":
+        return 0.4
+    if mode == "lexical":
+        return 0.15
+    return 0.0
 
 
 def _alias_hit_matches_target(

@@ -190,6 +190,47 @@ def test_compact_acronym_planner_rerank_is_stable_across_score_noise() -> None:
     assert ranked[0].doc_id == "base:C-0001"
 
 
+def test_planner_score_uses_evidence_band_before_raw_score_noise() -> None:
+    plan = plan_dictionary_query("TERM_A là gì")
+    hits = [
+        RetrievalHit(
+            doc_id="graph-high",
+            score=2.0,
+            rank=1,
+            title="TERM_RELATED",
+            text="Synthetic graph-neighbor context.",
+            metadata={
+                "dictionary_match_mode": "graph",
+                "dictionary_graph_score": 0.8,
+                "data_tier": "public",
+            },
+            data_tier="public",
+        ),
+        RetrievalHit(
+            doc_id="direct-low",
+            score=0.4,
+            rank=2,
+            title="TERM_A",
+            text="Synthetic direct definition.",
+            metadata={
+                "headword": "TERM_A",
+                "dictionary_match_mode": "strict",
+                "dictionary_direct_score": 1.0,
+                "data_tier": "public",
+            },
+            data_tier="public",
+        ),
+    ]
+
+    ranked = annotate_and_rank_dictionary_hits(hits, plan, max_hits=2)
+
+    assert [hit.doc_id for hit in ranked] == ["direct-low", "graph-high"]
+    assert ranked[0].score > ranked[1].score
+    assert ranked[0].metadata["raw_retrieval_score"] == 0.4
+    assert ranked[1].metadata["raw_retrieval_score"] == 2.0
+    assert ranked[0].metadata["query_plan_score_band"] > ranked[1].metadata["query_plan_score_band"]
+
+
 def test_short_lookup_normalization_does_not_extract_acronym_from_arbitrary_sentence() -> None:
     plan = plan_dictionary_query("nội dung XYZ trong tài liệu này")
     detail_plan = plan_dictionary_query("chi tiết XYZ trong tài liệu này")
