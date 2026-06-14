@@ -231,6 +231,37 @@ def test_planner_score_uses_evidence_band_before_raw_score_noise() -> None:
     assert ranked[0].metadata["query_plan_score_band"] > ranked[1].metadata["query_plan_score_band"]
 
 
+def test_planner_uses_roman_suffix_variants_for_primary_term_scoring() -> None:
+    plan = plan_dictionary_query("TERM GROUP 1 là gì")
+    hits = [
+        RetrievalHit(
+            doc_id="noise",
+            score=2.0,
+            rank=1,
+            title="NOISE",
+            text="Synthetic unrelated context.",
+            metadata={"dictionary_match_mode": "graph", "data_tier": "public"},
+            data_tier="public",
+        ),
+        RetrievalHit(
+            doc_id="roman-i",
+            score=0.1,
+            rank=2,
+            title="TERM GROUP I",
+            text="Synthetic roman-suffix entry.",
+            metadata={"headword": "TERM GROUP I", "data_tier": "public"},
+            data_tier="public",
+        ),
+    ]
+
+    ranked = annotate_and_rank_dictionary_hits(hits, plan, max_hits=2)
+    candidates = dictionary_lookup_normalization_candidates("TERM GROUP 1 là gì")
+
+    assert ranked[0].doc_id == "roman-i"
+    assert ranked[0].metadata["query_plan_role"] == "primary_term"
+    assert any(row["layer"] == "roman_suffix_lookup" and row["target"] == "TERM GROUP I" for row in candidates)
+
+
 def test_short_lookup_normalization_does_not_extract_acronym_from_arbitrary_sentence() -> None:
     plan = plan_dictionary_query("nội dung XYZ trong tài liệu này")
     detail_plan = plan_dictionary_query("chi tiết XYZ trong tài liệu này")

@@ -242,6 +242,18 @@ COMPACT_LOOKUP_SUFFIXES = (
     "mean",
     "means",
 )
+ROMAN_SUFFIX_BY_DIGIT = {
+    "1": "i",
+    "2": "ii",
+    "3": "iii",
+    "4": "iv",
+    "5": "v",
+    "6": "vi",
+    "7": "vii",
+    "8": "viii",
+    "9": "ix",
+    "10": "x",
+}
 
 
 @dataclass(frozen=True)
@@ -538,20 +550,26 @@ def dictionary_lookup_normalization_candidates(
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
 
+    def add_row(*, layer: str, term: str, changed: bool) -> None:
+        key = (layer, term)
+        if not term or key in seen:
+            return
+        seen.add(key)
+        rows.append(
+            {
+                "adapter": adapter.name,
+                "layer": layer,
+                "target": term,
+                "changed": changed,
+            }
+        )
+
     def add(result: DictionaryTargetExtractionResult) -> None:
         for term in result.terms:
-            key = (result.layer, term)
-            if not term or key in seen:
-                continue
-            seen.add(key)
-            rows.append(
-                {
-                    "adapter": result.adapter,
-                    "layer": result.layer,
-                    "target": term,
-                    "changed": result.changed,
-                }
-            )
+            add_row(layer=result.layer, term=term, changed=result.changed)
+            roman_target = _display_roman_suffix_variant(term)
+            if roman_target:
+                add_row(layer="roman_suffix_lookup", term=roman_target, changed=True)
 
     raw_target = _normalize_short_lookup_target(_strip_terminal_question_punctuation(original))
     if raw_target:
@@ -578,8 +596,8 @@ def annotate_and_rank_dictionary_hits(
 ) -> list[RetrievalHit]:
     rows = []
     preferred_edges = set(plan.preferred_edge_types)
-    target_keys = {_term_key(term) for term in plan.target_terms if _term_key(term)}
-    target_strict_keys = {_strict_term_key(term) for term in plan.target_terms if _strict_term_key(term)}
+    target_keys = {key for term in plan.target_terms for key in _term_key_variants(term)}
+    target_strict_keys = {key for term in plan.target_terms for key in _strict_term_key_variants(term)}
     compact_acronym_target = _compact_acronym_target_key(plan.target_terms)
     has_tone_sensitive_targets = any(_strict_term_key(term) != _term_key(term) for term in plan.target_terms)
     for position, hit in enumerate(hits):
@@ -1358,3 +1376,49 @@ def _term_key(text: str) -> str:
 
 def _strict_term_key(text: str) -> str:
     return normalize_spaces(text).lower()
+
+
+def _term_key_variants(text: str) -> list[str]:
+    key = _term_key(text)
+    return _dedupe_strings([key, *_roman_suffix_key_variants(key)])
+
+
+def _strict_term_key_variants(text: str) -> list[str]:
+    key = _strict_term_key(text)
+    return _dedupe_strings([key, *_roman_suffix_key_variants(key)])
+
+
+def _roman_suffix_key_variants(key: str) -> list[str]:
+    tokens = key.split()
+    if len(tokens) < 2:
+        return []
+    suffix = ROMAN_SUFFIX_BY_DIGIT.get(tokens[-1])
+    if not suffix:
+        return []
+    alpha_chars = sum(1 for token in tokens[:-1] for character in token if character.isalpha())
+    if alpha_chars < 4:
+        return []
+    return [" ".join([*tokens[:-1], suffix])]
+
+
+def _display_roman_suffix_variant(text: str) -> str:
+    cleaned = normalize_spaces(text)
+    match = re.fullmatch(r"(.+?)\s+([1-9]|10)", cleaned)
+    if not match:
+        return ""
+    base, digit = match.groups()
+    alpha_chars = sum(1 for character in _fold(base) if character.isalpha())
+    if alpha_chars < 4:
+        return ""
+    return f"{base.strip()} {ROMAN_SUFFIX_BY_DIGIT[digit].upper()}"
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result

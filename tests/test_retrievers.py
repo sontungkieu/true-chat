@@ -407,6 +407,67 @@ def test_dictionary_graph_retriever_matches_abbreviation_alias_to_headword() -> 
     assert qs_pb.hits[0].metadata["dictionary_direct_score"] >= 0.8
 
 
+def test_dictionary_graph_retriever_maps_trailing_digits_to_roman_headwords() -> None:
+    docs = [
+        Document(
+            doc_id="roman-i",
+            title="TERM GROUP I",
+            text="TERM GROUP I, synthetic canonical entry.",
+            metadata={"kind": "dictionary", "headword": "TERM GROUP I"},
+        ),
+        Document(
+            doc_id="roman-ii",
+            title="TERM GROUP II",
+            text="TERM GROUP II, synthetic sibling entry.",
+            metadata={"kind": "dictionary", "headword": "TERM GROUP II"},
+        ),
+        Document(
+            doc_id="body-mention",
+            title="BODY MENTION",
+            text="BODY MENTION, synthetic body text mentions TERM GROUP 1 but is not the canonical headword.",
+            metadata={"kind": "dictionary", "headword": "BODY MENTION"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    digit_one = retriever.search(Query("q1", "TERM GROUP 1"), top_k=3)
+    ascii_digit_one = retriever.search(Query("q2", "term group 1"), top_k=3)
+    digit_two = retriever.search(Query("q3", "TERM GROUP 2"), top_k=3)
+
+    assert digit_one.hits[0].doc_id == "roman-i"
+    assert digit_one.hits[0].metadata["dictionary_match_mode"] == "strict"
+    assert digit_one.hits[0].metadata["query_highlights"] == ["TERM GROUP 1", "TERM GROUP I"]
+    body_hit = next(hit for hit in digit_one.hits if hit.doc_id == "body-mention")
+    assert "dictionary_direct_score" not in body_hit.metadata
+    assert ascii_digit_one.hits[0].doc_id == "roman-i"
+    assert digit_two.hits[0].doc_id == "roman-ii"
+
+
+def test_dictionary_graph_retriever_keeps_phrase_mentions_when_no_canonical_match_exists() -> None:
+    docs = [
+        Document(
+            doc_id="body-mention",
+            title="BODY MENTION",
+            text="BODY MENTION, synthetic body text mentions TERM GROUP 1.",
+            metadata={"kind": "dictionary", "headword": "BODY MENTION"},
+        ),
+        Document(
+            doc_id="noise",
+            title="NOISE",
+            text="NOISE, unrelated synthetic entry.",
+            metadata={"kind": "dictionary", "headword": "NOISE"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.search(Query("q1", "TERM GROUP 1"), top_k=2)
+
+    assert result.hits[0].doc_id == "body-mention"
+    assert result.hits[0].metadata["dictionary_direct_score"] > 0
+
+
 def test_dictionary_graph_retriever_prefers_exact_phrase_mentions_over_generic_headwords() -> None:
     docs = [
         Document(

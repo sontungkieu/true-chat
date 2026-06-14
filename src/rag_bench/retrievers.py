@@ -81,6 +81,18 @@ DICTIONARY_GRAPH_RELATION_WEIGHTS = {
 }
 DICTIONARY_GRAPH_DEFAULT_RELATION_WEIGHT = 0.25
 DICTIONARY_GRAPH_SECOND_HOP_DECAY = 0.45
+DICTIONARY_ROMAN_SUFFIX_BY_DIGIT = {
+    "1": "i",
+    "2": "ii",
+    "3": "iii",
+    "4": "iv",
+    "5": "v",
+    "6": "vi",
+    "7": "vii",
+    "8": "viii",
+    "9": "ix",
+    "10": "x",
+}
 
 
 class Retriever(Protocol):
@@ -786,6 +798,12 @@ class DictionaryGraphRetriever:
                                 index_scores[index] = max(index_scores.get(index, 0.0), 0.7)
                                 match_modes[index] = "folded"
 
+        query_has_multi_token_key = any(
+            len(key.split()) >= 2 for key in [*strict_query_keys, *query_keys] if key
+        )
+        if match_modes and query_has_multi_token_key:
+            index_scores = {index: score for index, score in index_scores.items() if index in match_modes}
+
         ranked = sorted(index_scores, key=lambda index: (-index_scores[index], self._documents[index].doc_id))
         hits = []
         for rank, index in enumerate(ranked[:top_k], 1):
@@ -1404,7 +1422,11 @@ def _dictionary_highlight_terms(text: str) -> tuple[str, ...]:
     normalized = re.sub(r"\s+", " ", text).strip()
     normalized = re.sub(r"^/(dict|dictionary|tu-dien|từ-điển)\s+", "", normalized, flags=re.IGNORECASE)
     terms = [segment.strip() for segment in re.split(r"[,;]+", normalized) if segment.strip()]
-    terms = [term for term in terms if len(_dictionary_fold_text(term)) >= 2]
+    expanded_terms: list[str] = []
+    for term in terms:
+        expanded_terms.append(term)
+        expanded_terms.extend(_dictionary_display_roman_suffix_variants(term))
+    terms = [term for term in expanded_terms if len(_dictionary_fold_text(term)) >= 2]
     return _dedupe_nonempty(terms)
 
 
@@ -1602,6 +1624,7 @@ def _dictionary_strict_text(text: str) -> str:
 def _dictionary_key_variants(text: str) -> list[str]:
     folded = _dictionary_fold_text(text)
     variants = [folded] if folded else []
+    variants.extend(_dictionary_roman_suffix_key_variants(folded))
     compact = folded.replace(" ", "")
     if compact and compact != folded:
         tokens = folded.split()
@@ -1616,12 +1639,40 @@ def _dictionary_key_variants(text: str) -> list[str]:
 def _dictionary_strict_key_variants(text: str) -> list[str]:
     strict = _dictionary_strict_text(text)
     variants = [strict] if strict else []
+    variants.extend(_dictionary_roman_suffix_key_variants(strict))
     compact = strict.replace(" ", "")
     if compact and compact != strict:
         tokens = strict.split()
         if len(tokens) >= 2 and all(len(token) <= 3 for token in tokens):
             variants.append(compact)
     return _dedupe_nonempty(variants)
+
+
+def _dictionary_roman_suffix_key_variants(key: str) -> list[str]:
+    tokens = key.split()
+    if len(tokens) < 2:
+        return []
+    suffix = DICTIONARY_ROMAN_SUFFIX_BY_DIGIT.get(tokens[-1])
+    if not suffix:
+        return []
+    alpha_chars = sum(1 for token in tokens[:-1] for character in token if character.isalpha())
+    if alpha_chars < 4:
+        return []
+    return [" ".join([*tokens[:-1], suffix])]
+
+
+def _dictionary_display_roman_suffix_variants(text: str) -> list[str]:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    match = re.fullmatch(r"(.+?)\s+([1-9]|10)", cleaned)
+    if not match:
+        return []
+    base, digit = match.groups()
+    folded_base = _dictionary_fold_text(base)
+    alpha_chars = sum(1 for character in folded_base if character.isalpha())
+    if alpha_chars < 4:
+        return []
+    suffix = DICTIONARY_ROMAN_SUFFIX_BY_DIGIT[digit].upper()
+    return [f"{base.strip()} {suffix}"]
 
 
 def _normalize_vector(values: np.ndarray) -> np.ndarray:
