@@ -18,6 +18,7 @@ from rag_bench.dictionary import (
     DictionaryLoadResult,
     load_dictionary_documents,
 )
+from rag_bench.dictionary_agent_tools import dictionary_tool_plan_payload, render_dictionary_tool_plan_prompt
 from rag_bench.dictionary_query_planner import (
     DictionaryQueryIntent,
     DictionaryQueryPlan,
@@ -416,6 +417,10 @@ class RagChatService:
                     if alias_answer_mode.startswith("deterministic_"):
                         retrieval_metadata["generator_provider"] = "deterministic_alias"
                 retrieval_metadata["query_plan"] = query_plan_payload
+                retrieval_metadata["dictionary_tool_plan"] = dictionary_tool_plan_payload(
+                    query_plan,
+                    original_query=question,
+                )
             if retrieval.hits:
                 privacy_decision = self._enforce_generation_privacy(
                     backend=backend,
@@ -838,6 +843,7 @@ class RagChatService:
         metadata = dict(retrieval.metadata)
         if query_plan is not None:
             metadata["query_plan"] = query_plan.to_payload()
+            metadata["dictionary_tool_plan"] = dictionary_tool_plan_payload(query_plan, original_query=question)
         return RetrievalResult(query=retrieval.query, hits=hits, latency_s=retrieval.latency_s, metadata=metadata)
 
     def lookup_dictionary(
@@ -878,6 +884,7 @@ class RagChatService:
         retrieval_metadata = {**retrieval.metadata, **score_filter_metadata}
         if query_plan is not None:
             retrieval_metadata["query_plan"] = query_plan.to_payload()
+            retrieval_metadata["dictionary_tool_plan"] = dictionary_tool_plan_payload(query_plan, original_query=query)
         return {
             "object": "dictionary.lookup",
             "query": query,
@@ -1795,6 +1802,12 @@ def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) 
             "- If the retrieved entries do not contain a complete classification, say the list is incomplete.\n"
             "- Do not add common examples, safety advice, or public/general-world categories from outside the retrieved context.\n\n"
         )
+    tool_prompt = render_dictionary_tool_plan_prompt(
+        query_plan,
+        original_query=str(query_plan.get("query") or target or ""),
+    )
+    if tool_prompt:
+        guidance += f"{tool_prompt}\n\n"
     return guidance
 
 
@@ -1841,6 +1854,7 @@ def build_dictionary_rag_prompt_sections(
             f"Target terms: {target_terms}\n"
             f"Answer style: {query_plan.answer_style}\n\n"
             f"Task instructions:\n{plan_instruction}\n\n"
+            f"{render_dictionary_tool_plan_prompt(query_plan, original_query=query)}\n\n"
             f"{alias_evidence_summary}"
         )
     else:

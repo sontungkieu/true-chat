@@ -2705,10 +2705,15 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
     assert "không phải một bảng phân loại đầy đủ" in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_category_fallback"] is True
     plan = result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]
+    tool_plan = result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["dictionary_tool_plan"]
+    tool_names = [call["name"] for call in tool_plan["calls"]]
     assert plan["intent"] == "category"
     assert plan["target_terms"] == ["pháo"]
     assert plan["normalization"]["target_layer"] == "plural_type_lookup_wrapper"
+    assert "dictionary.prefix_headword_search" in tool_names
+    assert tool_plan["orchestration"] == "deterministic_agent_lite"
     assert "Category/list-query guard" in service.llm.messages[-1]["content"]
+    assert "Dictionary tool-orchestration contract" in service.llm.messages[-1]["content"]
 
 
 def test_text_dictionary_fallback_rejects_weak_lexical_hits_without_highlights() -> None:
