@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
+from rag_bench.dictionary_query_planner import (
+    annotate_and_rank_dictionary_hits,
+    merge_planned_dictionary_results,
+    plan_dictionary_query,
+)
 from rag_bench.groq_client import GenerationResult
 from rag_bench.retrievers import (
     BM25Retriever,
@@ -507,6 +512,92 @@ def test_dictionary_graph_retriever_prefers_exact_phrase_mentions_over_generic_h
     assert two_places.hits[0].doc_id == "base:L-0001"
     assert "PHÁO" not in [hit.title for hit in xuan_canh.hits[:1]]
     assert two_places.hits[0].metadata["query_highlights"] == ["pháo đài Láng", "pháo đài Xuân Tảo"]
+
+
+def test_dictionary_category_plural_type_query_does_not_promote_body_phrase_mentions() -> None:
+    docs = [
+        Document(
+            doc_id="angle",
+            title="GÓC TẦM",
+            text="GÓC TẦM, synthetic measurement entry that mentions the phrase loại pháo in its body.",
+            metadata={"kind": "dictionary", "headword": "GÓC TẦM"},
+        ),
+        Document(
+            doc_id="howitzer",
+            title="PHÁO LỰU",
+            text="PHÁO LỰU, synthetic direct artillery type entry.",
+            metadata={"kind": "dictionary", "headword": "PHÁO LỰU"},
+        ),
+        Document(
+            doc_id="mechanism",
+            title="CƠ CẤU NÒNG PHÁO",
+            text="CƠ CẤU NÒNG PHÁO, synthetic component entry that contains the base term in its headword.",
+            metadata={"kind": "dictionary", "headword": "CƠ CẤU NÒNG PHÁO"},
+        ),
+        Document(
+            doc_id="mortar",
+            title="PHÁO CỐI",
+            text="PHÁO CỐI, synthetic direct artillery type entry.",
+            metadata={"kind": "dictionary", "headword": "PHÁO CỐI"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    plan = plan_dictionary_query("những loại pháo")
+    primary_hits = retriever.search(Query("q1", "những loại pháo"), top_k=4).hits
+    target_hits = retriever.search(Query("q2", plan.target_terms[0]), top_k=4).hits
+    ranked = annotate_and_rank_dictionary_hits(
+        merge_planned_dictionary_results(primary_hits, [target_hits]),
+        plan,
+        max_hits=4,
+    )
+
+    assert plan.target_terms == ["pháo"]
+    assert ranked[0].doc_id in {"howitzer", "mortar"}
+    assert [hit.doc_id for hit in ranked].index("mechanism") > 0
+    assert ranked[0].metadata["query_plan_intent"] == "category"
+    assert [hit.doc_id for hit in ranked].index("angle") > 0
+
+
+def test_dictionary_prefix_headword_search_finds_category_type_entries_without_body_mentions() -> None:
+    docs = [
+        Document(
+            doc_id="base",
+            title="PHÁO",
+            text="PHÁO, synthetic base entry.",
+            metadata={"kind": "dictionary", "headword": "PHÁO"},
+        ),
+        Document(
+            doc_id="far",
+            title="PHÁO TẦM XA",
+            text="PHÁO TẦM XA, synthetic type entry.",
+            metadata={"kind": "dictionary", "headword": "PHÁO TẦM XA"},
+        ),
+        Document(
+            doc_id="ground",
+            title="PHÁO MẶT ĐẤT",
+            text="PHÁO MẶT ĐẤT, synthetic type entry.",
+            metadata={"kind": "dictionary", "headword": "PHÁO MẶT ĐẤT"},
+        ),
+        Document(
+            doc_id="angle",
+            title="GÓC TẦM",
+            text="GÓC TẦM, synthetic body mention with the phrase loại pháo.",
+            metadata={"kind": "dictionary", "headword": "GÓC TẦM"},
+        ),
+    ]
+    retriever = DictionaryGraphRetriever()
+    retriever.build(docs)
+
+    result = retriever.prefix_headword_search(Query("q1", "pháo"), top_k=5)
+    doc_ids = [hit.doc_id for hit in result.hits]
+
+    assert "far" in doc_ids
+    assert "ground" in doc_ids
+    assert "angle" not in doc_ids
+    assert result.metadata["prefix_headword_candidate_count"] == 3
+    assert all(hit.metadata["dictionary_match_mode"] == "category_prefix" for hit in result.hits)
 
 
 def test_dictionary_graph_retriever_keeps_stroked_d_distinct_from_plain_d() -> None:

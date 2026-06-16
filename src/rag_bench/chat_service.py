@@ -27,7 +27,7 @@ from rag_bench.dictionary_query_planner import (
     plan_dictionary_query,
 )
 from rag_bench.groq_client import FallbackChatClient, GenerationResult, OpenAICompatibleClient, RoundRobinGroqClient
-from rag_bench.prompts import SYSTEM_PROMPT
+from rag_bench.prompts import RESPONSE_FORMAT_GUIDANCE, SYSTEM_PROMPT
 from rag_bench.privacy import (
     BackendDescriptor,
     BackendKind,
@@ -359,11 +359,13 @@ class RagChatService:
                 else:
                     query_plan = query_plan.with_structured_evidence(structured_result.to_metadata())
             if query_plan is not None:
-                extra_results = [
-                    retriever.search(Query(query_id=f"chat-dict-plan-{index}", text=term), request_top_k).hits
-                    for index, term in enumerate(query_plan.target_terms[:3], 1)
-                    if term and term.strip().lower() != question.strip().lower()
-                ]
+                extra_results = _planned_dictionary_extra_results(
+                    retriever,
+                    query_plan,
+                    original_query=question,
+                    request_top_k=request_top_k,
+                    query_id_prefix="chat-dict-plan",
+                )
                 if extra_results:
                     retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
             if query_plan is not None:
@@ -461,6 +463,15 @@ class RagChatService:
                     )
                     if generation.error:
                         raise RuntimeError(generation.error)
+                    grounded_category_answer = _format_dictionary_category_fallback_answer(
+                        question,
+                        retrieval.hits,
+                        retrieval_metadata,
+                        language=response_language,
+                    )
+                    if grounded_category_answer:
+                        generation = replace(generation, answer=grounded_category_answer)
+                        retrieval_metadata["dictionary_category_fallback"] = True
                     if _looks_like_grounding_refusal(generation.answer) and any(
                         _hit_has_direct_dictionary_match(hit) for hit in retrieval.hits
                     ):
@@ -596,6 +607,17 @@ class RagChatService:
             raise RuntimeError(generation.error)
         dictionary_refusal_fallback_used = False
         dictionary_internal_query_leak_fallback_used = False
+        dictionary_category_fallback_used = False
+        if dictionary_fallback is not None:
+            grounded_category_answer = _format_dictionary_category_fallback_answer(
+                question,
+                dictionary_fallback.hits,
+                dictionary_fallback.metadata,
+                language=response_language,
+            )
+            if grounded_category_answer:
+                generation = replace(generation, answer=grounded_category_answer)
+                dictionary_category_fallback_used = True
         if dictionary_fallback is not None and _looks_like_grounding_refusal(generation.answer):
             grounded_occurrence_answer = _format_dictionary_occurrence_fallback_answer(
                 question,
@@ -637,6 +659,8 @@ class RagChatService:
                 retrieval_metadata["dictionary_refusal_fallback"] = True
             if dictionary_internal_query_leak_fallback_used:
                 retrieval_metadata["dictionary_internal_query_leak_fallback"] = True
+            if dictionary_category_fallback_used:
+                retrieval_metadata["dictionary_category_fallback"] = True
             if dictionary_score_filter_metadata:
                 retrieval_metadata["dictionary_fallback_score_filter"] = dictionary_score_filter_metadata["score_filter"]
         if mode == "text_image":
@@ -789,11 +813,13 @@ class RagChatService:
         query_plan = plan_dictionary_query(question) if self.config.enable_dictionary_query_planner else None
         retrieval = dictionary_retriever.search(Query(query_id="chat-dict-fallback", text=question), request_top_k)
         if query_plan is not None:
-            extra_results = [
-                dictionary_retriever.search(Query(query_id=f"chat-dict-fallback-plan-{index}", text=term), request_top_k).hits
-                for index, term in enumerate(query_plan.target_terms[:3], 1)
-                if term and term.strip().lower() != question.strip().lower()
-            ]
+            extra_results = _planned_dictionary_extra_results(
+                dictionary_retriever,
+                query_plan,
+                original_query=question,
+                request_top_k=request_top_k,
+                query_id_prefix="chat-dict-fallback-plan",
+            )
             if extra_results:
                 retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
             retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
@@ -832,11 +858,13 @@ class RagChatService:
         query_plan = plan_dictionary_query(query) if self.config.enable_dictionary_query_planner else None
         retrieval = retriever.search(Query(query_id="dictionary-lookup", text=query), request_top_k)
         if query_plan is not None:
-            extra_results = [
-                retriever.search(Query(query_id=f"dictionary-lookup-plan-{index}", text=term), request_top_k).hits
-                for index, term in enumerate(query_plan.target_terms[:3], 1)
-                if term and term.strip().lower() != query.strip().lower()
-            ]
+            extra_results = _planned_dictionary_extra_results(
+                retriever,
+                query_plan,
+                original_query=query,
+                request_top_k=request_top_k,
+                query_id_prefix="dictionary-lookup-plan",
+            )
             if extra_results:
                 retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
         if query_plan is not None:
@@ -1623,6 +1651,35 @@ def _clamp_top_k(value: int | None, *, fallback: int) -> int:
     return min(20, max(1, int(value)))
 
 
+def _planned_dictionary_extra_results(
+    retriever: Retriever,
+    query_plan: DictionaryQueryPlan,
+    *,
+    original_query: str,
+    request_top_k: int,
+    query_id_prefix: str,
+) -> list[list[RetrievalHit]]:
+    extra_results: list[list[RetrievalHit]] = []
+    normalized_original = original_query.strip().lower()
+    for index, term in enumerate(query_plan.target_terms[:3], 1):
+        if not term or term.strip().lower() == normalized_original:
+            continue
+        extra_results.append(
+            retriever.search(Query(query_id=f"{query_id_prefix}-{index}", text=term), request_top_k).hits
+        )
+        if _is_plural_type_category_query_plan(query_plan):
+            prefix_search = getattr(retriever, "prefix_headword_search", None)
+            if callable(prefix_search):
+                prefix_top_k = max(request_top_k, min(80, request_top_k * 8))
+                extra_results.append(
+                    prefix_search(
+                        Query(query_id=f"{query_id_prefix}-{index}-prefix", text=term),
+                        prefix_top_k,
+                    ).hits
+                )
+    return extra_results
+
+
 def build_chat_rag_messages(
     messages: list[dict[str, Any]],
     hits: list[RetrievalHit],
@@ -1711,7 +1768,7 @@ def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) 
         return ""
     target_terms = [str(term).strip() for term in query_plan.get("target_terms") or [] if str(term).strip()]
     target = ", ".join(target_terms) if target_terms else "the target term"
-    return (
+    guidance = (
         "Dictionary fallback guidance:\n"
         f"- Target term(s): {target}.\n"
         "- Preserve the target term(s) exactly as written above; do not change letters, digits, diacritics, casing, "
@@ -1730,6 +1787,15 @@ def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) 
         "possible dictionary entries or senses for the same user question.\n"
         "- Do not infer an expansion, alias, or meaning unless the retrieved entries explicitly support it.\n\n"
     )
+    if _is_plural_type_category_query_plan(query_plan):
+        guidance += (
+            "Category/list-query guard:\n"
+            "- The user is asking for types/categories. List only retrieved dictionary entries or typed relations that "
+            "directly name supported types of the target term.\n"
+            "- If the retrieved entries do not contain a complete classification, say the list is incomplete.\n"
+            "- Do not add common examples, safety advice, or public/general-world categories from outside the retrieved context.\n\n"
+        )
+    return guidance
 
 
 def build_dictionary_rag_messages(
@@ -1808,6 +1874,7 @@ def _build_dictionary_rag_messages_from_sections(
                 "Keep target abbreviations, letters, digits, casing, Roman-numeral suffixes, and Vietnamese diacritics intact. "
                 "Do not rewrite one acronym into a nearby acronym. Cite sources as [entry-id].",
                 language_instruction,
+                RESPONSE_FORMAT_GUIDANCE,
             ),
         },
         {"role": "user", "content": _render_prompt_sections(sections)},
@@ -1821,11 +1888,13 @@ def _dictionary_final_instruction(query_plan: DictionaryQueryPlan | None) -> str
             "Start with supported alternate names only when alias evidence is present. "
             "If no alias evidence is present, state that no supported alias/tên gọi khác was found in the retrieved sources. "
             "Do not turn the answer into a long definition. Cite dictionary entries with their ids in square brackets. "
+            "When listing several entries or senses, use one numbered list and indent each entry's detail bullets under that numbered item. "
             "Do not invent content not supported by the retrieved dictionary entries."
         )
     return (
         "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
         "If a retrieved entry directly matches the target term, do not say the target was not found; summarize the cited entry and state only unsupported details as missing. "
+        "When listing several entries or senses, use one numbered list and indent each entry's detail bullets under that numbered item. "
         "Do not invent content not supported by the retrieved dictionary entries."
     )
 
@@ -2298,6 +2367,150 @@ def _fold_prompt_text(text: str) -> str:
     stripped = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
     stripped = stripped.replace("đ", "d").replace("Đ", "D")
     return re.sub(r"\s+", " ", stripped).strip().lower()
+
+
+def _format_dictionary_category_fallback_answer(
+    question: str,
+    hits: Sequence[RetrievalHit],
+    metadata: dict[str, Any] | None,
+    *,
+    language: str | None = None,
+) -> str:
+    query_plan = metadata.get("query_plan") if isinstance(metadata, dict) else None
+    if not _is_plural_type_category_query_plan(query_plan):
+        return ""
+    target_terms = _target_terms_from_query_plan(query_plan)
+    if not target_terms:
+        return ""
+    response_language = _normalize_response_language(language)
+    target = target_terms[0]
+    type_hits = _dictionary_direct_type_hits(hits, target_terms)
+    base_hits = _dictionary_base_category_hits(hits, target_terms)
+    citations = _format_source_citations([hit.doc_id for hit in (*type_hits, *base_hits)])
+    if not type_hits:
+        base_titles = _format_source_title_citations(base_hits) if base_hits else ""
+        if response_language == "vi":
+            if base_titles:
+                return (
+                    f"Tôi thấy mục từ nền liên quan đến “{target}” trong từ điển: {base_titles}. "
+                    "Tuy nhiên các nguồn truy hồi hiện chưa cung cấp một danh sách loại/mẫu cụ thể đủ chắc để liệt kê. "
+                    "Tôi không bổ sung các loại ngoài nguồn truy hồi. "
+                    f"{citations}"
+                ).strip()
+            return (
+                f"Các nguồn truy hồi hiện chưa cung cấp danh sách loại/mẫu cụ thể cho “{target}”. "
+                "Tôi không bổ sung ví dụ ngoài nguồn truy hồi."
+            )
+        if base_titles:
+            return (
+                f"I found the base dictionary entry related to “{target}”: {base_titles}. "
+                "However, the retrieved sources do not provide a sufficiently grounded list of specific types. "
+                "I will not add examples outside the retrieved evidence. "
+                f"{citations}"
+            ).strip()
+        return (
+            f"The retrieved sources do not provide a grounded list of specific types for “{target}”. "
+            "I will not add examples outside the retrieved evidence."
+        )
+
+    listed_hits = type_hits[:8]
+    if response_language == "vi":
+        lines = [
+            f"Trong các nguồn truy hồi, tôi thấy một số mục từ phù hợp trực tiếp với yêu cầu tìm các loại “{target}”. "
+            "Danh sách này chỉ phản ánh các mục được truy hồi, không phải một bảng phân loại đầy đủ:"
+        ]
+        for index, hit in enumerate(listed_hits, 1):
+            title = str(hit.title or hit.doc_id).strip()
+            lines.append(
+                f"{index}. **{title}** [{hit.doc_id}]\n"
+                f"   - Đây là mục từ riêng được truy hồi trực tiếp trong nhóm “{target}”."
+            )
+        if len(type_hits) > len(listed_hits):
+            lines.append(f"Còn {len(type_hits) - len(listed_hits)} mục phù hợp trực tiếp khác trong phần nguồn liên quan.")
+        lines.append("Tôi không thêm các loại ngoài nguồn truy hồi nếu từ điển không nêu.")
+        return "\n\n".join(lines).strip()
+
+    lines = [
+        f"The retrieved sources show several entries that directly match the request for types of “{target}”. "
+        "This is a retrieved-entry list, not a complete taxonomy:"
+    ]
+    for index, hit in enumerate(listed_hits, 1):
+        title = str(hit.title or hit.doc_id).strip()
+        lines.append(
+            f"{index}. **{title}** [{hit.doc_id}]\n"
+            f"   - This is a distinct retrieved dictionary entry in the “{target}” group."
+        )
+    if len(type_hits) > len(listed_hits):
+        lines.append(f"{len(type_hits) - len(listed_hits)} additional direct matches are available in the related sources.")
+    lines.append("I will not add type examples outside the retrieved evidence.")
+    return "\n\n".join(lines).strip()
+
+
+def _is_plural_type_category_query_plan(query_plan: Any) -> bool:
+    if isinstance(query_plan, DictionaryQueryPlan):
+        return (
+            query_plan.intent == DictionaryQueryIntent.CATEGORY
+            and str(query_plan.normalization.get("target_layer") or "") == "plural_type_lookup_wrapper"
+        )
+    if not isinstance(query_plan, dict):
+        return False
+    normalization = query_plan.get("normalization")
+    return (
+        str(query_plan.get("intent") or "") == DictionaryQueryIntent.CATEGORY.value
+        and isinstance(normalization, dict)
+        and str(normalization.get("target_layer") or "") == "plural_type_lookup_wrapper"
+    )
+
+
+def _target_terms_from_query_plan(query_plan: Any) -> list[str]:
+    if isinstance(query_plan, DictionaryQueryPlan):
+        return [str(term).strip() for term in query_plan.target_terms if str(term).strip()]
+    if not isinstance(query_plan, dict):
+        return []
+    return [str(term).strip() for term in query_plan.get("target_terms") or [] if str(term).strip()]
+
+
+def _dictionary_direct_type_hits(
+    hits: Sequence[RetrievalHit],
+    target_terms: Sequence[str],
+) -> list[RetrievalHit]:
+    target_keys = {_fold_prompt_text(term) for term in target_terms if _fold_prompt_text(term)}
+    result: list[RetrievalHit] = []
+    seen: set[str] = set()
+    for hit in hits:
+        doc_id = str(hit.doc_id or "").strip()
+        if not doc_id or doc_id in seen:
+            continue
+        headword_key = _dictionary_hit_headword_key(hit)
+        if not headword_key:
+            continue
+        if any(target and headword_key.startswith(f"{target} ") for target in target_keys):
+            seen.add(doc_id)
+            result.append(hit)
+    return result
+
+
+def _dictionary_base_category_hits(
+    hits: Sequence[RetrievalHit],
+    target_terms: Sequence[str],
+) -> list[RetrievalHit]:
+    target_keys = {_fold_prompt_text(term) for term in target_terms if _fold_prompt_text(term)}
+    result: list[RetrievalHit] = []
+    seen: set[str] = set()
+    for hit in hits:
+        doc_id = str(hit.doc_id or "").strip()
+        if not doc_id or doc_id in seen:
+            continue
+        if _dictionary_hit_headword_key(hit) in target_keys:
+            seen.add(doc_id)
+            result.append(hit)
+    return result
+
+
+def _dictionary_hit_headword_key(hit: RetrievalHit) -> str:
+    metadata = hit.metadata or {}
+    headword = str(metadata.get("headword") or hit.title or "").strip()
+    return _fold_prompt_text(headword)
 
 
 def _format_dictionary_occurrence_fallback_answer(

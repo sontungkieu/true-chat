@@ -121,6 +121,30 @@ def test_definition_plan_strips_plural_lookup_wrapper_for_short_phrases() -> Non
         assert plan.normalization["target_changed"] is True
 
 
+def test_plural_type_query_targets_base_term_as_category() -> None:
+    cases = {
+        "những loại pháo": "pháo",
+        "các loại pháo": "pháo",
+        "tìm cho tôi các loại pháo": "pháo",
+        "hãy tìm giúp tôi các loại pháo": "pháo",
+        "cho tôi biết những loại pháo": "pháo",
+        "liệt kê các loại pháo": "pháo",
+        "kể tên các loại pháo": "pháo",
+        "nhung loai phao": "phao",
+        "cac loai phao": "phao",
+        "tim cho toi cac loai phao": "phao",
+        "liet ke cac loai phao": "phao",
+    }
+
+    for query, expected_target in cases.items():
+        plan = plan_dictionary_query(query)
+
+        assert plan.intent == DictionaryQueryIntent.CATEGORY
+        assert plan.target_terms == [expected_target]
+        assert plan.normalization["target_layer"] == "plural_type_lookup_wrapper"
+        assert plan.normalization["target_changed"] is True
+
+
 def test_short_lookup_normalization_generalizes_across_unseen_targets() -> None:
     target_queries = {
         "AB": [

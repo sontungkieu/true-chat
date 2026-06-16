@@ -4379,16 +4379,9 @@
         }
         const listInfo = markdownListInfo(lines[index]);
         if (listInfo) {
-          const list = document.createElement(listInfo.ordered ? "ol" : "ul");
-          while (index < lines.length) {
-            const current = markdownListInfo(lines[index]);
-            if (!current || current.ordered !== listInfo.ordered) break;
-            const item = document.createElement("li");
-            appendInlineText(item, current.text, sourceByDocId, { markdown: true });
-            list.appendChild(item);
-            index += 1;
-          }
-          container.appendChild(list);
+          const rendered = renderMarkdownList(lines, index, listInfo.indent, listInfo.ordered, sourceByDocId);
+          container.appendChild(rendered.list);
+          index = rendered.index;
           continue;
         }
         const heading = markdownHeading(lines[index]);
@@ -4411,11 +4404,62 @@
       }
     }
 
+    function renderMarkdownList(lines, startIndex, indent, ordered, sourceByDocId) {
+      const list = document.createElement(ordered ? "ol" : "ul");
+      let index = startIndex;
+      while (index < lines.length) {
+        while (index < lines.length && !lines[index].trim()) {
+          const next = nextMarkdownListInfo(lines, index + 1);
+          if (!next || next.indent < indent) return { list, index };
+          index += 1;
+        }
+        const current = markdownListInfo(lines[index]);
+        if (!current || current.indent !== indent || current.ordered !== ordered) break;
+
+        const item = document.createElement("li");
+        appendInlineText(item, current.text, sourceByDocId, { markdown: true });
+        index += 1;
+
+        while (index < lines.length) {
+          while (index < lines.length && !lines[index].trim()) {
+            const next = nextMarkdownListInfo(lines, index + 1);
+            if (!next || next.indent < indent) return { list, index };
+            index += 1;
+          }
+          const next = markdownListInfo(lines[index]);
+          if (next && next.indent > indent) {
+            const nested = renderMarkdownList(lines, index, next.indent, next.ordered, sourceByDocId);
+            item.appendChild(nested.list);
+            index = nested.index;
+            continue;
+          }
+          if (ordered && next && !next.ordered && next.indent === indent) {
+            const nested = renderMarkdownList(lines, index, next.indent, next.ordered, sourceByDocId);
+            item.appendChild(nested.list);
+            index = nested.index;
+            continue;
+          }
+          break;
+        }
+
+        list.appendChild(item);
+      }
+      return { list, index };
+    }
+
+    function nextMarkdownListInfo(lines, startIndex) {
+      for (let index = startIndex; index < lines.length; index += 1) {
+        if (!lines[index].trim()) continue;
+        return markdownListInfo(lines[index]);
+      }
+      return null;
+    }
+
     function markdownListInfo(line) {
-      const ordered = /^\s*\d+[.)]\s+(.+)$/.exec(line);
-      if (ordered) return { ordered: true, text: ordered[1].trim() };
-      const unordered = /^\s*[-*]\s+(.+)$/.exec(line);
-      if (unordered) return { ordered: false, text: unordered[1].trim() };
+      const ordered = /^(\s*)\d+[.)]\s+(.+)$/.exec(line);
+      if (ordered) return { ordered: true, text: ordered[2].trim(), indent: ordered[1].length };
+      const unordered = /^(\s*)[-*]\s+(.+)$/.exec(line);
+      if (unordered) return { ordered: false, text: unordered[2].trim(), indent: unordered[1].length };
       return null;
     }
 

@@ -215,3 +215,5 @@ eval_results/
 .webui_secret_key
 *private*
 data/rules.md
+/benchmark_results/*
+/temp/*

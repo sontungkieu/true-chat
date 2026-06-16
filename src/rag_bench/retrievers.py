@@ -497,6 +497,70 @@ class DictionaryGraphRetriever:
             },
         )
 
+    def prefix_headword_search(self, query: Query, top_k: int) -> RetrievalResult:
+        started = time.perf_counter()
+        if top_k <= 0 or not self._documents:
+            return RetrievalResult(
+                query=query,
+                hits=[],
+                latency_s=time.perf_counter() - started,
+                metadata={"kind": "dictionary", "entry_count": len(getattr(self, "_documents", []))},
+            )
+
+        query_keys = _dictionary_query_keys(query.text)
+        strict_query_keys = _dictionary_strict_query_keys(query.text)
+        if not query_keys and not strict_query_keys:
+            return RetrievalResult(query=query, hits=[], latency_s=time.perf_counter() - started)
+
+        index_scores: dict[int, float] = {}
+        target_keys = set(query_keys)
+        strict_target_keys = set(strict_query_keys)
+        for headword_key, indexes in self._headword_strict_indexes.items():
+            if _dictionary_headword_prefix_match(headword_key, strict_target_keys):
+                for index in indexes:
+                    index_scores[index] = max(
+                        index_scores.get(index, 0.0),
+                        _dictionary_category_prefix_score(self._documents[index], query.text, strict=True),
+                    )
+        for headword_key, indexes in self._headword_indexes.items():
+            if _dictionary_headword_prefix_match(headword_key, target_keys):
+                for index in indexes:
+                    index_scores[index] = max(
+                        index_scores.get(index, 0.0),
+                        _dictionary_category_prefix_score(self._documents[index], query.text, strict=False),
+                    )
+
+        ranked = sorted(index_scores, key=lambda index: (-index_scores[index], self._documents[index].doc_id))
+        hits: list[RetrievalHit] = []
+        for rank, index in enumerate(ranked[:top_k], 1):
+            doc = self._documents[index]
+            metadata = dict(doc.metadata)
+            metadata["dictionary_match_mode"] = "category_prefix"
+            metadata["dictionary_category_prefix_score"] = index_scores[index]
+            metadata["dictionary_direct_score"] = max(float(metadata.get("dictionary_direct_score") or 0.0), 0.95)
+            metadata["query_highlights"] = list(_dictionary_highlight_terms(query.text))
+            hits.append(
+                RetrievalHit(
+                    doc_id=doc.doc_id,
+                    score=index_scores[index],
+                    rank=rank,
+                    title=doc.title,
+                    text=doc.text,
+                    metadata=metadata,
+                    **_hit_privacy_kwargs_from_doc(doc),
+                )
+            )
+        return RetrievalResult(
+            query=query,
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata={
+                "kind": "dictionary",
+                "entry_count": len(self._documents),
+                "prefix_headword_candidate_count": len(index_scores),
+            },
+        )
+
     def _index_typed_graph_node(self, node_id: str, label: str, node_type: str) -> None:
         label = str(label or "").strip()
         node_id = str(node_id or "").strip()
@@ -1475,6 +1539,41 @@ def _dictionary_headword_partial_match(query_key: str, headword_key: str) -> boo
             return False
         return len(headword_tokens) >= 2 or len(query_tokens) == 1
     return False
+
+
+def _dictionary_headword_prefix_match(headword_key: str, target_keys: set[str]) -> bool:
+    if not headword_key or not target_keys:
+        return False
+    return any(target and (headword_key == target or headword_key.startswith(f"{target} ")) for target in target_keys)
+
+
+def _dictionary_category_prefix_score(doc: Document, target: str, *, strict: bool) -> float:
+    headword = str(doc.metadata.get("headword") or doc.title or "")
+    headword_key = _dictionary_fold_text(headword)
+    text_key = _dictionary_fold_text(f"{headword} {doc.text}")
+    target_key = _dictionary_fold_text(target)
+    score = 1.2 if strict else 1.1
+    if target_key and re.search(
+        rf"\b(ten goi|goi chung)\s+(cac|nhung)?\s*loai\s+{re.escape(target_key)}\b",
+        text_key,
+    ):
+        score += 0.8
+    elif target_key and re.search(rf"\b(cac loai|nhung loai)\s+{re.escape(target_key)}\b", text_key):
+        score += 0.55
+    elif target_key and re.search(rf"\bloai\s+{re.escape(target_key)}\b", text_key):
+        score += 0.25
+    if "co cac loai" in text_key or "bao gom" in text_key or "gom:" in text_key:
+        score += 0.45
+    elif "goi chung" in text_key or "ten goi" in text_key:
+        score += 0.18
+    token_count = len(_dictionary_fold_text(headword).split())
+    if token_count == 2:
+        score += 0.08
+    elif token_count >= 3:
+        score += 0.03
+    if target_key == "phao" and headword_key.startswith("phao binh "):
+        score -= 0.5
+    return score
 
 
 def _dictionary_compact_short_token_match(query_key: str, text_key: str) -> bool:

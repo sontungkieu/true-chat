@@ -329,6 +329,18 @@ def plan_dictionary_query(
             normalization=normalization,
         )
 
+    plural_type_target = _extract_plural_type_target_result(original, adapter=adapter)
+    if plural_type_target.terms:
+        return DictionaryQueryPlan(
+            query=original,
+            intent=DictionaryQueryIntent.CATEGORY,
+            confidence=0.84,
+            target_terms=plural_type_target.terms,
+            preferred_edge_types=list(CATEGORY_EDGES),
+            answer_style="category_grounded_summary",
+            normalization=plural_type_target.to_payload(),
+        )
+
     comparison_terms = _extract_comparison_terms(original, normalized)
     if comparison_terms:
         return DictionaryQueryPlan(
@@ -475,6 +487,14 @@ def dictionary_plan_prompt_instructions(plan: DictionaryQueryPlan) -> str:
         ]
     elif plan.intent == DictionaryQueryIntent.CATEGORY:
         specific = ["State supported categories or type relations before broader explanation."]
+        if _is_plural_type_category_plan(plan):
+            specific.extend(
+                [
+                    "For plural type/list queries, list only retrieved entries or typed graph relations that directly name supported types.",
+                    "Do not add common examples or general-world categories that are not present in the retrieved evidence.",
+                    "If retrieved evidence does not provide a complete taxonomy, say the list is only what the retrieved dictionary supports.",
+                ]
+            )
     elif plan.intent == DictionaryQueryIntent.USAGE:
         specific = ["State supported use/function evidence first; separate function from definition."]
     elif plan.intent == DictionaryQueryIntent.REQUIREMENT:
@@ -584,6 +604,9 @@ def dictionary_lookup_normalization_candidates(
     short_result = _extract_short_lookup_target_result(original, adapter=adapter)
     if short_result:
         add(short_result)
+    plural_type_result = _extract_plural_type_target_result(original, adapter=adapter)
+    if plural_type_result.terms:
+        add(plural_type_result)
     add(_extract_single_target_result(original, normalized, adapter=adapter))
     return rows
 
@@ -693,6 +716,8 @@ def merge_planned_dictionary_results(primary: list[RetrievalHit], extra_results:
 def _compact_acronym_target_key(target_terms: list[str]) -> str:
     if len(target_terms) != 1:
         return ""
+    if not _looks_like_compact_acronym_target(target_terms[0]):
+        return ""
     folded = re.sub(r"[^a-z0-9]+", " ", _fold(target_terms[0])).strip()
     if not folded:
         return ""
@@ -706,6 +731,21 @@ def _compact_acronym_target_key(target_terms: list[str]) -> str:
     if 3 <= len(compact) <= 12 and re.fullmatch(r"[a-z0-9]+", compact):
         return compact
     return ""
+
+
+def _looks_like_compact_acronym_target(term: str) -> bool:
+    raw = str(term or "").strip()
+    if not raw:
+        return False
+    if "_" in raw or re.search(r"\d", raw):
+        return True
+    asciiish = re.sub(r"[^A-Za-z0-9 ]+", " ", raw).strip()
+    tokens = [token for token in asciiish.split() if token]
+    if not tokens:
+        return False
+    if len(tokens) == 1:
+        return bool(re.fullmatch(r"[A-Z]{2,}[A-Z0-9]*", raw.strip()))
+    return all(1 <= len(token) <= 3 for token in tokens) and any(token.isupper() and len(token) >= 2 for token in tokens)
 
 
 def _compact_acronym_planner_rank_key(
@@ -749,6 +789,12 @@ def _planner_boost(
     elif not has_tone_sensitive_targets and target_keys and headword_key in target_keys:
         boost += 0.28
         role = "primary_term" if role == "fallback" else role
+    if _is_plural_type_category_plan(plan) and _headword_starts_with_target(
+        headword_strict_key if has_tone_sensitive_targets else headword_key,
+        target_strict_keys if has_tone_sensitive_targets else target_keys,
+    ):
+        boost += 0.55
+        role = "primary_term" if role == "fallback" else role
     if mode == "strict":
         boost += 0.35
         role = "primary_term" if role == "fallback" else role
@@ -779,6 +825,19 @@ def _planner_boost(
     if relation == "related_to" and preferred_edges and any(edge != "related_to" for edge in preferred_edges):
         boost -= 0.08
     return boost, role, edge_matches
+
+
+def _is_plural_type_category_plan(plan: DictionaryQueryPlan) -> bool:
+    return (
+        plan.intent == DictionaryQueryIntent.CATEGORY
+        and str(plan.normalization.get("target_layer") or "") == "plural_type_lookup_wrapper"
+    )
+
+
+def _headword_starts_with_target(headword_key: str, target_keys: set[str]) -> bool:
+    if not headword_key or not target_keys:
+        return False
+    return any(target and (headword_key == target or headword_key.startswith(f"{target} ")) for target in target_keys)
 
 
 def _planner_score_band(
@@ -1046,6 +1105,48 @@ def _extract_single_target_result(
         changed=regex_changed or noise_changed or plural_changed or short_changed,
         adapter=adapter.name,
     )
+
+
+def _extract_plural_type_target_result(
+    original: str,
+    *,
+    adapter: DictionaryNormalizationAdapter,
+) -> DictionaryTargetExtractionResult:
+    cleaned = _strip_question_noise(_strip_terminal_question_punctuation(normalize_spaces(original)))
+    cleaned = _strip_plural_type_request_prefix(cleaned)
+    match = re.match(
+        r"^(?:các|cac|những|nhung)\s+(?:loại|loai|kiểu|kieu|dạng|dang)\s+(.+)$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return DictionaryTargetExtractionResult(terms=[], layer="plural_type_lookup_wrapper", adapter=adapter.name)
+    target = _normalize_short_lookup_target(match.group(1).strip())
+    if not target:
+        return DictionaryTargetExtractionResult(terms=[], layer="plural_type_lookup_wrapper", changed=True, adapter=adapter.name)
+    return DictionaryTargetExtractionResult(
+        terms=[target.upper() if _looks_placeholder(target) else target],
+        layer="plural_type_lookup_wrapper",
+        changed=True,
+        adapter=adapter.name,
+    )
+
+
+def _strip_plural_type_request_prefix(text: str) -> str:
+    cleaned = normalize_spaces(text)
+    prefix_pattern = (
+        r"^(?:(?:hãy|hay|vui lòng|vui long)\s+)?(?:"
+        r"tìm(?:\s+(?:cho|giúp|giup)\s+tôi)?|tim(?:\s+(?:cho|giup)\s+toi)?|"
+        r"cho tôi biết|cho toi biet|cho tôi xem|cho toi xem|"
+        r"liệt kê|liet ke|kể tên|ke ten|tra cứu|tra cuu|"
+        r"search for|find|show me|list|lookup"
+        r")\s+"
+    )
+    previous = None
+    while previous != cleaned:
+        previous = cleaned
+        cleaned = re.sub(prefix_pattern, "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
 
 
 def _extract_terms_with_pattern(original: str, normalized: str, pattern: str) -> list[str]:

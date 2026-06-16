@@ -3,9 +3,16 @@ from __future__ import annotations
 from rag_bench.types import Query, RetrievalHit
 
 
+RESPONSE_FORMAT_GUIDANCE = (
+    "Use clean Markdown. If listing multiple entries with details, use one numbered list with nested bullets "
+    "indented under each numbered item, for example: '1. **Entry**\\n   - Detail'. "
+    "Do not create separate numbered lists that restart every item at 1."
+)
+
 SYSTEM_PROMPT = (
     "You are a concise RAG answerer. Answer using only the provided contexts. "
-    "If the contexts are insufficient, say you do not know. Cite source document ids in square brackets."
+    "If the contexts are insufficient, say you do not know. Cite source document ids in square brackets. "
+    f"{RESPONSE_FORMAT_GUIDANCE}"
 )
 
 

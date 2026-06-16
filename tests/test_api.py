@@ -349,6 +349,10 @@ def test_chat_page() -> None:
     assert 'text.split(":").pop().trim()' in response.text
     assert "isDictionaryHeaderCitation" in response.text
     assert "renderMarkdownBlocks" in response.text
+    assert "renderMarkdownList" in response.text
+    assert "nextMarkdownListInfo" in response.text
+    assert "next.indent > indent" in response.text
+    assert "ordered && next && !next.ordered && next.indent === indent" in response.text
     assert "markdown-content" in response.text
     assert "citation-ref" in response.text
     assert "ragDetailsOpen" in response.text

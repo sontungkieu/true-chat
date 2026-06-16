@@ -1147,6 +1147,8 @@ def test_dictionary_prompt_preserves_near_match_acronym_targets() -> None:
     assert "Preserve detected target terms exactly as listed" in user_prompt
     assert "Do not merge a target acronym with a nearby but different acronym" in user_prompt
     assert "do not say the target was not found" in user_prompt
+    assert "nested bullets indented under each numbered item" in system_prompt
+    assert "indent each entry's detail bullets under that numbered item" in user_prompt
 
 
 def test_chat_prompt_sections_are_rendered_and_traced_without_prompt_content() -> None:
@@ -1167,6 +1169,7 @@ def test_chat_prompt_sections_are_rendered_and_traced_without_prompt_content() -
 
     result = service.answer([{"role": "user", "content": "What do cats do?"}])
 
+    assert "nested bullets indented under each numbered item" in llm.messages[0]["content"]
     prompt = llm.messages[1]["content"]
     assert "### user_question: Question" in prompt
     assert "### retrieved_contexts: Retrieved contexts" in prompt
@@ -2513,6 +2516,199 @@ def test_text_dictionary_fallback_replaces_internal_query_leak_for_ambiguous_acr
     assert "[dict-pb-4]" in answer
     assert len(result.response["rag"]["retrieved"]) == 5
     assert result.response["rag"]["retrieval_metadata"]["dictionary_internal_query_leak_fallback"] is True
+
+
+def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_grounded_entries() -> None:
+    class WeakTextRetriever:
+        name = "multi-query"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[
+                    RetrievalHit(
+                        doc_id="bench-zero",
+                        score=0.0,
+                        rank=1,
+                        title="Benchmark zero",
+                        text="No useful benchmark evidence.",
+                        metadata=PUBLIC_METADATA,
+                        data_tier="public",
+                    )
+                ],
+                latency_s=0.01,
+            )
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+            self.prefix_queries: list[str] = []
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            self.queries.append(query.text)
+            hits = [
+                RetrievalHit(
+                    doc_id="dict-base",
+                    score=2.0,
+                    rank=1,
+                    title="PHÁO",
+                    text="Synthetic base entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO",
+                        "dictionary_match_mode": "strict",
+                        "dictionary_direct_score": 1.2,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="dict-body-mention",
+                    score=1.6,
+                    rank=2,
+                    title="GÓC TẦM",
+                    text="Synthetic body mention containing the phrase loại pháo.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "GÓC TẦM",
+                        "dictionary_match_mode": "lexical",
+                        "query_highlights": ["loại pháo"],
+                    },
+                    data_tier="semi_private",
+                ),
+            ]
+            return RetrievalResult(query=query, hits=hits[:top_k], latency_s=0.01, metadata={"kind": "dictionary"})
+
+        def prefix_headword_search(self, query: Query, top_k: int) -> RetrievalResult:
+            self.prefix_queries.append(query.text)
+            hits = [
+                RetrievalHit(
+                    doc_id="dict-far",
+                    score=2.4,
+                    rank=1,
+                    title="PHÁO TẦM XA",
+                    text="Synthetic direct type entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO TẦM XA",
+                        "dictionary_match_mode": "category_prefix",
+                        "dictionary_direct_score": 0.95,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="dict-accompany",
+                    score=2.2,
+                    rank=2,
+                    title="PHÁO ĐI CÙNG",
+                    text="Synthetic direct type entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐI CÙNG",
+                        "dictionary_match_mode": "category_prefix",
+                        "dictionary_direct_score": 0.95,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="dict-antitank",
+                    score=2.1,
+                    rank=3,
+                    title="PHÁO CHỐNG TĂNG",
+                    text="Synthetic direct type entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO CHỐNG TĂNG",
+                        "dictionary_match_mode": "category_prefix",
+                        "dictionary_direct_score": 0.95,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="dict-ground",
+                    score=2.0,
+                    rank=4,
+                    title="PHÁO MẶT ĐẤT",
+                    text="Synthetic direct type entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO MẶT ĐẤT",
+                        "dictionary_match_mode": "category_prefix",
+                        "dictionary_direct_score": 0.95,
+                    },
+                    data_tier="semi_private",
+                ),
+            ]
+            return RetrievalResult(query=query, hits=hits[:top_k], latency_s=0.01, metadata={"kind": "dictionary"})
+
+    class HallucinatingListLLM(FakeLLM):
+        def generate(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            model: str | None = None,
+            temperature: float = 0.0,
+            max_completion_tokens: int = 512,
+        ) -> GenerationResult:
+            self.messages = messages
+            return GenerationResult(
+                answer=(
+                    "Tôi không có thông tin cụ thể từ ngữ cảnh. Tuy nhiên có thể chia sẻ các loại như "
+                    "pháo hoa truyền thống, pháo nổ mặt đất và pháo đùa."
+                ),
+                key_alias=self.alias,
+                attempted_aliases=[self.alias],
+                latency_s=0.03,
+                retry_count=0,
+                prompt_tokens=20,
+                completion_tokens=24,
+                total_tokens=44,
+            )
+
+    text_retriever = WeakTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=5,
+            dictionary_top_k=5,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=HallucinatingListLLM(),
+        retrievers={"multi-query": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 4},
+    )
+
+    result = service.answer([{"role": "user", "content": "tìm cho tôi các loại pháo"}], response_mode="text", language="vi")
+
+    answer = result.response["choices"][0]["message"]["content"]
+    assert dictionary_retriever.queries == ["tìm cho tôi các loại pháo", "pháo"]
+    assert dictionary_retriever.prefix_queries == ["pháo"]
+    assert "pháo hoa" not in answer.lower()
+    assert "pháo đùa" not in answer.lower()
+    assert "PHÁO TẦM XA" in answer
+    assert "PHÁO ĐI CÙNG" in answer
+    assert "PHÁO CHỐNG TĂNG" in answer
+    assert "PHÁO MẶT ĐẤT" in answer
+    assert "GÓC TẦM" not in answer
+    assert "không phải một bảng phân loại đầy đủ" in answer
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_category_fallback"] is True
+    plan = result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]
+    assert plan["intent"] == "category"
+    assert plan["target_terms"] == ["pháo"]
+    assert plan["normalization"]["target_layer"] == "plural_type_lookup_wrapper"
+    assert "Category/list-query guard" in service.llm.messages[-1]["content"]
 
 
 def test_text_dictionary_fallback_rejects_weak_lexical_hits_without_highlights() -> None:
