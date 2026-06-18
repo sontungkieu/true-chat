@@ -392,6 +392,7 @@ class RagChatService:
                 if query_plan is not None and query_plan.intent == DictionaryQueryIntent.ALIAS
                 else None
             )
+            retrieval.hits = _canonicalize_dictionary_redirect_hits(retrieval.hits)
             retrieval_metadata = {
                 **retrieval.metadata,
                 "command": "/dict" if command and command[0] == "dict" else None,
@@ -645,6 +646,7 @@ class RagChatService:
             dictionary_fallback.hits if dictionary_fallback else [],
             max_hits=prompt_hit_limit,
         )
+        prompt_hits = _canonicalize_dictionary_redirect_hits(prompt_hits)
         privacy_decision = self._enforce_generation_privacy(
             backend=backend,
             session_state=session_state,
@@ -914,6 +916,7 @@ class RagChatService:
         has_direct_dictionary_hit = any(float(hit.metadata.get("dictionary_direct_score") or 0.0) > 0 for hit in hits)
         if primary_top_score > 0 and not has_direct_dictionary_hit:
             return None
+        hits = _canonicalize_dictionary_redirect_hits(hits)
         metadata = dict(retrieval.metadata)
         if query_plan is not None:
             metadata["query_plan"] = query_plan.to_payload()
@@ -1829,8 +1832,9 @@ def _merge_text_and_dictionary_hits(
     *,
     max_hits: int | None = None,
 ) -> list[RetrievalHit]:
+    dictionary_hits = _canonicalize_dictionary_redirect_hits(dictionary_hits)
     if not dictionary_hits:
-        hits = list(primary_hits)
+        hits = _canonicalize_dictionary_redirect_hits(primary_hits)
         if max_hits is not None:
             hits = hits[: _clamp_top_k(max_hits, fallback=max_hits)]
         return [
@@ -1847,6 +1851,9 @@ def _merge_text_and_dictionary_hits(
         merged.append(hit)
         if max_hits is not None and len(merged) >= _clamp_top_k(max_hits, fallback=max_hits):
             break
+    merged = _canonicalize_dictionary_redirect_hits(merged)
+    if max_hits is not None:
+        merged = merged[: _clamp_top_k(max_hits, fallback=max_hits)]
     return [
         RetrievalHit(
             doc_id=hit.doc_id,
@@ -1972,11 +1979,12 @@ def _filter_retrieved_for_display(
     include_score_filtered: bool = False,
 ) -> list[RetrievalHit]:
     cited_doc_ids = _cited_doc_ids(answer)
-    return [
+    filtered = [
         hit
         for hit in hits
         if include_score_filtered or hit.score > MIN_RETRIEVAL_DISPLAY_SCORE or hit.doc_id in cited_doc_ids or _hit_is_image(hit)
     ]
+    return _canonicalize_dictionary_redirect_hits(filtered)
 
 
 def _cited_doc_ids(answer: str) -> set[str]:
@@ -2785,7 +2793,15 @@ def _format_context(hits: list[RetrievalHit], *, max_context_chars: int) -> str:
             if redirect_target
             else ""
         )
-        block = f"[{hit.doc_id}]\n{title}{hit.text}{redirect_note}".strip()
+        redirect_aliases = _dictionary_redirect_aliases_for_hit(hit)
+        merged_redirect_note = (
+            "\nMerged redirect aliases for this canonical entry: "
+            + "; ".join(redirect_aliases)
+            + ". Treat these as cross-references to this entry, not separate definitions."
+            if redirect_aliases
+            else ""
+        )
+        block = f"[{hit.doc_id}]\n{title}{hit.text}{redirect_note}{merged_redirect_note}".strip()
         if block:
             raw_blocks.append(block)
     if not raw_blocks:
@@ -3159,6 +3175,7 @@ def _dictionary_headword_prefix_hits(
 def _collapse_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[RetrievalHit]:
     by_headword_key = {_dictionary_hit_headword_key(hit): hit for hit in hits if _dictionary_hit_headword_key(hit)}
     aliases_by_target_doc_id: dict[str, list[str]] = {}
+    alias_doc_ids_by_target_doc_id: dict[str, list[str]] = {}
     collapsed: list[RetrievalHit] = []
     for hit in hits:
         redirect_target = _dictionary_redirect_target(hit)
@@ -3170,6 +3187,9 @@ def _collapse_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[Ret
                 aliases = aliases_by_target_doc_id.setdefault(target_hit.doc_id, [])
                 if alias_title not in aliases:
                     aliases.append(alias_title)
+            alias_doc_ids = alias_doc_ids_by_target_doc_id.setdefault(target_hit.doc_id, [])
+            if hit.doc_id not in alias_doc_ids:
+                alias_doc_ids.append(hit.doc_id)
             continue
         collapsed.append(hit)
     if not aliases_by_target_doc_id:
@@ -3186,8 +3206,22 @@ def _collapse_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[Ret
             if alias not in existing_aliases:
                 existing_aliases.append(alias)
         metadata["dictionary_redirect_aliases"] = existing_aliases
+        alias_doc_ids = alias_doc_ids_by_target_doc_id.get(hit.doc_id) or []
+        existing_alias_doc_ids = [
+            str(doc_id) for doc_id in metadata.get("dictionary_redirect_doc_ids") or [] if str(doc_id).strip()
+        ]
+        for doc_id in alias_doc_ids:
+            if doc_id not in existing_alias_doc_ids:
+                existing_alias_doc_ids.append(doc_id)
+        if existing_alias_doc_ids:
+            metadata["dictionary_redirect_doc_ids"] = existing_alias_doc_ids
         updated.append(replace(hit, metadata=metadata))
     return updated
+
+
+def _canonicalize_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[RetrievalHit]:
+    collapsed = _collapse_dictionary_redirect_hits(hits)
+    return [replace(hit, rank=index) for index, hit in enumerate(collapsed, 1)]
 
 
 def _dictionary_redirect_aliases_for_hit(hit: RetrievalHit) -> list[str]:
@@ -3418,6 +3452,8 @@ def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "rich_blocks",
         "source",
         "query_highlights",
+        "dictionary_redirect_aliases",
+        "dictionary_redirect_doc_ids",
     }
     return {key: value for key, value in metadata.items() if key in allowed_keys}
 

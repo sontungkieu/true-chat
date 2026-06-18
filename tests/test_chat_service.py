@@ -3001,6 +3001,19 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
     assert "QUAN HỆ PHÁO ĐÀI" not in answer
     assert "Đây là mục từ riêng" not in answer
     assert "Tôi không thêm" not in answer
+    retrieved = result.response["rag"]["retrieved"]
+    retrieved_doc_ids = [source["doc_id"] for source in retrieved]
+    assert "fort-b-alias" not in retrieved_doc_ids
+    assert "fort-b-alias-2" not in retrieved_doc_ids
+    assert retrieved_doc_ids[:4] == ["fort-b", "fort-c", "fort-d", "fort-a"]
+    canonical_metadata = retrieved[0]["metadata"]
+    assert canonical_metadata["dictionary_redirect_aliases"] == ["PHÁO ĐÀI THỔ KHỐI", "PHÁO ĐÀI ĐÀO XUYÊN"]
+    assert canonical_metadata["dictionary_redirect_doc_ids"] == ["fort-b-alias", "fort-b-alias-2"]
+    prompt = service.llm.messages[-1]["content"]
+    assert "PHÁO ĐÀI THỔ KHỐI nh PHÁO ĐÀI THỦ KHỐI" not in prompt
+    assert "PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI" not in prompt
+    assert "Merged redirect aliases for this canonical entry" in prompt
+    assert "PHÁO ĐÀI THỔ KHỐI; PHÁO ĐÀI ĐÀO XUYÊN" in prompt
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_plural_phrase_list_fallback"] is True
 
@@ -3038,6 +3051,33 @@ def test_dictionary_context_marks_short_redirect_entries_to_avoid_duplicate_defi
     assert "Alias/cross-reference note" in context
     assert "redirects to TERM CANONICAL" in context
     assert "do not list it as a separate definition" in context
+
+
+def test_format_context_marks_merged_redirect_aliases_on_canonical_entry() -> None:
+    context = _format_context(
+        [
+            RetrievalHit(
+                doc_id="dict-canonical",
+                score=1.5,
+                rank=1,
+                title="TERM CANONICAL",
+                text="TERM CANONICAL, synthetic canonical definition.",
+                metadata={
+                    "kind": "dictionary",
+                    "headword": "TERM CANONICAL",
+                    "data_tier": "semi_private",
+                    "dictionary_redirect_aliases": ["TERM ALIAS", "TERM ALSO"],
+                    "dictionary_redirect_doc_ids": ["dict-alias", "dict-also"],
+                },
+                data_tier="semi_private",
+            ),
+        ],
+        max_context_chars=2000,
+    )
+
+    assert "TERM CANONICAL, synthetic canonical definition." in context
+    assert "Merged redirect aliases for this canonical entry: TERM ALIAS; TERM ALSO." in context
+    assert "Treat these as cross-references to this entry, not separate definitions." in context
 
 
 def test_text_dictionary_fallback_rejects_weak_lexical_hits_without_highlights() -> None:

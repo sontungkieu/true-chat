@@ -4491,6 +4491,7 @@
       add(source?.rank);
       add(source?.source_entry_id);
       add(source?.metadata?.source_entry_id);
+      for (const redirectDocId of source?.metadata?.dictionary_redirect_doc_ids || []) add(redirectDocId);
       add(sourceInfo.source_entry_id);
       if (sourceInfo.source_set && sourceInfo.source_entry_id) {
         add(String(sourceInfo.source_set) + ":" + String(sourceInfo.source_entry_id));
@@ -4883,7 +4884,45 @@
     }
 
     function dictionaryRelationLabel(label) {
-      return String(label || "").replace(/_/g, " ");
+      const raw = String(label || "").trim();
+      const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
+      const labels = {
+        vi: {
+          has_alias: "tên gọi khác",
+          has_concept: "khái niệm",
+          is_a: "là một",
+          in_category: "nhóm",
+          has_category: "nhóm",
+          component_of: "thuộc thành phần",
+          part_of: "bộ phận của",
+          used_for: "dùng cho",
+          measures: "đo",
+          controls: "điều khiển",
+          fires: "bắn",
+          supports: "hỗ trợ",
+          requires: "yêu cầu",
+          see_also: "xem thêm",
+          related_to: "liên quan"
+        },
+        en: {
+          has_alias: "alias",
+          has_concept: "concept",
+          is_a: "is a",
+          in_category: "category",
+          has_category: "category",
+          component_of: "component of",
+          part_of: "part of",
+          used_for: "used for",
+          measures: "measures",
+          controls: "controls",
+          fires: "fires",
+          supports: "supports",
+          requires: "requires",
+          see_also: "see also",
+          related_to: "related"
+        }
+      };
+      return labels[currentLanguage()]?.[key] || labels.en[key] || raw.replace(/_/g, " ");
     }
 
     function dictionaryInlineSources(answer, sources) {
