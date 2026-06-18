@@ -1115,7 +1115,7 @@ def _extract_plural_type_target_result(
     cleaned = _strip_question_noise(_strip_terminal_question_punctuation(normalize_spaces(original)))
     cleaned = _strip_plural_type_request_prefix(cleaned)
     match = re.match(
-        r"^(?:các|cac|những|nhung)\s+(?:loại|loai|kiểu|kieu|dạng|dang)\s+(.+)$",
+        r"^(?:các|cac|những|nhung)\s+(?:loại|loai|kiểu|kieu|dạng|dang)\s+(.+?)(?:\s+(?:nào|nao|gì|gi))?$",
         cleaned,
         flags=re.IGNORECASE,
     )
@@ -1134,6 +1134,12 @@ def _extract_plural_type_target_result(
 
 def _strip_plural_type_request_prefix(text: str) -> str:
     cleaned = normalize_spaces(text)
+    cleaned = re.sub(
+        r"^(?:có|co)\s+(?=(?:các|cac|những|nhung)\s+(?:loại|loai|kiểu|kieu|dạng|dang)\b)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
     prefix_pattern = (
         r"^(?:(?:hãy|hay|vui lòng|vui long)\s+)?(?:"
         r"tìm(?:\s+(?:cho|giúp|giup)\s+tôi)?|tim(?:\s+(?:cho|giup)\s+toi)?|"

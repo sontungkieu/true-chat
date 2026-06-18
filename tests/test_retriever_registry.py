@@ -14,7 +14,14 @@ from rag_bench.retriever_registry import (
     list_retrievers,
     normalize_retriever_id,
 )
-from rag_bench.retrievers import BM25Retriever, DictionaryGraphRetriever, GraphBm25Retriever, ImageDigitsRetriever, VectorRetriever
+from rag_bench.retrievers import (
+    BM25Retriever,
+    DictionaryGraphRetriever,
+    GraphBm25Retriever,
+    ImageDigitsRetriever,
+    MultiQueryRetriever,
+    VectorRetriever,
+)
 from rag_bench.types import Document
 
 
@@ -30,6 +37,7 @@ def test_registry_lists_working_retrieval_strategies() -> None:
         "bm25",
         "tfidf",
         "keyword-match",
+        "agent",
         "multi-query",
         "graph-bm25",
         "llm-query-rewrite",
@@ -44,6 +52,7 @@ def test_registry_lists_working_retrieval_strategies() -> None:
     assert [spec.id for spec in specs] == list(list_retriever_ids())
     assert {spec.category for spec in specs} == {"text", "keyword", "image", "dictionary"}
     assert get_retriever_spec("vector").requires_extra == "vector"
+    assert get_retriever_spec("agent").uses_llm is True
     assert get_retriever_spec("llm-multi-query").uses_llm is True
 
 
@@ -55,13 +64,17 @@ def test_registry_normalizes_aliases_and_creates_retrievers() -> None:
     assert normalize_retriever_id("img") == "image-digits"
     assert normalize_retriever_id("dict") == "dictionary-graph"
     assert normalize_retriever_id("rerank") == "vector-rerank"
+    assert normalize_retriever_id("agent-lite") == "agent"
 
     assert isinstance(create_retriever("lexical", vector_model="unused"), BM25Retriever)
+    agent = create_retriever("agent", vector_model="unused")
     assert isinstance(create_retriever("graph-rag", vector_model="unused"), GraphBm25Retriever)
     assert isinstance(create_retriever("img", vector_model="unused"), ImageDigitsRetriever)
     assert isinstance(create_retriever("dictionary", vector_model="unused"), DictionaryGraphRetriever)
     vector = create_retriever("dense", vector_model="fake-model")
 
+    assert isinstance(agent, MultiQueryRetriever)
+    assert agent.name == "agent"
     assert isinstance(vector, VectorRetriever)
     assert vector.model_name == "fake-model"
 

@@ -256,6 +256,45 @@ class FakeKeywordLLM(FakeLLM):
         )
 
 
+class FakeAgentLLM(FakeLLM):
+    def __init__(self) -> None:
+        super().__init__(alias="alias-agent")
+        self.calls = 0
+        self.all_messages: list[list[dict[str, str]]] = []
+
+    def generate(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_completion_tokens: int = 512,
+    ) -> GenerationResult:
+        self.calls += 1
+        self.messages = messages
+        self.all_messages.append(messages)
+        self.model = model
+        self.temperature = temperature
+        self.max_completion_tokens = max_completion_tokens
+        if self.calls == 1:
+            answer = '{"tool_calls":[{"name":"dictionary.lookup","query":"AMONIT"}]}'
+            completion_tokens = 10
+        else:
+            answer = "AMONIT là thuốc nổ phá [A-0001]."
+            completion_tokens = 9
+        return GenerationResult(
+            answer=answer,
+            key_alias="alias-agent",
+            attempted_aliases=["alias-agent"],
+            latency_s=0.01,
+            retry_count=0,
+            prompt_tokens=20,
+            completion_tokens=completion_tokens,
+            total_tokens=20 + completion_tokens,
+            estimated_tokens=20 + completion_tokens,
+        )
+
+
 class CountingLLM(FakeLLM):
     def __init__(self) -> None:
         super().__init__()
@@ -438,6 +477,7 @@ def test_available_models_include_mimo_only_when_enabled() -> None:
         ),
         retriever=FakeRetriever(),
         llm=FakeLLM(),
+        retrievers={"bm25": FakeRetriever(), "agent": FakeRetriever(name="agent")},
     )
 
     assert "mimo-v2.5-pro" in service.available_generation_models()
@@ -455,9 +495,54 @@ def test_rag_chat_service_resolves_retriever_alias() -> None:
         ),
         retriever=FakeRetriever(),
         llm=FakeLLM(),
+        retrievers={"bm25": FakeRetriever(), "agent": FakeRetriever(name="agent")},
     )
 
     assert service.resolve_request_retriever("lexical").name == "bm25"
+    assert service.resolve_request_retriever("agent").name == "agent"
+
+
+def test_agent_mode_uses_llm_planner_to_call_retrieval_tools() -> None:
+    dictionary_retriever = FakeDictionaryRetriever()
+    agent_retriever = FakeRetriever(name="agent")
+    llm = FakeAgentLLM()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=3,
+            dictionary_top_k=3,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(
+            name="fixture",
+            dataset_id="fixture/test",
+            queries=[],
+            documents=[],
+            qrels={},
+        ),
+        retriever=agent_retriever,
+        llm=llm,
+        retrievers={"agent": agent_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 1},
+    )
+
+    result = service.answer(
+        [{"role": "user", "content": "AMONIT là gì?"}],
+        request_retriever="agent",
+        request_model="qwen/qwen3-32b",
+        language="vi",
+    )
+
+    metadata = result.response["rag"]["retrieval_metadata"]
+    assert llm.calls == 2
+    assert "You are a retrieval planner" in llm.all_messages[0][0]["content"]
+    assert dictionary_retriever.seen_query == "AMONIT"
+    assert result.response["rag"]["retriever"] == "agent"
+    assert metadata["agent_mode"] is True
+    assert metadata["agent_llm_calls"] == 1
+    assert metadata["agent_tool_calls"][0]["name"] == "dictionary.lookup"
+    assert metadata["agent_dictionary_metadata"]["dictionary_tool_plan"]["orchestration"] == "deterministic_agent_lite"
+    assert result.response["choices"][0]["message"]["content"] == "AMONIT là thuốc nổ phá [A-0001]."
 
 
 def test_text_mode_ignores_image_retriever_request() -> None:

@@ -224,6 +224,9 @@ def test_chat_page() -> None:
     assert "Search" in response.text
     assert "TF-IDF" in response.text
     assert "Graph BM25" in response.text
+    assert "Agent" in response.text
+    assert 'if (retriever === "multi-query") return "Agent"' in response.text
+    assert 'return "Multi-query"' not in response.text
     assert "Qwen3 32B" in response.text
     assert "qwen/qwen3-32b" in response.text
     assert 'const DEFAULT_CHAT_MODEL = "qwen/qwen3-32b"' in response.text
@@ -247,7 +250,8 @@ def test_chat_page() -> None:
     assert "chip-divider" in response.text
     assert "chip-caret" in response.text
     assert "normalizedTextRetrieverChoices" in response.text
-    assert 'retriever !== "image-digits" && retriever !== "dictionary-graph"' in response.text
+    assert 'retriever === "image-digits" || retriever === "dictionary-graph"' in response.text
+    assert 'retriever === "multi-query" && RETRIEVER_CHOICES.includes("agent")' in response.text
     assert "Dictionary" in response.text
     assert "Từ điển" in response.text
     assert "isDictionaryCommand" in response.text

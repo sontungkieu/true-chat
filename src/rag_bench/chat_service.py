@@ -67,7 +67,7 @@ DEFAULT_CHAT_RETRIEVERS = (
     "bm25",
     "tfidf",
     "keyword-match",
-    "multi-query",
+    "agent",
     "graph-bm25",
     "dictionary-graph",
     "image-digits",
@@ -76,6 +76,14 @@ MIN_RETRIEVAL_DISPLAY_SCORE = 5e-4
 CONTEXT_SEPARATOR = "\n\n---\n\n"
 ALIAS_EDGE_MIN_CONFIDENCE = 0.5
 PROMPT_SECTION_SCHEMA_VERSION = "prompt_sections_v1"
+AGENT_TOOL_SCHEMA_VERSION = "agent_retrieval_tools_v1"
+AGENT_TOOL_ALLOWLIST = (
+    "dictionary.lookup",
+    "text.multi_query",
+    "text.bm25",
+    "text.graph_bm25",
+    "text.keyword",
+)
 
 
 class ChatGenerationClient(Protocol):
@@ -540,7 +548,30 @@ class RagChatService:
             user_message_tier=user_message_tier,
         )
         request_top_k = _clamp_top_k(top_k, fallback=self.config.top_k)
-        if retriever.name == "keyword-match":
+        if retriever.name == "agent":
+            if self._llm_tool_blocked(
+                backend=backend,
+                session_state=session_state,
+                user_message_tier=user_message_tier,
+            ):
+                retrieval = retriever.search(Query(query_id="chat-agent", text=question), request_top_k)
+                retrieval.metadata.update(
+                    {
+                        "agent_mode": True,
+                        "agent_schema": AGENT_TOOL_SCHEMA_VERSION,
+                        "agent_llm_calls": 0,
+                        "agent_planner_privacy_blocked": True,
+                        "agent_planner_fallback": "privacy_blocked",
+                    }
+                )
+            else:
+                retrieval = self._agent_search(
+                    retriever,
+                    question,
+                    request_top_k,
+                    generation_model=generation_model,
+                )
+        elif retriever.name == "keyword-match":
             if self._llm_tool_blocked(
                 backend=backend,
                 session_state=session_state,
@@ -568,11 +599,15 @@ class RagChatService:
             score_controls,
             max_hits=request_top_k,
         )
-        dictionary_fallback = self._text_dictionary_fallback(
-            question,
-            top_k=request_top_k,
-            primary_retriever=retriever,
-            primary_retrieval=retrieval,
+        dictionary_fallback = (
+            None
+            if isinstance(retrieval.metadata, dict) and retrieval.metadata.get("agent_dictionary_metadata")
+            else self._text_dictionary_fallback(
+                question,
+                top_k=request_top_k,
+                primary_retriever=retriever,
+                primary_retrieval=retrieval,
+            )
         )
         dictionary_score_filter_metadata: dict[str, Any] = {}
         if dictionary_fallback is not None:
@@ -594,12 +629,19 @@ class RagChatService:
             hits=prompt_hits,
             user_message_tier=user_message_tier,
         )
+        dictionary_prompt_metadata = (
+            dictionary_fallback.metadata
+            if dictionary_fallback is not None
+            else retrieval.metadata.get("agent_dictionary_metadata")
+            if isinstance(retrieval.metadata, dict)
+            else None
+        )
         prompt_sections = build_chat_rag_prompt_sections(
             messages,
             prompt_hits,
             max_context_chars=self.config.max_context_chars,
             history_messages=history_messages,
-            dictionary_fallback_metadata=dictionary_fallback.metadata if dictionary_fallback is not None else None,
+            dictionary_fallback_metadata=dictionary_prompt_metadata,
         )
         prompt_messages = _build_chat_rag_messages_from_sections(prompt_sections, language=response_language)
         generation = self.llm.generate(
@@ -1099,6 +1141,8 @@ class RagChatService:
         session_state: ConversationPrivacyState,
         user_message_tier: DataTier,
     ) -> tuple[Retriever, dict[str, Any]]:
+        if retriever.name == "agent":
+            return retriever, {}
         spec = get_retriever_spec(retriever.name)
         if not spec.uses_llm:
             return retriever, {}
@@ -1196,6 +1240,188 @@ class RagChatService:
             metadata=metadata,
         )
 
+    def _agent_search(
+        self,
+        retriever: Retriever,
+        question: str,
+        top_k: int,
+        *,
+        generation_model: str,
+    ) -> RetrievalResult:
+        started = time.perf_counter()
+        available_tools = _available_agent_tools(self.retrievers)
+        generation = self.llm.generate(
+            _agent_planner_messages(question, available_tools),
+            model=generation_model,
+            temperature=0.0,
+            max_completion_tokens=256,
+        )
+        calls, parse_error = _parse_agent_tool_calls(generation.answer, available_tools=available_tools, fallback_query=question)
+        repair_generation: GenerationResult | None = None
+        repair_parse_error: str | None = None
+        if parse_error and not calls:
+            repair_generation = self.llm.generate(
+                _agent_planner_json_retry_messages(
+                    question,
+                    available_tools,
+                    invalid_output=str(generation.answer or ""),
+                ),
+                model=generation_model,
+                temperature=0.0,
+                max_completion_tokens=128,
+            )
+            calls, repair_parse_error = _parse_agent_tool_calls(
+                repair_generation.answer,
+                available_tools=available_tools,
+                fallback_query=question,
+            )
+        tool_name_generation: GenerationResult | None = None
+        tool_name_parse_error: str | None = None
+        if (repair_parse_error or parse_error) and not calls:
+            tool_name_generation = self.llm.generate(
+                _agent_planner_tool_name_retry_messages(question, available_tools),
+                model=generation_model,
+                temperature=0.0,
+                max_completion_tokens=48,
+            )
+            calls, tool_name_parse_error = _parse_agent_tool_name_calls(
+                tool_name_generation.answer,
+                available_tools=available_tools,
+                question=question,
+            )
+        calls, repair_reason = _repair_agent_tool_calls(calls, question=question, available_tools=available_tools)
+        metadata: dict[str, Any] = {
+            "agent_mode": True,
+            "agent_schema": AGENT_TOOL_SCHEMA_VERSION,
+            "agent_llm_calls": 1 + int(repair_generation is not None) + int(tool_name_generation is not None),
+            "agent_planner_model": generation_model,
+            "agent_planner_key_alias": generation.key_alias,
+            "agent_planner_retry_count": generation.retry_count,
+            "agent_planner_prompt_tokens": generation.prompt_tokens,
+            "agent_planner_completion_tokens": generation.completion_tokens,
+            "agent_planner_total_tokens": generation.total_tokens,
+            "agent_planner_error": generation.error,
+        }
+        if parse_error:
+            metadata["agent_planner_parse_error"] = parse_error
+        if repair_generation is not None:
+            metadata["agent_planner_json_retry"] = True
+            metadata["agent_planner_json_retry_key_alias"] = repair_generation.key_alias
+            metadata["agent_planner_json_retry_error"] = repair_generation.error
+            metadata["agent_planner_json_retry_prompt_tokens"] = repair_generation.prompt_tokens
+            metadata["agent_planner_json_retry_completion_tokens"] = repair_generation.completion_tokens
+            metadata["agent_planner_json_retry_total_tokens"] = repair_generation.total_tokens
+            if repair_parse_error:
+                metadata["agent_planner_json_retry_parse_error"] = repair_parse_error
+        if tool_name_generation is not None:
+            metadata["agent_planner_tool_name_retry"] = True
+            metadata["agent_planner_tool_name_retry_key_alias"] = tool_name_generation.key_alias
+            metadata["agent_planner_tool_name_retry_error"] = tool_name_generation.error
+            metadata["agent_planner_tool_name_retry_prompt_tokens"] = tool_name_generation.prompt_tokens
+            metadata["agent_planner_tool_name_retry_completion_tokens"] = tool_name_generation.completion_tokens
+            metadata["agent_planner_tool_name_retry_total_tokens"] = tool_name_generation.total_tokens
+            if tool_name_parse_error:
+                metadata["agent_planner_tool_name_retry_parse_error"] = tool_name_parse_error
+        if repair_reason:
+            metadata["agent_planner_repair"] = repair_reason
+        if not calls:
+            fallback = retriever.search(Query(query_id="chat-agent", text=question), top_k)
+            fallback.metadata.update(
+                {
+                    **metadata,
+                    "agent_planner_fallback": "empty_or_invalid_plan",
+                    "agent_tool_calls": [],
+                    "agent_tool_call_count": 0,
+                }
+            )
+            fallback.latency_s += time.perf_counter() - started
+            return fallback
+
+        results: list[RetrievalResult] = []
+        tool_payloads: list[dict[str, Any]] = []
+        dictionary_metadata: dict[str, Any] | None = None
+        for index, call in enumerate(calls, 1):
+            tool_name = call["name"]
+            tool_query = call["query"]
+            result = self._execute_agent_retrieval_tool(tool_name, tool_query, top_k, index=index)
+            payload = {
+                "name": tool_name,
+                "query": tool_query,
+                "result_count": len(result.hits) if result is not None else 0,
+            }
+            if result is None:
+                payload["skipped"] = True
+                tool_payloads.append(payload)
+                continue
+            results.append(result)
+            if tool_name == "dictionary.lookup" and dictionary_metadata is None:
+                dictionary_metadata = result.metadata
+            tool_payloads.append(payload)
+        hits = _merge_agent_tool_hits(results, top_k=top_k)
+        metadata.update(
+            {
+                "agent_tool_calls": tool_payloads,
+                "agent_tool_call_count": len([payload for payload in tool_payloads if not payload.get("skipped")]),
+                "agent_available_tools": list(available_tools),
+            }
+        )
+        if dictionary_metadata is not None:
+            metadata["agent_dictionary_metadata"] = dictionary_metadata
+        return RetrievalResult(
+            query=Query(query_id="chat-agent", text=question),
+            hits=hits,
+            latency_s=time.perf_counter() - started,
+            metadata=metadata,
+        )
+
+    def _execute_agent_retrieval_tool(
+        self,
+        tool_name: str,
+        tool_query: str,
+        top_k: int,
+        *,
+        index: int,
+    ) -> RetrievalResult | None:
+        query = Query(query_id=f"chat-agent-tool-{index}", text=tool_query)
+        if tool_name == "dictionary.lookup":
+            dictionary_retriever = self.retrievers.get("dictionary-graph")
+            if dictionary_retriever is None:
+                return None
+            retrieval = dictionary_retriever.search(query, top_k)
+            query_plan = plan_dictionary_query(tool_query) if self.config.enable_dictionary_query_planner else None
+            if query_plan is not None:
+                extra_results = _planned_dictionary_extra_results(
+                    dictionary_retriever,
+                    query_plan,
+                    original_query=tool_query,
+                    request_top_k=top_k,
+                    query_id_prefix="chat-agent-dict-plan",
+                )
+                if extra_results:
+                    retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
+                retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=top_k)
+                retrieval.metadata = {
+                    **retrieval.metadata,
+                    "query_plan": query_plan.to_payload(),
+                    "dictionary_tool_plan": dictionary_tool_plan_payload(query_plan, original_query=tool_query),
+                }
+            retrieval.metadata["agent_tool_name"] = tool_name
+            return retrieval
+        retriever_name = {
+            "text.multi_query": "multi-query" if "multi-query" in self.retrievers else "agent",
+            "text.bm25": "bm25",
+            "text.graph_bm25": "graph-bm25",
+            "text.keyword": "keyword-match",
+        }.get(tool_name)
+        if not retriever_name:
+            return None
+        tool_retriever = self.retrievers.get(retriever_name)
+        if tool_retriever is None:
+            return None
+        retrieval = tool_retriever.search(query, top_k)
+        retrieval.metadata["agent_tool_name"] = tool_name
+        return retrieval
+
 
 @dataclass
 class ModelRoutedChatClient:
@@ -1281,6 +1507,257 @@ def _keyword_query_variants(
         "keyword_llm_error": generation.error,
     }
     return variants, metadata
+
+
+def _available_agent_tools(retrievers: dict[str, Retriever]) -> tuple[str, ...]:
+    tools: list[str] = []
+    if "dictionary-graph" in retrievers:
+        tools.append("dictionary.lookup")
+    if "agent" in retrievers or "multi-query" in retrievers:
+        tools.append("text.multi_query")
+    if "bm25" in retrievers:
+        tools.append("text.bm25")
+    if "graph-bm25" in retrievers:
+        tools.append("text.graph_bm25")
+    if "keyword-match" in retrievers:
+        tools.append("text.keyword")
+    return tuple(tool for tool in AGENT_TOOL_ALLOWLIST if tool in tools)
+
+
+def _agent_planner_messages(question: str, available_tools: Sequence[str]) -> list[dict[str, str]]:
+    tool_lines = "\n".join(f"- {tool}" for tool in available_tools)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a retrieval planner. Choose retrieval tools for the user's question, then stop. "
+                "Do not answer the user. Return only valid JSON with this shape: "
+                '{"tool_calls":[{"name":"dictionary.lookup","query":"exact search text"}]}.\n'
+                "Rules:\n"
+                "- Use only tool names from the available list.\n"
+                "- Use at most 4 tool calls.\n"
+                "- Preserve acronyms, casing, digits, Vietnamese diacritics, hyphens, and Roman suffixes exactly.\n"
+                "- For dictionary/domain terms, abbreviations, aliases, definitions, occurrences, or type/list queries, prefer dictionary.lookup.\n"
+                "- For broader text evidence, add text.multi_query or another text tool when available.\n"
+                "- Never invent evidence or source text.\n\n"
+                f"Available tools:\n{tool_lines}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"User question:\n{question}\n\n"
+                "Choose retrieval tools for this question. Return only the JSON object. "
+                "Do not answer the question."
+            ),
+        },
+    ]
+
+
+def _agent_planner_json_retry_messages(
+    question: str,
+    available_tools: Sequence[str],
+    *,
+    invalid_output: str,
+) -> list[dict[str, str]]:
+    tool_lines = "\n".join(f"- {tool}" for tool in available_tools)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Return only valid JSON for retrieval tool calls. Do not answer the user. "
+                "No markdown. No explanation. Required schema: "
+                '{"tool_calls":[{"name":"dictionary.lookup","query":"search text"}]}.\n'
+                f"Available tools:\n{tool_lines}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"User question:\n{question}\n\n"
+                "Previous invalid planner output:\n"
+                f"{invalid_output[:600]}\n\n"
+                "Now return only the JSON tool_calls object."
+            ),
+        },
+    ]
+
+
+def _agent_planner_tool_name_retry_messages(question: str, available_tools: Sequence[str]) -> list[dict[str, str]]:
+    tool_list = ", ".join(available_tools)
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Choose retrieval tools only. Do not answer the question. "
+                "Return only tool names separated by commas. No JSON, no markdown, no explanation. "
+                f"Available tool names: {tool_list}."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"User question:\n{question}\n\n"
+                "Choose retrieval tools for this question. Return only comma-separated tool names from the available list. "
+                "Do not answer the question."
+            ),
+        },
+    ]
+
+
+def _parse_agent_tool_calls(
+    text: str,
+    *,
+    available_tools: Sequence[str],
+    fallback_query: str,
+    limit: int = 4,
+) -> tuple[list[dict[str, str]], str | None]:
+    available = set(available_tools)
+    stripped = _strip_code_fence(str(text or "").strip())
+    candidates = [stripped]
+    start_object = stripped.find("{")
+    end_object = stripped.rfind("}")
+    if start_object >= 0 and end_object > start_object:
+        candidates.append(stripped[start_object : end_object + 1])
+    start_list = stripped.find("[")
+    end_list = stripped.rfind("]")
+    if start_list >= 0 and end_list > start_list:
+        candidates.append(stripped[start_list : end_list + 1])
+    parse_error: str | None = None
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            parse_error = f"json_parse_error:{exc.msg}"
+            continue
+        raw_calls = parsed.get("tool_calls") if isinstance(parsed, dict) else parsed
+        if not isinstance(raw_calls, list):
+            parse_error = "tool_calls_not_list"
+            continue
+        calls: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, dict):
+                continue
+            name = str(raw_call.get("name") or raw_call.get("tool") or "").strip()
+            query = str(raw_call.get("query") or raw_call.get("input") or fallback_query).strip()
+            if name not in available or name not in AGENT_TOOL_ALLOWLIST:
+                continue
+            if not query:
+                query = fallback_query
+            query = re.sub(r"\s+", " ", query).strip()[:180]
+            key = (name, query)
+            if key in seen:
+                continue
+            seen.add(key)
+            calls.append({"name": name, "query": query})
+            if len(calls) >= limit:
+                break
+        return calls, None if calls else "no_valid_tool_calls"
+    return [], parse_error or "no_json_plan"
+
+
+def _parse_agent_tool_name_calls(
+    text: str,
+    *,
+    available_tools: Sequence[str],
+    question: str,
+    limit: int = 4,
+) -> tuple[list[dict[str, str]], str | None]:
+    available = set(available_tools)
+    lowered = str(text or "").lower()
+    calls: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for tool_name in AGENT_TOOL_ALLOWLIST:
+        if tool_name not in available or tool_name in seen:
+            continue
+        if tool_name.lower() in lowered:
+            query = _agent_default_query_for_tool(tool_name, question)
+            calls.append({"name": tool_name, "query": query})
+            seen.add(tool_name)
+            if len(calls) >= limit:
+                break
+    if calls:
+        return calls, None
+    return [], "no_tool_name_found"
+
+
+def _agent_default_query_for_tool(tool_name: str, question: str) -> str:
+    if tool_name == "dictionary.lookup" and _looks_like_dictionary_text_query(question):
+        query_plan = plan_dictionary_query(question)
+        target = next((str(term).strip() for term in query_plan.target_terms if str(term).strip()), "")
+        if target:
+            return target
+    return re.sub(r"\s+", " ", question).strip()[:180]
+
+
+def _repair_agent_tool_calls(
+    calls: list[dict[str, str]],
+    *,
+    question: str,
+    available_tools: Sequence[str],
+) -> tuple[list[dict[str, str]], str | None]:
+    available = set(available_tools)
+    repaired = list(calls)
+    seen = {(call["name"], call["query"]) for call in repaired}
+    if "dictionary.lookup" in available and _looks_like_dictionary_text_query(question):
+        has_dictionary = any(call["name"] == "dictionary.lookup" for call in repaired)
+        if not has_dictionary:
+            target = _agent_default_query_for_tool("dictionary.lookup", question)
+            key = ("dictionary.lookup", target)
+            if key not in seen:
+                repaired.insert(0, {"name": "dictionary.lookup", "query": target})
+                return repaired[:4], "added_dictionary_lookup_for_dictionary_query"
+    if not repaired:
+        for tool_name in ("text.multi_query", "text.bm25", "text.graph_bm25", "text.keyword"):
+            if tool_name in available:
+                return [{"name": tool_name, "query": question}], "fallback_text_tool"
+    return repaired[:4], None
+
+
+def _merge_agent_tool_hits(results: list[RetrievalResult], *, top_k: int, rrf_k: int = 60) -> list[RetrievalHit]:
+    scores: dict[str, float] = {}
+    best_rank: dict[str, int] = {}
+    hits_by_doc_id: dict[str, RetrievalHit] = {}
+    tool_names_by_doc_id: dict[str, list[str]] = {}
+    for result in results:
+        tool_name = str(result.metadata.get("agent_tool_name") or result.metadata.get("tool_name") or "")
+        for hit in result.hits:
+            if hit.score <= 0 and data_tier_for_hit(hit) == DataTier.PUBLIC:
+                continue
+            scores[hit.doc_id] = scores.get(hit.doc_id, 0.0) + max(float(hit.score), 0.0) + 1.0 / (rrf_k + hit.rank)
+            best_rank[hit.doc_id] = min(best_rank.get(hit.doc_id, hit.rank), hit.rank)
+            hits_by_doc_id.setdefault(hit.doc_id, hit)
+            if tool_name:
+                names = tool_names_by_doc_id.setdefault(hit.doc_id, [])
+                if tool_name not in names:
+                    names.append(tool_name)
+    ranked = sorted(scores, key=lambda doc_id: (-scores[doc_id], best_rank[doc_id], doc_id))
+    hits: list[RetrievalHit] = []
+    for rank, doc_id in enumerate(ranked[:top_k], 1):
+        hit = hits_by_doc_id[doc_id]
+        metadata = dict(hit.metadata or {})
+        if tool_names_by_doc_id.get(doc_id):
+            metadata["agent_tool_names"] = tool_names_by_doc_id[doc_id]
+        hits.append(
+            RetrievalHit(
+                doc_id=doc_id,
+                score=scores[doc_id],
+                rank=rank,
+                title=hit.title,
+                text=hit.text,
+                metadata=metadata,
+                data_tier=hit.data_tier,
+                doc_type=hit.doc_type,
+                source_id=hit.source_id,
+                allowed_llm=hit.allowed_llm,
+                allowed_embedding=hit.allowed_embedding,
+                redaction_policy=hit.redaction_policy,
+            )
+        )
+    return hits
 
 
 def _merge_positive_keyword_hits(results: list[RetrievalResult], *, top_k: int) -> list[RetrievalHit]:

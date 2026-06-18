@@ -125,6 +125,8 @@ def test_plural_type_query_targets_base_term_as_category() -> None:
     cases = {
         "những loại pháo": "pháo",
         "các loại pháo": "pháo",
+        "có những loại pháo nào": "pháo",
+        "có các loại pháo gì": "pháo",
         "tìm cho tôi các loại pháo": "pháo",
         "hãy tìm giúp tôi các loại pháo": "pháo",
         "cho tôi biết những loại pháo": "pháo",
@@ -132,6 +134,8 @@ def test_plural_type_query_targets_base_term_as_category() -> None:
         "kể tên các loại pháo": "pháo",
         "nhung loai phao": "phao",
         "cac loai phao": "phao",
+        "co nhung loai phao nao": "phao",
+        "co cac loai phao gi": "phao",
         "tim cho toi cac loai phao": "phao",
         "liet ke cac loai phao": "phao",
     }

@@ -3349,7 +3349,10 @@
     }
 
     function normalizedTextRetrieverChoices() {
-      const choices = RETRIEVER_CHOICES.filter((retriever) => retriever !== "image-digits" && retriever !== "dictionary-graph");
+      const choices = RETRIEVER_CHOICES.filter((retriever) => {
+        if (retriever === "image-digits" || retriever === "dictionary-graph") return false;
+        return !(retriever === "multi-query" && RETRIEVER_CHOICES.includes("agent"));
+      });
       return choices.length ? choices : ["bm25"];
     }
 
@@ -3410,7 +3413,7 @@
         ? MODEL_CHOICES.map((value) => ({ value, label: modelLabel(value), title: value }))
         : kind === "mode"
           ? responseModeChoices().map((choice) => ({ ...choice, title: choice.label }))
-          : TEXT_RETRIEVER_CHOICES.map((value) => ({ value, label: retrieverLabel(value), title: value }));
+          : TEXT_RETRIEVER_CHOICES.map((value) => ({ value, label: retrieverLabel(value), title: retrieverTitle(value) }));
       const selected = kind === "model" ? selectedModel() : kind === "mode" ? selectedResponseMode() : selectedRetriever();
       for (const value of choices) {
         const option = document.createElement("button");
@@ -3449,7 +3452,7 @@
         const option = document.createElement("option");
         option.value = retriever;
         option.textContent = retrieverLabel(retriever);
-        option.title = retriever;
+        option.title = retrieverTitle(retriever);
         searchChoiceInput.appendChild(option);
       }
       if (activeComposerMenu === "search") renderComposerToolMenu("search");
@@ -3593,7 +3596,8 @@
       if (retriever === "tfidf") return "TF-IDF";
       if (retriever === "vector") return "Vector";
       if (retriever === "keyword-match") return "Keyword";
-      if (retriever === "multi-query") return "Multi-query";
+      if (retriever === "agent") return "Agent";
+      if (retriever === "multi-query") return "Agent";
       if (retriever === "graph-bm25") return "Graph BM25";
       if (retriever === "dictionary-graph") return currentLanguage() === "vi" ? "Từ điển" : "Dictionary";
       if (retriever === "llm-query-rewrite") return "LLM rewrite";
@@ -3602,6 +3606,12 @@
       if (retriever === "hybrid-rrf") return "Hybrid RRF";
       if (retriever === "vector-rerank") return "Vector rerank";
       return retriever;
+    }
+
+    function retrieverTitle(retriever) {
+      if (retriever === "agent") return "Agent";
+      if (retriever === "multi-query") return "Agent";
+      return retrieverLabel(retriever);
     }
 
     function normalizeLanguage(language) {
