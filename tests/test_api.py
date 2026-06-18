@@ -312,6 +312,9 @@ def test_chat_page() -> None:
     assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
     assert "dictionaryAnswerParts" in response.text
     assert "emptyAnswerSectionParts" in response.text
+    assert "renderedMessageCopyText" in response.text
+    assert "visibleCopyText" in response.text
+    assert 'copyText(renderedMessageCopyText(message, bubble))' in response.text
     assert "allowExplicitSections" in response.text
     assert "strippedMarkdownLineText" in response.text
     assert "hasExplicitAnswerOrSourceSections" in response.text

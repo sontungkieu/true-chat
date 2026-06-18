@@ -4252,7 +4252,7 @@
           footer.appendChild(meta);
         }
       }
-      actions.appendChild(actionButton("copy", () => copyText(copyableMessageContent(message))));
+      actions.appendChild(actionButton("copy", () => copyText(renderedMessageCopyText(message, bubble))));
       if (message.role === "user") {
         actions.appendChild(actionButton("edit", () => editUserMessage(index)));
       }
@@ -4353,6 +4353,57 @@
       if (message.role !== "assistant") return message.content || "";
       const parsed = splitThinkContent(message.content || "");
       return parsed.answer || "";
+    }
+
+    function renderedMessageCopyText(message, bubble) {
+      if (message.role !== "assistant") return message.content || "";
+      if (!bubble) return copyableMessageContent(message);
+      const parts = [];
+      for (const child of Array.from(bubble.children || [])) {
+        if (child.classList?.contains("message-head")) continue;
+        const text = visibleCopyText(child);
+        if (text) parts.push(text);
+      }
+      return normalizeCopiedText(parts.join("\n\n")) || copyableMessageContent(message);
+    }
+
+    function visibleCopyText(node) {
+      if (!node) return "";
+      if (node.tagName === "DETAILS" && !node.open) {
+        return normalizeCopiedText(node.querySelector(":scope > summary")?.innerText || "");
+      }
+      if (node.classList?.contains("dictionary-inline-list")) {
+        return normalizeCopiedText(
+          Array.from(node.children || [])
+            .map((child) => visibleCopyText(child))
+            .filter(Boolean)
+            .join("\n\n")
+        );
+      }
+      if (node.classList?.contains("dictionary-inline")) {
+        const parts = [];
+        const head = node.querySelector(":scope > .dictionary-inline-head");
+        if (head) parts.push(head.innerText || head.textContent || "");
+        const graphPath = node.querySelector(":scope > .dictionary-graph-path");
+        if (graphPath) parts.push(graphPath.innerText || graphPath.textContent || "");
+        const details = node.querySelector(":scope > .dictionary-related-details");
+        if (details) {
+          parts.push(visibleCopyText(details));
+        } else {
+          const body = node.querySelector(":scope > .dictionary-inline-body");
+          if (body) parts.push(body.innerText || body.textContent || "");
+        }
+        return normalizeCopiedText(parts.filter(Boolean).join("\n"));
+      }
+      return normalizeCopiedText(node.innerText || node.textContent || "");
+    }
+
+    function normalizeCopiedText(text) {
+      return String(text || "")
+        .replace(/\u00a0/g, " ")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
     }
 
     function renderThinkDetails(thinking) {
