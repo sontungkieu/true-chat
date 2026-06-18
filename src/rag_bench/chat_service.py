@@ -484,6 +484,12 @@ class RagChatService:
                     )
                     if generation.error:
                         raise RuntimeError(generation.error)
+                    grounded_redirect_answer = _format_dictionary_redirect_lookup_fallback_answer(
+                        question,
+                        retrieval.hits,
+                        retrieval_metadata,
+                        language=response_language,
+                    )
                     grounded_category_answer = _format_dictionary_category_fallback_answer(
                         question,
                         retrieval.hits,
@@ -496,7 +502,10 @@ class RagChatService:
                         retrieval_metadata,
                         language=response_language,
                     )
-                    if grounded_category_answer:
+                    if grounded_redirect_answer:
+                        generation = replace(generation, answer=grounded_redirect_answer)
+                        retrieval_metadata["dictionary_redirect_lookup_fallback"] = True
+                    elif grounded_category_answer:
                         generation = replace(generation, answer=grounded_category_answer)
                         retrieval_metadata["dictionary_category_fallback"] = True
                     elif grounded_plural_phrase_answer:
@@ -695,7 +704,14 @@ class RagChatService:
         dictionary_refusal_fallback_used = False
         dictionary_internal_query_leak_fallback_used = False
         dictionary_category_fallback_used = False
+        dictionary_redirect_lookup_fallback_used = False
         if dictionary_fallback is not None:
+            grounded_redirect_answer = _format_dictionary_redirect_lookup_fallback_answer(
+                question,
+                dictionary_fallback.hits,
+                dictionary_fallback.metadata,
+                language=response_language,
+            )
             grounded_category_answer = _format_dictionary_category_fallback_answer(
                 question,
                 dictionary_fallback.hits,
@@ -708,13 +724,20 @@ class RagChatService:
                 dictionary_fallback.metadata,
                 language=response_language,
             )
-            if grounded_category_answer:
+            if grounded_redirect_answer:
+                generation = replace(generation, answer=grounded_redirect_answer)
+                dictionary_redirect_lookup_fallback_used = True
+            elif grounded_category_answer:
                 generation = replace(generation, answer=grounded_category_answer)
                 dictionary_category_fallback_used = True
             elif grounded_plural_phrase_answer:
                 generation = replace(generation, answer=grounded_plural_phrase_answer)
                 retrieval.metadata["dictionary_plural_phrase_list_fallback"] = True
-        if dictionary_fallback is not None and _looks_like_grounding_refusal(generation.answer):
+        if (
+            dictionary_fallback is not None
+            and not dictionary_redirect_lookup_fallback_used
+            and _looks_like_grounding_refusal(generation.answer)
+        ):
             grounded_redirect_answer = _format_dictionary_redirect_lookup_fallback_answer(
                 question,
                 dictionary_fallback.hits,
@@ -765,6 +788,8 @@ class RagChatService:
                 retrieval_metadata["dictionary_internal_query_leak_fallback"] = True
             if dictionary_category_fallback_used:
                 retrieval_metadata["dictionary_category_fallback"] = True
+            if dictionary_redirect_lookup_fallback_used:
+                retrieval_metadata["dictionary_redirect_lookup_fallback"] = True
             if dictionary_score_filter_metadata:
                 retrieval_metadata["dictionary_fallback_score_filter"] = dictionary_score_filter_metadata["score_filter"]
         if mode == "text_image":

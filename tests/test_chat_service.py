@@ -3075,7 +3075,7 @@ def test_dictionary_direct_redirect_lookup_keeps_alias_before_canonical_target()
             ]
             return RetrievalResult(query=query, hits=hits[:top_k], latency_s=0.01, metadata={"kind": "dictionary"})
 
-    class RefusalLLM(FakeLLM):
+    class RedirectConfusedLLM(FakeLLM):
         def generate(
             self,
             messages: list[dict[str, str]],
@@ -3086,7 +3086,7 @@ def test_dictionary_direct_redirect_lookup_keeps_alias_before_canonical_target()
         ) -> GenerationResult:
             self.messages = messages
             return GenerationResult(
-                answer="Không tìm thấy định nghĩa chính thức trong các nguồn được cung cấp.",
+                answer="Câu trả lời model tự sinh không nêu quan hệ tham chiếu. [fort-canonical]",
                 key_alias=self.alias,
                 attempted_aliases=[self.alias],
                 latency_s=0.03,
@@ -3105,7 +3105,7 @@ def test_dictionary_direct_redirect_lookup_keeps_alias_before_canonical_target()
         ),
         benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
         retriever=dictionary_retriever,
-        llm=RefusalLLM(),
+        llm=RedirectConfusedLLM(),
         retrievers={"dictionary-graph": dictionary_retriever},
         dictionary_status={"source": "artifact", "entry_count": 3},
     )
