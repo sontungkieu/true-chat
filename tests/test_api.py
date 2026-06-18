@@ -308,6 +308,9 @@ def test_chat_page() -> None:
     assert "dictionaryDisplayText" in response.text
     assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
     assert "dictionaryAnswerParts" in response.text
+    assert "emptyAnswerSectionParts" in response.text
+    assert "allowExplicitSections" in response.text
+    assert "strippedMarkdownLineText" in response.text
     assert "hasExplicitAnswerOrSourceSections" in response.text
     assert "câu\\s*trả\\s*lời" in response.text
     assert "nguồn|nguon" in response.text

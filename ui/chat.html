@@ -4157,8 +4157,30 @@
       if (message.role === "assistant" && display.thinking.length) {
         bubble.appendChild(renderThinkDetails(display.thinking));
       }
-      const dictionaryAnswer = message.role === "assistant" ? dictionaryAnswerParts(display.answer, documentSources, { collapseAll: collapseDictionaryCards }) : null;
-      if (dictionaryAnswer) {
+      const emptyAnswerSection = message.role === "assistant" ? emptyAnswerSectionParts(display.answer) : null;
+      const dictionaryAnswer = message.role === "assistant"
+        ? dictionaryAnswerParts(display.answer, documentSources, {
+            collapseAll: collapseDictionaryCards,
+            allowExplicitSections: Boolean(emptyAnswerSection)
+          })
+        : null;
+      if (dictionaryAnswer && emptyAnswerSection) {
+        if (emptyAnswerSection.before) {
+          const before = document.createElement("div");
+          renderTextWithCitations(before, emptyAnswerSection.before, documentSources, { markdown: true });
+          content.appendChild(before);
+        }
+        const heading = document.createElement("div");
+        heading.className = "md-heading";
+        appendInlineText(heading, emptyAnswerSection.heading, sourceLookup(documentSources), { markdown: true });
+        content.appendChild(heading);
+        content.appendChild(renderDictionaryAnswer(dictionaryAnswer));
+        if (emptyAnswerSection.after) {
+          const after = document.createElement("div");
+          renderTextWithCitations(after, emptyAnswerSection.after, documentSources, { markdown: true });
+          content.appendChild(after);
+        }
+      } else if (dictionaryAnswer) {
         bubble.appendChild(renderDictionaryAnswer(dictionaryAnswer));
         const explanation = dictionaryAnswer.explanation || (message.pending ? "" : display.fallback);
         if (explanation) {
@@ -4573,7 +4595,7 @@
       if (!dictionarySources.length) return null;
       const primarySource = (sources || []).find((source) => isDictionarySource(source) && richBlocks(source).length) || dictionarySources[0];
       const text = String(answer || "").trim();
-      if (hasExplicitAnswerOrSourceSections(text)) return null;
+      if (!options.allowExplicitSections && hasExplicitAnswerOrSourceSections(text)) return null;
       const marker = /(?:^|\n)\s*(Giải thích|Explanation)\s*:\s*/i.exec(text);
       let explanation = "";
       if (marker) {
@@ -4582,6 +4604,35 @@
         explanation = stripDictionaryHeader(text, primarySource).trim();
       }
       return { sources: dictionarySources, explanation, collapseAll: Boolean(options.collapseAll) };
+    }
+
+    function emptyAnswerSectionParts(text) {
+      const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+      const headingIndex = lines.findIndex((line) => isExplicitAnswerHeadingLine(line));
+      if (headingIndex < 0) return null;
+      let nextHeadingIndex = lines.length;
+      for (let index = headingIndex + 1; index < lines.length; index += 1) {
+        if (markdownHeading(lines[index])) {
+          nextHeadingIndex = index;
+          break;
+        }
+      }
+      const body = lines.slice(headingIndex + 1, nextHeadingIndex);
+      const hasBody = body.some((line) => strippedMarkdownLineText(line));
+      if (hasBody) return null;
+      return {
+        before: lines.slice(0, headingIndex).join("\n").trim(),
+        heading: markdownHeading(lines[headingIndex]) || lines[headingIndex].trim(),
+        after: lines.slice(nextHeadingIndex).join("\n").trim()
+      };
+    }
+
+    function isExplicitAnswerHeadingLine(line) {
+      return /^\s*#{1,6}\s*(?:câu\s*trả\s*lời|cau\s*tra\s*loi|answer)\s*:?\s*$/i.test(String(line || ""));
+    }
+
+    function strippedMarkdownLineText(line) {
+      return String(line || "").replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim();
     }
 
     function hasExplicitAnswerOrSourceSections(text) {
