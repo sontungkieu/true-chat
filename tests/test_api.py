@@ -264,6 +264,8 @@ def test_chat_page() -> None:
     assert "dictionary-inline-list" in response.text
     assert "dictionary-inline-related" in response.text
     assert "dictionary-related-details" in response.text
+    assert "dictionary-expand-inline" in response.text
+    assert 'document.createElement(collapsed ? "details" : "section")' in response.text
     assert "shouldCollapseDictionaryCardsForTurn" in response.text
     assert "previousUserRequest" in response.text
     assert "expandDictionaryDefinition" in response.text

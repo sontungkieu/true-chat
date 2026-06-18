@@ -1529,6 +1529,16 @@
       padding: 12px 14px 10px;
     }
 
+    .dictionary-inline > summary.dictionary-inline-head {
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+
+    .dictionary-inline > summary.dictionary-inline-head::-webkit-details-marker {
+      display: none;
+    }
+
     .dictionary-inline-title {
       flex: 1 1 260px;
       min-width: 0;
@@ -1649,6 +1659,28 @@
       user-select: none;
     }
 
+    .dictionary-expand-inline {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 1 auto;
+      min-width: 0;
+      min-height: calc(28px * var(--font-scale));
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted-strong);
+      font-size: 12px;
+      font-weight: 650;
+      background: var(--surface);
+      padding: 0 9px;
+      white-space: nowrap;
+    }
+
+    .dictionary-expand-inline:hover {
+      border-color: var(--text);
+      color: var(--text);
+      background: var(--surface-soft);
+    }
+
     .dictionary-related-details > summary::-webkit-details-marker {
       display: none;
     }
@@ -1667,6 +1699,10 @@
     }
 
     .dictionary-related-details[open] .dictionary-related-summary-label::before {
+      content: "▾";
+    }
+
+    .dictionary-inline[open] .dictionary-related-summary-label::before {
       content: "▾";
     }
 
@@ -4655,11 +4691,11 @@
     }
 
     function renderDictionaryCard(source, options = {}) {
-      const card = document.createElement("section");
       const relevance = dictionaryRelevance(source);
       const collapsed = Boolean(options.collapseAll) || relevance === "related";
+      const card = document.createElement(collapsed ? "details" : "section");
       card.className = "dictionary-inline" + (collapsed ? " dictionary-inline-related" : "");
-      const head = document.createElement("div");
+      const head = document.createElement(collapsed ? "summary" : "div");
       head.className = "dictionary-inline-head";
       const title = document.createElement("div");
       title.className = "dictionary-inline-title";
@@ -4681,8 +4717,21 @@
       open.className = "dictionary-open";
       open.textContent = dictionarySourceLabel(source);
       open.title = `${t("openDocument")}: ${dictionarySourceLabel(source)}`;
-      open.addEventListener("click", () => openDocument(source));
+      open.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openDocument(source);
+      });
       head.append(title, open);
+      if (collapsed) {
+        const expand = document.createElement("span");
+        expand.className = "dictionary-expand-inline";
+        const label = document.createElement("span");
+        label.className = "dictionary-related-summary-label";
+        label.textContent = relevance === "related" ? t("expandRelatedDictionary") : t("expandDictionaryDefinition");
+        expand.appendChild(label);
+        head.appendChild(expand);
+      }
       const graphPath = renderDictionaryGraphPath(source);
       const body = document.createElement("div");
       body.className = "dictionary-inline-body";
@@ -4698,19 +4747,7 @@
       }
       card.append(head);
       if (graphPath) card.appendChild(graphPath);
-      if (collapsed) {
-        const details = document.createElement("details");
-        details.className = "dictionary-related-details";
-        const summary = document.createElement("summary");
-        const label = document.createElement("span");
-        label.className = "dictionary-related-summary-label";
-        label.textContent = relevance === "related" ? t("expandRelatedDictionary") : t("expandDictionaryDefinition");
-        summary.appendChild(label);
-        details.append(summary, body);
-        card.appendChild(details);
-      } else {
-        card.appendChild(body);
-      }
+      card.appendChild(body);
       return card;
     }
 
