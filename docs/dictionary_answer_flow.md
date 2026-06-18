@@ -22,7 +22,8 @@ flowchart TD
 
 Rules:
 
-- Redirect-only entries such as `HEADWORD nh TARGET` are merged before prompt assembly when the target entry is also retrieved.
-- The prompt keeps the canonical entry with the definition and only carries alias/ref labels as lightweight metadata.
+- Redirect-only entries such as `HEADWORD nh TARGET` are merged before prompt assembly when the target entry is also retrieved for broad list/category queries.
+- Direct lookup of the redirect headword is preserved: the redirect entry is shown first, then the canonical target entry it points to.
+- In broad list/category queries, the prompt keeps the canonical entry with the definition and only carries alias/ref labels as lightweight metadata.
 - The source payload preserves redirect doc ids so citations to an alias can still open the canonical source.
 - UI cards stay compact and should not implement semantic de-duplication as their primary responsibility.

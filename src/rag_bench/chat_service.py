@@ -392,7 +392,11 @@ class RagChatService:
                 if query_plan is not None and query_plan.intent == DictionaryQueryIntent.ALIAS
                 else None
             )
-            retrieval.hits = _canonicalize_dictionary_redirect_hits(retrieval.hits)
+            redirect_preserve_terms = _dictionary_redirect_preserve_terms(query_plan)
+            retrieval.hits = _canonicalize_dictionary_redirect_hits(
+                retrieval.hits,
+                preserve_headword_terms=redirect_preserve_terms,
+            )
             retrieval_metadata = {
                 **retrieval.metadata,
                 "command": "/dict" if command and command[0] == "dict" else None,
@@ -501,7 +505,13 @@ class RagChatService:
                     if _looks_like_grounding_refusal(generation.answer) and any(
                         _hit_has_direct_dictionary_match(hit) for hit in retrieval.hits
                     ):
-                        grounded_occurrence_answer = _format_dictionary_occurrence_fallback_answer(
+                        grounded_redirect_answer = _format_dictionary_redirect_lookup_fallback_answer(
+                            question,
+                            retrieval.hits,
+                            retrieval_metadata,
+                            language=response_language,
+                        )
+                        grounded_occurrence_answer = grounded_redirect_answer or _format_dictionary_occurrence_fallback_answer(
                             question,
                             retrieval.hits,
                             retrieval_metadata,
@@ -511,6 +521,8 @@ class RagChatService:
                             generation = replace(generation, answer=grounded_occurrence_answer)
                             retrieval_metadata["dictionary_refusal_fallback"] = True
                             retrieval_metadata["dictionary_direct_refusal_fallback"] = True
+                            if grounded_redirect_answer:
+                                retrieval_metadata["dictionary_redirect_lookup_fallback"] = True
                     answer = _format_dictionary_answer(retrieval.hits, generation.answer)
             else:
                 privacy_decision = self._record_no_generation_privacy(
@@ -645,8 +657,12 @@ class RagChatService:
             retrieval.hits,
             dictionary_fallback.hits if dictionary_fallback else [],
             max_hits=prompt_hit_limit,
+            preserve_dictionary_redirect_terms=_dictionary_redirect_preserve_terms(
+                dictionary_fallback.metadata.get("query_plan")
+                if dictionary_fallback is not None and isinstance(dictionary_fallback.metadata, dict)
+                else None
+            ),
         )
-        prompt_hits = _canonicalize_dictionary_redirect_hits(prompt_hits)
         privacy_decision = self._enforce_generation_privacy(
             backend=backend,
             session_state=session_state,
@@ -699,7 +715,13 @@ class RagChatService:
                 generation = replace(generation, answer=grounded_plural_phrase_answer)
                 retrieval.metadata["dictionary_plural_phrase_list_fallback"] = True
         if dictionary_fallback is not None and _looks_like_grounding_refusal(generation.answer):
-            grounded_occurrence_answer = _format_dictionary_occurrence_fallback_answer(
+            grounded_redirect_answer = _format_dictionary_redirect_lookup_fallback_answer(
+                question,
+                dictionary_fallback.hits,
+                dictionary_fallback.metadata,
+                language=response_language,
+            )
+            grounded_occurrence_answer = grounded_redirect_answer or _format_dictionary_occurrence_fallback_answer(
                 question,
                 dictionary_fallback.hits,
                 dictionary_fallback.metadata,
@@ -708,6 +730,8 @@ class RagChatService:
             if grounded_occurrence_answer:
                 generation = replace(generation, answer=grounded_occurrence_answer)
                 dictionary_refusal_fallback_used = True
+                if grounded_redirect_answer:
+                    retrieval.metadata["dictionary_redirect_lookup_fallback"] = True
         if (
             dictionary_fallback is not None
             and not dictionary_refusal_fallback_used
@@ -916,11 +940,14 @@ class RagChatService:
         has_direct_dictionary_hit = any(float(hit.metadata.get("dictionary_direct_score") or 0.0) > 0 for hit in hits)
         if primary_top_score > 0 and not has_direct_dictionary_hit:
             return None
-        hits = _canonicalize_dictionary_redirect_hits(hits)
         metadata = dict(retrieval.metadata)
         if query_plan is not None:
             metadata["query_plan"] = query_plan.to_payload()
             metadata["dictionary_tool_plan"] = dictionary_tool_plan_payload(query_plan, original_query=question)
+        hits = _canonicalize_dictionary_redirect_hits(
+            hits,
+            preserve_headword_terms=_dictionary_redirect_preserve_terms(query_plan),
+        )
         return RetrievalResult(query=retrieval.query, hits=hits, latency_s=retrieval.latency_s, metadata=metadata)
 
     def lookup_dictionary(
@@ -1831,8 +1858,12 @@ def _merge_text_and_dictionary_hits(
     dictionary_hits: list[RetrievalHit],
     *,
     max_hits: int | None = None,
+    preserve_dictionary_redirect_terms: Sequence[str] = (),
 ) -> list[RetrievalHit]:
-    dictionary_hits = _canonicalize_dictionary_redirect_hits(dictionary_hits)
+    dictionary_hits = _canonicalize_dictionary_redirect_hits(
+        dictionary_hits,
+        preserve_headword_terms=preserve_dictionary_redirect_terms,
+    )
     if not dictionary_hits:
         hits = _canonicalize_dictionary_redirect_hits(primary_hits)
         if max_hits is not None:
@@ -1851,7 +1882,10 @@ def _merge_text_and_dictionary_hits(
         merged.append(hit)
         if max_hits is not None and len(merged) >= _clamp_top_k(max_hits, fallback=max_hits):
             break
-    merged = _canonicalize_dictionary_redirect_hits(merged)
+    merged = _canonicalize_dictionary_redirect_hits(
+        merged,
+        preserve_headword_terms=preserve_dictionary_redirect_terms,
+    )
     if max_hits is not None:
         merged = merged[: _clamp_top_k(max_hits, fallback=max_hits)]
     return [
@@ -2947,6 +2981,7 @@ def _format_dictionary_empty_answer_section_fallback(
     return (
         _format_dictionary_category_fallback_answer(question, hits, metadata, language=language)
         or _format_dictionary_plural_phrase_list_fallback_answer(question, hits, metadata, language=language)
+        or _format_dictionary_redirect_lookup_fallback_answer(question, hits, metadata, language=language)
         or _format_dictionary_occurrence_fallback_answer(question, hits, metadata, language=language)
     )
 
@@ -3072,6 +3107,60 @@ def _format_dictionary_plural_phrase_list_fallback_answer(
     return "\n\n".join(lines).strip()
 
 
+def _format_dictionary_redirect_lookup_fallback_answer(
+    question: str,
+    hits: Sequence[RetrievalHit],
+    metadata: dict[str, Any] | None,
+    *,
+    language: str | None = None,
+) -> str:
+    query_plan = metadata.get("query_plan") if isinstance(metadata, dict) else None
+    target_terms = _target_terms_from_query_plan(query_plan)
+    target_keys = {_fold_prompt_text(term) for term in target_terms if _fold_prompt_text(term)}
+    redirect_hit = next(
+        (
+            hit
+            for hit in hits
+            if _dictionary_redirect_target(hit)
+            and (
+                bool((hit.metadata or {}).get("dictionary_preserved_redirect"))
+                or not target_keys
+                or _dictionary_hit_headword_key(hit) in target_keys
+            )
+        ),
+        None,
+    )
+    if redirect_hit is None:
+        return ""
+    response_language = _normalize_response_language(language)
+    redirect_target = _dictionary_redirect_target(redirect_hit)
+    target_hit = _dictionary_redirect_target_hit(redirect_hit, hits)
+    alias_title = str(redirect_hit.title or (redirect_hit.metadata or {}).get("headword") or redirect_hit.doc_id).strip()
+    alias_citation = _format_source_citations([redirect_hit.doc_id])
+    target_title = str((target_hit.title if target_hit else "") or redirect_target).strip()
+    target_citation = _format_source_citations([target_hit.doc_id] if target_hit else [])
+    target_summary = _dictionary_hit_lead_summary(target_hit) if target_hit is not None else ""
+    if response_language == "vi":
+        parts = [
+            f"“{alias_title}” là mục từ tham chiếu trong từ điển: mục này trỏ tới **{target_title}**."
+        ]
+        if target_summary:
+            parts.append(f"Nội dung nên đọc theo mục được trỏ tới: {target_summary}")
+        citations = ", ".join(part for part in (alias_citation, target_citation) if part)
+        if citations:
+            parts.append(citations)
+        return " ".join(parts).strip()
+    parts = [
+        f"“{alias_title}” is a dictionary cross-reference: it points to **{target_title}**."
+    ]
+    if target_summary:
+        parts.append(f"Read the meaning through the referenced entry: {target_summary}")
+    citations = ", ".join(part for part in (alias_citation, target_citation) if part)
+    if citations:
+        parts.append(citations)
+    return " ".join(parts).strip()
+
+
 def _is_plural_type_category_query_plan(query_plan: Any) -> bool:
     if isinstance(query_plan, DictionaryQueryPlan):
         return (
@@ -3172,7 +3261,12 @@ def _dictionary_headword_prefix_hits(
     return result
 
 
-def _collapse_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[RetrievalHit]:
+def _collapse_dictionary_redirect_hits(
+    hits: Sequence[RetrievalHit],
+    *,
+    preserve_headword_terms: Sequence[str] = (),
+) -> list[RetrievalHit]:
+    preserve_headword_keys = {_fold_prompt_text(term) for term in preserve_headword_terms if _fold_prompt_text(term)}
     by_headword_key = {_dictionary_hit_headword_key(hit): hit for hit in hits if _dictionary_hit_headword_key(hit)}
     aliases_by_target_doc_id: dict[str, list[str]] = {}
     alias_doc_ids_by_target_doc_id: dict[str, list[str]] = {}
@@ -3182,6 +3276,17 @@ def _collapse_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[Ret
         redirect_target_key = _fold_prompt_text(redirect_target) if redirect_target else ""
         target_hit = by_headword_key.get(redirect_target_key)
         if target_hit is not None and target_hit.doc_id != hit.doc_id:
+            if (
+                (hit.metadata or {}).get("dictionary_preserved_redirect")
+                or _dictionary_hit_headword_key(hit) in preserve_headword_keys
+            ):
+                metadata = dict(hit.metadata or {})
+                metadata["dictionary_preserved_redirect"] = True
+                metadata["dictionary_redirect_target"] = redirect_target
+                metadata["dictionary_redirect_target_doc_id"] = target_hit.doc_id
+                metadata["dictionary_redirect_target_title"] = str(target_hit.title or target_hit.doc_id).strip()
+                collapsed.append(replace(hit, metadata=metadata))
+                continue
             alias_title = str(hit.title or (hit.metadata or {}).get("headword") or hit.doc_id).strip()
             if alias_title:
                 aliases = aliases_by_target_doc_id.setdefault(target_hit.doc_id, [])
@@ -3219,14 +3324,56 @@ def _collapse_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[Ret
     return updated
 
 
-def _canonicalize_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[RetrievalHit]:
-    collapsed = _collapse_dictionary_redirect_hits(hits)
+def _canonicalize_dictionary_redirect_hits(
+    hits: Sequence[RetrievalHit],
+    *,
+    preserve_headword_terms: Sequence[str] = (),
+) -> list[RetrievalHit]:
+    preserve_headword_keys = {_fold_prompt_text(term) for term in preserve_headword_terms if _fold_prompt_text(term)}
+    collapsed = _collapse_dictionary_redirect_hits(hits, preserve_headword_terms=preserve_headword_terms)
+    if preserve_headword_keys:
+        collapsed = sorted(
+            collapsed,
+            key=lambda hit: (
+                0
+                if (hit.metadata or {}).get("dictionary_preserved_redirect")
+                and _dictionary_hit_headword_key(hit) in preserve_headword_keys
+                else 1
+            ),
+        )
     return [replace(hit, rank=index) for index, hit in enumerate(collapsed, 1)]
+
+
+def _dictionary_redirect_preserve_terms(query_plan: Any) -> list[str]:
+    if query_plan is None:
+        return []
+    if isinstance(query_plan, DictionaryQueryPlan):
+        if _is_plural_type_category_query_plan(query_plan) or _is_plural_phrase_list_query_plan(query_plan):
+            return []
+        return [str(term).strip() for term in query_plan.target_terms if str(term).strip()]
+    if isinstance(query_plan, dict):
+        if _is_plural_type_category_query_plan(query_plan) or _is_plural_phrase_list_query_plan(query_plan):
+            return []
+        return [str(term).strip() for term in query_plan.get("target_terms") or [] if str(term).strip()]
+    return []
 
 
 def _dictionary_redirect_aliases_for_hit(hit: RetrievalHit) -> list[str]:
     metadata = hit.metadata or {}
     return [str(alias).strip() for alias in metadata.get("dictionary_redirect_aliases") or [] if str(alias).strip()]
+
+
+def _dictionary_redirect_target_hit(hit: RetrievalHit, hits: Sequence[RetrievalHit]) -> RetrievalHit | None:
+    metadata = hit.metadata or {}
+    target_doc_id = str(metadata.get("dictionary_redirect_target_doc_id") or "").strip()
+    if target_doc_id:
+        found = next((candidate for candidate in hits if candidate.doc_id == target_doc_id), None)
+        if found is not None:
+            return found
+    target_key = _fold_prompt_text(_dictionary_redirect_target(hit))
+    if not target_key:
+        return None
+    return next((candidate for candidate in hits if _dictionary_hit_headword_key(candidate) == target_key), None)
 
 
 def _dictionary_hit_headword_key(hit: RetrievalHit) -> str:
@@ -3280,6 +3427,11 @@ def _format_dictionary_occurrence_fallback_answer(
     direct_hits = [hit for hit in hits if _hit_has_direct_dictionary_match(hit)]
     direct_citations = _format_source_citations([hit.doc_id for hit in direct_hits])
     direct_titles = _format_source_titles(direct_hits)
+    occurrence_hits = [
+        hit
+        for hit in hits
+        if not _hit_has_direct_dictionary_match(hit) and _hit_contains_dictionary_target_text(hit, target_terms or [target])
+    ]
     if response_language == "vi":
         if direct_hits:
             direct_summary = _dictionary_hit_lead_summary(direct_hits[0])
@@ -3292,8 +3444,12 @@ def _format_dictionary_occurrence_fallback_answer(
                 f"“{target}” khớp trực tiếp với mục từ {direct_titles}. "
                 f"Có thể đọc câu hỏi theo mục từ này; các nguồn liên quan khác chỉ nên dùng làm ngữ cảnh, không dùng để đổi nghĩa của mục khớp trực tiếp. {direct_citations}"
             ).strip()
-        citations = _format_source_citations([hit.doc_id for hit in hits])
-        titles = _format_source_title_citations(hits)
+        if not occurrence_hits:
+            return (
+                f"Trong các mục từ điển được truy hồi, chưa thấy định nghĩa hoặc phần xuất hiện trực tiếp đủ chắc cho “{target}”."
+            )
+        citations = _format_source_citations([hit.doc_id for hit in occurrence_hits])
+        titles = _format_source_title_citations(occurrence_hits)
         return (
             f"Trong các mục từ điển được truy hồi, chưa thấy định nghĩa hoặc phần mở rộng chính thức cho “{target}”. "
             f"Tuy nhiên “{target}” xuất hiện trong phần giải thích/nội dung của: {titles}. "
@@ -3310,8 +3466,12 @@ def _format_dictionary_occurrence_fallback_answer(
             f"“{target}” directly matches the dictionary entry {direct_titles}. "
             f"Read the question through that entry; other related sources should only provide context, not change the direct-match meaning. {direct_citations}"
         ).strip()
-    citations = _format_source_citations([hit.doc_id for hit in hits])
-    titles = _format_source_title_citations(hits)
+    if not occurrence_hits:
+        return (
+            f"The retrieved dictionary entries do not show a formal definition or directly citable occurrence for “{target}”."
+        )
+    citations = _format_source_citations([hit.doc_id for hit in occurrence_hits])
+    titles = _format_source_title_citations(occurrence_hits)
     return (
         f"The retrieved dictionary entries do not show a formal definition or expansion for “{target}”. "
         f"They do show that it appears in the explanation/body of: {titles}. "
@@ -3357,6 +3517,26 @@ def _hit_has_direct_dictionary_match(hit: RetrievalHit) -> bool:
     mode = str(metadata.get("dictionary_match_mode") or "")
     direct_score = float(metadata.get("dictionary_direct_score") or 0.0)
     return mode in {"strict", "folded"} or direct_score >= 1.0
+
+
+def _hit_contains_dictionary_target_text(hit: RetrievalHit, target_terms: Sequence[str]) -> bool:
+    target_keys = [_fold_prompt_text(term) for term in target_terms if _fold_prompt_text(term)]
+    if not target_keys:
+        return False
+    metadata = hit.metadata or {}
+    highlight_text = " ".join(str(item) for item in metadata.get("query_highlights") or [])
+    source_text = " ".join(
+        str(value or "")
+        for value in (
+            metadata.get("headword"),
+            hit.title,
+            metadata.get("raw_docx_text"),
+            hit.text,
+            highlight_text,
+        )
+    )
+    folded_source = _fold_prompt_text(source_text)
+    return any(target and target in folded_source for target in target_keys)
 
 
 def _format_source_title_citations(hits: Sequence[RetrievalHit]) -> str:
@@ -3454,6 +3634,10 @@ def _flatten_hit_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "query_highlights",
         "dictionary_redirect_aliases",
         "dictionary_redirect_doc_ids",
+        "dictionary_preserved_redirect",
+        "dictionary_redirect_target",
+        "dictionary_redirect_target_doc_id",
+        "dictionary_redirect_target_title",
     }
     return {key: value for key, value in metadata.items() if key in allowed_keys}
 

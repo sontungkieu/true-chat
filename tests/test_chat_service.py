@@ -11,6 +11,7 @@ from rag_bench.chat_service import (
     _build_mimo_client,
     _mimo_base_url_for_key,
     _format_context,
+    _format_dictionary_occurrence_fallback_answer,
     _strong_dictionary_text_fallback_hit,
     build_dictionary_rag_messages,
     extract_alias_evidence_from_hits,
@@ -3018,6 +3019,115 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
     assert result.response["rag"]["retrieval_metadata"]["dictionary_plural_phrase_list_fallback"] is True
 
 
+def test_dictionary_direct_redirect_lookup_keeps_alias_before_canonical_target() -> None:
+    class RedirectDictionaryRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            hits = [
+                RetrievalHit(
+                    doc_id="fort-canonical",
+                    score=4.2,
+                    rank=1,
+                    title="PHÁO ĐÀI THỦ KHỐI",
+                    text="PHÁO ĐÀI THỦ KHỐI, synthetic canonical fort definition.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI THỦ KHỐI",
+                        "raw_docx_text": "PHÁO ĐÀI THỦ KHỐI, synthetic canonical fort definition.",
+                        "dictionary_direct_score": 0.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="fort-alias",
+                    score=4.1,
+                    rank=2,
+                    title="PHÁO ĐÀI ĐÀO XUYÊN",
+                    text="PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI ĐÀO XUYÊN",
+                        "raw_docx_text": "PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI",
+                        "query_highlights": ["pháo đài đào xuyên"],
+                        "dictionary_match_mode": "strict",
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="fort-related",
+                    score=2.0,
+                    rank=3,
+                    title="PHÁO ĐÀI XUÂN CANH",
+                    text="Synthetic related fort entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI XUÂN CANH",
+                        "dictionary_direct_score": 0.0,
+                    },
+                    data_tier="semi_private",
+                ),
+            ]
+            return RetrievalResult(query=query, hits=hits[:top_k], latency_s=0.01, metadata={"kind": "dictionary"})
+
+    class RefusalLLM(FakeLLM):
+        def generate(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            model: str | None = None,
+            temperature: float = 0.0,
+            max_completion_tokens: int = 512,
+        ) -> GenerationResult:
+            self.messages = messages
+            return GenerationResult(
+                answer="Không tìm thấy định nghĩa chính thức trong các nguồn được cung cấp.",
+                key_alias=self.alias,
+                attempted_aliases=[self.alias],
+                latency_s=0.03,
+                retry_count=0,
+                prompt_tokens=20,
+                completion_tokens=12,
+                total_tokens=32,
+            )
+
+    dictionary_retriever = RedirectDictionaryRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            dictionary_top_k=5,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=dictionary_retriever,
+        llm=RefusalLLM(),
+        retrievers={"dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 3},
+    )
+
+    result = service.answer([{"role": "user", "content": "pháo đài đào xuyên"}], response_mode="dictionary", language="vi")
+
+    answer = result.response["choices"][0]["message"]["content"]
+    assert "PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI" in answer
+    assert "mục từ tham chiếu" in answer
+    assert "trỏ tới **PHÁO ĐÀI THỦ KHỐI**" in answer
+    assert "chưa thấy định nghĩa" not in answer.lower()
+    retrieved = result.response["rag"]["retrieved"]
+    assert [source["doc_id"] for source in retrieved[:2]] == ["fort-alias", "fort-canonical"]
+    alias_metadata = retrieved[0]["metadata"]
+    assert alias_metadata["dictionary_preserved_redirect"] is True
+    assert alias_metadata["dictionary_redirect_target_doc_id"] == "fort-canonical"
+    prompt = service.llm.messages[-1]["content"]
+    assert "PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI" in prompt
+    assert "Alias/cross-reference note" in prompt
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_redirect_lookup_fallback"] is True
+
+
 def test_dictionary_context_marks_short_redirect_entries_to_avoid_duplicate_definitions() -> None:
     context = _format_context(
         [
@@ -3078,6 +3188,39 @@ def test_format_context_marks_merged_redirect_aliases_on_canonical_entry() -> No
     assert "TERM CANONICAL, synthetic canonical definition." in context
     assert "Merged redirect aliases for this canonical entry: TERM ALIAS; TERM ALSO." in context
     assert "Treat these as cross-references to this entry, not separate definitions." in context
+
+
+def test_occurrence_fallback_lists_only_hits_that_contain_target_text() -> None:
+    metadata = {"query_plan": {"target_terms": ["TERM_A"]}}
+    answer = _format_dictionary_occurrence_fallback_answer(
+        "TERM_A",
+        [
+            RetrievalHit(
+                doc_id="occurrence",
+                score=0.9,
+                rank=1,
+                title="TERM_A CONTEXT",
+                text="Synthetic definition body that mentions TERM_A directly.",
+                metadata={"kind": "dictionary", "headword": "TERM_A CONTEXT", "data_tier": "semi_private"},
+                data_tier="semi_private",
+            ),
+            RetrievalHit(
+                doc_id="graph-related-no-mention",
+                score=0.8,
+                rank=2,
+                title="GRAPH RELATED",
+                text="Synthetic related entry without the target token.",
+                metadata={"kind": "dictionary", "headword": "GRAPH RELATED", "data_tier": "semi_private"},
+                data_tier="semi_private",
+            ),
+        ],
+        metadata,
+        language="vi",
+    )
+
+    assert "TERM_A CONTEXT" in answer
+    assert "graph-related-no-mention" not in answer
+    assert "GRAPH RELATED" not in answer
 
 
 def test_text_dictionary_fallback_rejects_weak_lexical_hits_without_highlights() -> None:
