@@ -2805,7 +2805,8 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
     assert "PHÁO CHỐNG TĂNG" in answer
     assert "PHÁO MẶT ĐẤT" in answer
     assert "GÓC TẦM" not in answer
-    assert "không phải một bảng phân loại đầy đủ" in answer
+    assert "không phải bảng phân loại đầy đủ" in answer
+    assert "Tôi không thêm" not in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_category_fallback"] is True
     plan = result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]
     tool_plan = result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["dictionary_tool_plan"]
@@ -2839,24 +2840,9 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
         def search(self, query: Query, top_k: int) -> RetrievalResult:
             hits = [
                 RetrievalHit(
-                    doc_id="fort-a",
+                    doc_id="fort-b",
                     score=4.4,
                     rank=1,
-                    title="PHÁO ĐÀI LÁNG",
-                    text="Synthetic fort entry.",
-                    metadata={
-                        "data_tier": "semi_private",
-                        "kind": "dictionary",
-                        "headword": "PHÁO ĐÀI LÁNG",
-                        "query_highlights": ["pháo đài"],
-                        "dictionary_direct_score": 1.0,
-                    },
-                    data_tier="semi_private",
-                ),
-                RetrievalHit(
-                    doc_id="fort-b",
-                    score=4.3,
-                    rank=2,
                     title="PHÁO ĐÀI THỦ KHỐI",
                     text="Synthetic canonical fort entry.",
                     metadata={
@@ -2870,8 +2856,8 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
                 ),
                 RetrievalHit(
                     doc_id="fort-b-alias",
-                    score=4.2,
-                    rank=3,
+                    score=4.3,
+                    rank=2,
                     title="PHÁO ĐÀI THỔ KHỐI",
                     text="PHÁO ĐÀI THỔ KHỐI nh PHÁO ĐÀI THỦ KHỐI",
                     metadata={
@@ -2885,9 +2871,70 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
                     data_tier="semi_private",
                 ),
                 RetrievalHit(
+                    doc_id="fort-b-alias-2",
+                    score=4.2,
+                    rank=3,
+                    title="PHÁO ĐÀI ĐÀO XUYÊN",
+                    text="PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI ĐÀO XUYÊN",
+                        "raw_docx_text": "PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="fort-c",
+                    score=4.1,
+                    rank=4,
+                    title="PHÁO ĐÀI XUÂN CANH",
+                    text="Synthetic fort entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI XUÂN CANH",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="fort-d",
+                    score=4.0,
+                    rank=5,
+                    title="PHÁO ĐÀI XUÂN TẢO",
+                    text="Synthetic fort entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI XUÂN TẢO",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="fort-a",
+                    score=3.9,
+                    rank=6,
+                    title="PHÁO ĐÀI LÁNG",
+                    text="Synthetic fort entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI LÁNG",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
                     doc_id="relation",
                     score=3.0,
-                    rank=4,
+                    rank=7,
                     title="QUAN HỆ PHÁO ĐÀI",
                     text="Synthetic relation entry that starts with another headword.",
                     metadata={
@@ -2927,8 +2974,8 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
     dictionary_retriever = DictionaryFallbackRetriever()
     service = RagChatService(
         config=ChatProxyConfig(
-            top_k=6,
-            dictionary_top_k=6,
+            top_k=5,
+            dictionary_top_k=5,
             model_id="rag-test",
             allow_external_semi_private=True,
         ),
@@ -2946,9 +2993,12 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
     assert "PHÁO ĐÀI LÁNG" in answer
     assert "PHÁO ĐÀI THỦ KHỐI" in answer
     assert "còn được trỏ tới bởi: PHÁO ĐÀI THỔ KHỐI" in answer
+    assert "PHÁO ĐÀI ĐÀO XUYÊN" in answer
+    assert "PHÁO ĐÀI XUÂN CANH" in answer
+    assert "PHÁO ĐÀI XUÂN TẢO" in answer
     assert "2. **PHÁO ĐÀI THỔ KHỐI**" not in answer
     assert "QUAN HỆ PHÁO ĐÀI" not in answer
-    assert "không phải một danh sách đầy đủ" in answer
+    assert "Tôi không thêm" not in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_plural_phrase_list_fallback"] is True
 

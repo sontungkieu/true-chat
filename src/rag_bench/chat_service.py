@@ -74,6 +74,7 @@ DEFAULT_CHAT_RETRIEVERS = (
     "image-digits",
 )
 MIN_RETRIEVAL_DISPLAY_SCORE = 5e-4
+DICTIONARY_LIST_FALLBACK_MIN_HITS = 8
 CONTEXT_SEPARATOR = "\n\n---\n\n"
 ALIAS_EDGE_MIN_CONFIDENCE = 0.5
 PROMPT_SECTION_SCHEMA_VERSION = "prompt_sections_v1"
@@ -354,7 +355,8 @@ class RagChatService:
             retriever = self.resolve_request_retriever("dictionary-graph")
             request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
             query_plan = plan_dictionary_query(question) if self.config.enable_dictionary_query_planner else None
-            retrieval = retriever.search(Query(query_id="chat-dict", text=question), request_top_k)
+            dictionary_hit_limit = _dictionary_list_query_hit_limit(query_plan, request_top_k)
+            retrieval = retriever.search(Query(query_id="chat-dict", text=question), dictionary_hit_limit)
             structured_result = None
             if query_plan is not None and self.structured_evidence_index is not None:
                 structured_result = self.structured_evidence_index.search(
@@ -373,17 +375,17 @@ class RagChatService:
                     retriever,
                     query_plan,
                     original_query=question,
-                    request_top_k=request_top_k,
+                    request_top_k=dictionary_hit_limit,
                     query_id_prefix="chat-dict-plan",
                 )
                 if extra_results:
                     retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
             if query_plan is not None:
-                retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
+                retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=dictionary_hit_limit)
             retrieval, score_filter_metadata = _apply_retrieval_score_controls(
                 retrieval,
                 score_controls,
-                max_hits=request_top_k,
+                max_hits=dictionary_hit_limit,
             )
             alias_evidence = (
                 extract_alias_evidence_from_hits(retrieval.hits, target_terms=query_plan.target_terms)
@@ -621,17 +623,27 @@ class RagChatService:
         )
         dictionary_score_filter_metadata: dict[str, Any] = {}
         if dictionary_fallback is not None:
+            dictionary_fallback_hit_limit = _dictionary_list_query_hit_limit(
+                dictionary_fallback.metadata.get("query_plan") if isinstance(dictionary_fallback.metadata, dict) else None,
+                request_top_k,
+            )
             dictionary_fallback, dictionary_score_filter_metadata = _apply_retrieval_score_controls(
                 dictionary_fallback,
                 score_controls,
-                max_hits=request_top_k,
+                max_hits=dictionary_fallback_hit_limit,
             )
             if not dictionary_fallback.hits:
                 dictionary_fallback = None
+        prompt_hit_limit = request_top_k
+        if dictionary_fallback is not None:
+            prompt_hit_limit = _dictionary_list_query_hit_limit(
+                dictionary_fallback.metadata.get("query_plan") if isinstance(dictionary_fallback.metadata, dict) else None,
+                request_top_k,
+            )
         prompt_hits = _merge_text_and_dictionary_hits(
             retrieval.hits,
             dictionary_fallback.hits if dictionary_fallback else [],
-            max_hits=request_top_k,
+            max_hits=prompt_hit_limit,
         )
         privacy_decision = self._enforce_generation_privacy(
             backend=backend,
@@ -877,18 +889,19 @@ class RagChatService:
             return None
         request_top_k = _clamp_top_k(top_k, fallback=self.config.dictionary_top_k)
         query_plan = plan_dictionary_query(question) if self.config.enable_dictionary_query_planner else None
-        retrieval = dictionary_retriever.search(Query(query_id="chat-dict-fallback", text=question), request_top_k)
+        dictionary_hit_limit = _dictionary_list_query_hit_limit(query_plan, request_top_k)
+        retrieval = dictionary_retriever.search(Query(query_id="chat-dict-fallback", text=question), dictionary_hit_limit)
         if query_plan is not None:
             extra_results = _planned_dictionary_extra_results(
                 dictionary_retriever,
                 query_plan,
                 original_query=question,
-                request_top_k=request_top_k,
+                request_top_k=dictionary_hit_limit,
                 query_id_prefix="chat-dict-fallback-plan",
             )
             if extra_results:
                 retrieval.hits = merge_planned_dictionary_results(retrieval.hits, extra_results)
-            retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=request_top_k)
+            retrieval.hits = annotate_and_rank_dictionary_hits(retrieval.hits, query_plan, max_hits=dictionary_hit_limit)
         primary_top_score = max((hit.score for hit in primary_retrieval.hits), default=0.0)
         allow_lexical_mentions = primary_top_score <= 0 and bool(query_plan and query_plan.target_terms)
         hits = [
@@ -2154,6 +2167,13 @@ def _clamp_top_k(value: int | None, *, fallback: int) -> int:
     return min(20, max(1, int(value)))
 
 
+def _dictionary_list_query_hit_limit(query_plan: Any, request_top_k: int) -> int:
+    request_limit = _clamp_top_k(request_top_k, fallback=request_top_k)
+    if _is_plural_type_category_query_plan(query_plan) or _is_plural_phrase_list_query_plan(query_plan):
+        return max(request_limit, DICTIONARY_LIST_FALLBACK_MIN_HITS)
+    return request_limit
+
+
 def _planned_dictionary_extra_results(
     retriever: Retriever,
     query_plan: DictionaryQueryPlan,
@@ -2946,31 +2966,27 @@ def _format_dictionary_category_fallback_answer(
             if base_titles:
                 return (
                     f"Tôi thấy mục từ nền liên quan đến “{target}” trong từ điển: {base_titles}. "
-                    "Tuy nhiên các nguồn truy hồi hiện chưa cung cấp một danh sách loại/mẫu cụ thể đủ chắc để liệt kê. "
-                    "Tôi không bổ sung các loại ngoài nguồn truy hồi. "
+                    "Các nguồn truy hồi hiện chưa cung cấp một danh sách loại/mẫu cụ thể đủ chắc để liệt kê. "
                     f"{citations}"
                 ).strip()
             return (
-                f"Các nguồn truy hồi hiện chưa cung cấp danh sách loại/mẫu cụ thể cho “{target}”. "
-                "Tôi không bổ sung ví dụ ngoài nguồn truy hồi."
+                f"Các nguồn truy hồi hiện chưa cung cấp danh sách loại/mẫu cụ thể cho “{target}”."
             )
         if base_titles:
             return (
                 f"I found the base dictionary entry related to “{target}”: {base_titles}. "
                 "However, the retrieved sources do not provide a sufficiently grounded list of specific types. "
-                "I will not add examples outside the retrieved evidence. "
                 f"{citations}"
             ).strip()
         return (
-            f"The retrieved sources do not provide a grounded list of specific types for “{target}”. "
-            "I will not add examples outside the retrieved evidence."
+            f"The retrieved sources do not provide a grounded list of specific types for “{target}”."
         )
 
     listed_hits = type_hits[:8]
     if response_language == "vi":
         lines = [
-            f"Trong các nguồn truy hồi, tôi thấy một số mục từ phù hợp trực tiếp với yêu cầu tìm các loại “{target}”. "
-            "Danh sách này chỉ phản ánh các mục được truy hồi, không phải một bảng phân loại đầy đủ:"
+            f"Các mục từ truy hồi hỗ trợ một số loại “{target}” sau "
+            "(đây không phải bảng phân loại đầy đủ):"
         ]
         for index, hit in enumerate(listed_hits, 1):
             title = str(hit.title or hit.doc_id).strip()
@@ -2982,12 +2998,11 @@ def _format_dictionary_category_fallback_answer(
             )
         if len(type_hits) > len(listed_hits):
             lines.append(f"Còn {len(type_hits) - len(listed_hits)} mục phù hợp trực tiếp khác trong phần nguồn liên quan.")
-        lines.append("Tôi không thêm các loại ngoài nguồn truy hồi nếu từ điển không nêu.")
         return "\n\n".join(lines).strip()
 
     lines = [
-        f"The retrieved sources show several entries that directly match the request for types of “{target}”. "
-        "This is a retrieved-entry list, not a complete taxonomy:"
+        f"The retrieved entries support the following types of “{target}” "
+        "(not a complete taxonomy):"
     ]
     for index, hit in enumerate(listed_hits, 1):
         title = str(hit.title or hit.doc_id).strip()
@@ -2999,7 +3014,6 @@ def _format_dictionary_category_fallback_answer(
         )
     if len(type_hits) > len(listed_hits):
         lines.append(f"{len(type_hits) - len(listed_hits)} additional direct matches are available in the related sources.")
-    lines.append("I will not add type examples outside the retrieved evidence.")
     return "\n\n".join(lines).strip()
 
 
@@ -3024,8 +3038,7 @@ def _format_dictionary_plural_phrase_list_fallback_answer(
     listed_hits = phrase_hits[:8]
     if response_language == "vi":
         lines = [
-            f"Trong các nguồn truy hồi, tôi thấy các mục từ bắt đầu bằng “{target}”. "
-            "Danh sách này chỉ phản ánh các mục được truy hồi, không phải một danh sách đầy đủ:"
+            f"Các mục từ truy hồi bắt đầu bằng “{target}” gồm:"
         ]
         for index, hit in enumerate(listed_hits, 1):
             title = str(hit.title or hit.doc_id).strip()
@@ -3037,12 +3050,10 @@ def _format_dictionary_plural_phrase_list_fallback_answer(
             )
         if len(phrase_hits) > len(listed_hits):
             lines.append(f"Còn {len(phrase_hits) - len(listed_hits)} mục phù hợp trực tiếp khác trong phần nguồn liên quan.")
-        lines.append("Tôi không thêm mục ngoài nguồn truy hồi nếu từ điển không nêu.")
         return "\n\n".join(lines).strip()
 
     lines = [
-        f"The retrieved sources include entries that start with “{target}”. "
-        "This is a retrieved-entry list, not a complete list:"
+        f"The retrieved entries that start with “{target}” are:"
     ]
     for index, hit in enumerate(listed_hits, 1):
         title = str(hit.title or hit.doc_id).strip()
@@ -3054,7 +3065,6 @@ def _format_dictionary_plural_phrase_list_fallback_answer(
         )
     if len(phrase_hits) > len(listed_hits):
         lines.append(f"{len(phrase_hits) - len(listed_hits)} additional direct matches are available in the related sources.")
-    lines.append("I will not add entries outside the retrieved evidence.")
     return "\n\n".join(lines).strip()
 
 
