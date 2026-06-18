@@ -2820,6 +2820,139 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
     assert "HEADWORD nh TARGET" in service.llm.messages[-1]["content"]
 
 
+def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_grounded_entries() -> None:
+    class WeakTextRetriever:
+        name = "bm25"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            return RetrievalResult(
+                query=query,
+                hits=[],
+                latency_s=0.01,
+            )
+
+    class DictionaryFallbackRetriever:
+        name = "dictionary-graph"
+        build_time_s = 0.0
+
+        def search(self, query: Query, top_k: int) -> RetrievalResult:
+            hits = [
+                RetrievalHit(
+                    doc_id="fort-a",
+                    score=4.4,
+                    rank=1,
+                    title="PHÁO ĐÀI LÁNG",
+                    text="Synthetic fort entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI LÁNG",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="fort-b",
+                    score=4.3,
+                    rank=2,
+                    title="PHÁO ĐÀI THỦ KHỐI",
+                    text="Synthetic canonical fort entry.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI THỦ KHỐI",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="fort-b-alias",
+                    score=4.2,
+                    rank=3,
+                    title="PHÁO ĐÀI THỔ KHỐI",
+                    text="PHÁO ĐÀI THỔ KHỐI nh PHÁO ĐÀI THỦ KHỐI",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐÀI THỔ KHỐI",
+                        "raw_docx_text": "PHÁO ĐÀI THỔ KHỐI nh PHÁO ĐÀI THỦ KHỐI",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 1.0,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
+                    doc_id="relation",
+                    score=3.0,
+                    rank=4,
+                    title="QUAN HỆ PHÁO ĐÀI",
+                    text="Synthetic relation entry that starts with another headword.",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "QUAN HỆ PHÁO ĐÀI",
+                        "query_highlights": ["pháo đài"],
+                        "dictionary_direct_score": 0.4,
+                    },
+                    data_tier="semi_private",
+                ),
+            ]
+            return RetrievalResult(query=query, hits=hits[:top_k], latency_s=0.01, metadata={"kind": "dictionary"})
+
+    class EmptySectionLLM(FakeLLM):
+        def generate(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            model: str | None = None,
+            temperature: float = 0.0,
+            max_completion_tokens: int = 512,
+        ) -> GenerationResult:
+            self.messages = messages
+            return GenerationResult(
+                answer="### câu trả lời\n\n### nguồn\n- [fort-a]\n- [fort-b]\n- [relation]",
+                key_alias=self.alias,
+                attempted_aliases=[self.alias],
+                latency_s=0.03,
+                retry_count=0,
+                prompt_tokens=20,
+                completion_tokens=16,
+                total_tokens=36,
+            )
+
+    text_retriever = WeakTextRetriever()
+    dictionary_retriever = DictionaryFallbackRetriever()
+    service = RagChatService(
+        config=ChatProxyConfig(
+            top_k=6,
+            dictionary_top_k=6,
+            model_id="rag-test",
+            allow_external_semi_private=True,
+        ),
+        benchmark=BenchmarkData(name="fixture", dataset_id="fixture/test", queries=[], documents=[], qrels={}),
+        retriever=text_retriever,
+        llm=EmptySectionLLM(),
+        retrievers={"bm25": text_retriever, "dictionary-graph": dictionary_retriever},
+        dictionary_status={"source": "artifact", "entry_count": 4},
+    )
+
+    result = service.answer([{"role": "user", "content": "các pháo đài"}], response_mode="text", language="vi")
+
+    answer = result.response["choices"][0]["message"]["content"]
+    assert "### câu trả lời" not in answer
+    assert "PHÁO ĐÀI LÁNG" in answer
+    assert "PHÁO ĐÀI THỦ KHỐI" in answer
+    assert "còn được trỏ tới bởi: PHÁO ĐÀI THỔ KHỐI" in answer
+    assert "2. **PHÁO ĐÀI THỔ KHỐI**" not in answer
+    assert "QUAN HỆ PHÁO ĐÀI" not in answer
+    assert "không phải một danh sách đầy đủ" in answer
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
+    assert result.response["rag"]["retrieval_metadata"]["dictionary_plural_phrase_list_fallback"] is True
+
+
 def test_dictionary_context_marks_short_redirect_entries_to_avoid_duplicate_definitions() -> None:
     context = _format_context(
         [

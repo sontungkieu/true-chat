@@ -483,9 +483,18 @@ class RagChatService:
                         retrieval_metadata,
                         language=response_language,
                     )
+                    grounded_plural_phrase_answer = _format_dictionary_plural_phrase_list_fallback_answer(
+                        question,
+                        retrieval.hits,
+                        retrieval_metadata,
+                        language=response_language,
+                    )
                     if grounded_category_answer:
                         generation = replace(generation, answer=grounded_category_answer)
                         retrieval_metadata["dictionary_category_fallback"] = True
+                    elif grounded_plural_phrase_answer:
+                        generation = replace(generation, answer=grounded_plural_phrase_answer)
+                        retrieval_metadata["dictionary_plural_phrase_list_fallback"] = True
                     if _looks_like_grounding_refusal(generation.answer) and any(
                         _hit_has_direct_dictionary_match(hit) for hit in retrieval.hits
                     ):
@@ -663,9 +672,18 @@ class RagChatService:
                 dictionary_fallback.metadata,
                 language=response_language,
             )
+            grounded_plural_phrase_answer = _format_dictionary_plural_phrase_list_fallback_answer(
+                question,
+                dictionary_fallback.hits,
+                dictionary_fallback.metadata,
+                language=response_language,
+            )
             if grounded_category_answer:
                 generation = replace(generation, answer=grounded_category_answer)
                 dictionary_category_fallback_used = True
+            elif grounded_plural_phrase_answer:
+                generation = replace(generation, answer=grounded_plural_phrase_answer)
+                retrieval.metadata["dictionary_plural_phrase_list_fallback"] = True
         if dictionary_fallback is not None and _looks_like_grounding_refusal(generation.answer):
             grounded_occurrence_answer = _format_dictionary_occurrence_fallback_answer(
                 question,
@@ -2865,6 +2883,38 @@ def _looks_like_internal_query_leak(answer: str) -> bool:
     return any(marker in folded for marker in leak_markers)
 
 
+def _answer_markdown_section_is_empty(answer: str) -> bool:
+    source = str(answer or "")
+    match = re.search(
+        r"(?im)^\s{0,3}#{1,6}\s*(?:câu\s*trả\s*lời|cau\s*tra\s*loi|answer)\s*:?\s*$",
+        source,
+    )
+    if not match:
+        return False
+    next_heading = re.search(r"(?im)^\s{0,3}#{1,6}\s+\S.*$", source[match.end() :])
+    body = source[match.end() : match.end() + next_heading.start()] if next_heading else source[match.end() :]
+    cleaned_lines = []
+    for line in body.splitlines():
+        stripped = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+        if stripped:
+            cleaned_lines.append(stripped)
+    return not cleaned_lines
+
+
+def _format_dictionary_empty_answer_section_fallback(
+    question: str,
+    hits: Sequence[RetrievalHit],
+    metadata: dict[str, Any] | None,
+    *,
+    language: str | None = None,
+) -> str:
+    return (
+        _format_dictionary_category_fallback_answer(question, hits, metadata, language=language)
+        or _format_dictionary_plural_phrase_list_fallback_answer(question, hits, metadata, language=language)
+        or _format_dictionary_occurrence_fallback_answer(question, hits, metadata, language=language)
+    )
+
+
 def _fold_prompt_text(text: str) -> str:
     normalized = unicodedata.normalize("NFD", text)
     stripped = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
@@ -2953,6 +3003,61 @@ def _format_dictionary_category_fallback_answer(
     return "\n\n".join(lines).strip()
 
 
+def _format_dictionary_plural_phrase_list_fallback_answer(
+    question: str,
+    hits: Sequence[RetrievalHit],
+    metadata: dict[str, Any] | None,
+    *,
+    language: str | None = None,
+) -> str:
+    query_plan = metadata.get("query_plan") if isinstance(metadata, dict) else None
+    if not _is_plural_phrase_list_query_plan(query_plan):
+        return ""
+    target_terms = _target_terms_from_query_plan(query_plan)
+    if not target_terms:
+        return ""
+    response_language = _normalize_response_language(language)
+    target = target_terms[0]
+    phrase_hits = _collapse_dictionary_redirect_hits(_dictionary_headword_prefix_hits(hits, target_terms))
+    if len(phrase_hits) < 2:
+        return ""
+    listed_hits = phrase_hits[:8]
+    if response_language == "vi":
+        lines = [
+            f"Trong các nguồn truy hồi, tôi thấy các mục từ bắt đầu bằng “{target}”. "
+            "Danh sách này chỉ phản ánh các mục được truy hồi, không phải một danh sách đầy đủ:"
+        ]
+        for index, hit in enumerate(listed_hits, 1):
+            title = str(hit.title or hit.doc_id).strip()
+            aliases = _dictionary_redirect_aliases_for_hit(hit)
+            alias_suffix = f" (còn được trỏ tới bởi: {', '.join(aliases)})" if aliases else ""
+            lines.append(
+                f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
+                f"   - Đây là mục từ riêng được truy hồi trực tiếp trong nhóm “{target}”."
+            )
+        if len(phrase_hits) > len(listed_hits):
+            lines.append(f"Còn {len(phrase_hits) - len(listed_hits)} mục phù hợp trực tiếp khác trong phần nguồn liên quan.")
+        lines.append("Tôi không thêm mục ngoài nguồn truy hồi nếu từ điển không nêu.")
+        return "\n\n".join(lines).strip()
+
+    lines = [
+        f"The retrieved sources include entries that start with “{target}”. "
+        "This is a retrieved-entry list, not a complete list:"
+    ]
+    for index, hit in enumerate(listed_hits, 1):
+        title = str(hit.title or hit.doc_id).strip()
+        aliases = _dictionary_redirect_aliases_for_hit(hit)
+        alias_suffix = f" (also referenced by: {', '.join(aliases)})" if aliases else ""
+        lines.append(
+            f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
+            f"   - This is a distinct retrieved dictionary entry in the “{target}” group."
+        )
+    if len(phrase_hits) > len(listed_hits):
+        lines.append(f"{len(phrase_hits) - len(listed_hits)} additional direct matches are available in the related sources.")
+    lines.append("I will not add entries outside the retrieved evidence.")
+    return "\n\n".join(lines).strip()
+
+
 def _is_plural_type_category_query_plan(query_plan: Any) -> bool:
     if isinstance(query_plan, DictionaryQueryPlan):
         return (
@@ -2967,6 +3072,25 @@ def _is_plural_type_category_query_plan(query_plan: Any) -> bool:
         and isinstance(normalization, dict)
         and str(normalization.get("target_layer") or "") == "plural_type_lookup_wrapper"
     )
+
+
+def _is_plural_phrase_list_query_plan(query_plan: Any) -> bool:
+    if isinstance(query_plan, DictionaryQueryPlan):
+        normalization = query_plan.normalization
+        query = query_plan.query
+        target_terms = query_plan.target_terms
+    elif isinstance(query_plan, dict):
+        normalization = query_plan.get("normalization") if isinstance(query_plan.get("normalization"), dict) else {}
+        query = str(query_plan.get("query") or "")
+        target_terms = [str(term) for term in query_plan.get("target_terms") or []]
+    else:
+        return False
+    if str(normalization.get("target_layer") or "") != "regex_lookup_wrapper":
+        return False
+    if not target_terms:
+        return False
+    folded_query = _fold_prompt_text(query)
+    return bool(re.match(r"^(?:cac|nhung)\s+\S+", folded_query))
 
 
 def _target_terms_from_query_plan(query_plan: Any) -> list[str]:
@@ -3009,6 +3133,26 @@ def _dictionary_base_category_hits(
         if not doc_id or doc_id in seen:
             continue
         if _dictionary_hit_headword_key(hit) in target_keys:
+            seen.add(doc_id)
+            result.append(hit)
+    return result
+
+
+def _dictionary_headword_prefix_hits(
+    hits: Sequence[RetrievalHit],
+    target_terms: Sequence[str],
+) -> list[RetrievalHit]:
+    target_keys = {_fold_prompt_text(term) for term in target_terms if _fold_prompt_text(term)}
+    result: list[RetrievalHit] = []
+    seen: set[str] = set()
+    for hit in hits:
+        doc_id = str(hit.doc_id or "").strip()
+        if not doc_id or doc_id in seen:
+            continue
+        headword_key = _dictionary_hit_headword_key(hit)
+        if not headword_key:
+            continue
+        if any(target and headword_key.startswith(f"{target} ") for target in target_keys):
             seen.add(doc_id)
             result.append(hit)
     return result
