@@ -313,6 +313,7 @@ def test_chat_page() -> None:
     assert "MAX_INLINE_DICTIONARY_SOURCES = 3" in response.text
     assert "dictionary_redirect_doc_ids" in response.text
     assert "has_concept: \"khái niệm\"" in response.text
+    assert "padding-bottom: calc(104px + var(--safe-bottom))" in response.text
     assert "dictionaryAnswerParts" in response.text
     assert "emptyAnswerSectionParts" in response.text
     assert "renderedMessageCopyText" in response.text
