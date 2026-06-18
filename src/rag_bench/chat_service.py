@@ -3612,11 +3612,43 @@ def _dictionary_hit_lead_summary(hit: RetrievalHit, *, max_chars: int = 320) -> 
         text = re.sub(rf"^{title_pattern}\s*[,;:.-]?\s*", "", text, count=1, flags=re.IGNORECASE)
     if not text:
         return ""
-    sentence_match = re.search(r"^(.{40,}?[.!?。])(?:\s|$)", text)
-    summary = sentence_match.group(1) if sentence_match else text
+    summary = _dictionary_lead_sentence(text) or text
     if len(summary) > max_chars:
         summary = summary[:max_chars].rstrip(" ,;:") + "..."
     return summary.strip()
+
+
+def _dictionary_lead_sentence(text: str, *, min_chars: int = 40) -> str:
+    for match in re.finditer(r"[.!?。](?=\s|$)", text):
+        end = match.end()
+        if end < min_chars:
+            continue
+        if _dictionary_sentence_boundary_is_abbreviation(text, end):
+            continue
+        return text[:end].strip()
+    return ""
+
+
+def _dictionary_sentence_boundary_is_abbreviation(text: str, punctuation_end: int) -> bool:
+    prefix = text[: max(0, punctuation_end - 1)].rstrip()
+    token_match = re.search(r"([A-Za-zÀ-ỹĐđ]{1,8})$", prefix)
+    if not token_match:
+        return False
+    token = _fold_prompt_text(token_match.group(1)).replace(" ", "")
+    return token in {
+        "h",
+        "x",
+        "t",
+        "q",
+        "tx",
+        "tp",
+        "tr",
+        "tt",
+        "d",
+        "dc",
+        "e",
+        "f",
+    }
 
 
 def _format_dictionary_answer(hits: list[RetrievalHit], explanation: str) -> str:

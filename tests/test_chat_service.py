@@ -12,6 +12,7 @@ from rag_bench.chat_service import (
     _mimo_base_url_for_key,
     _format_context,
     _format_dictionary_occurrence_fallback_answer,
+    _dictionary_hit_lead_summary,
     _strong_dictionary_text_fallback_hit,
     build_dictionary_rag_messages,
     extract_alias_evidence_from_hits,
@@ -3031,12 +3032,12 @@ def test_dictionary_direct_redirect_lookup_keeps_alias_before_canonical_target()
                     score=4.2,
                     rank=1,
                     title="PHÁO ĐÀI THỦ KHỐI",
-                    text="PHÁO ĐÀI THỦ KHỐI, synthetic canonical fort definition.",
+                    text="PHÁO ĐÀI THỦ KHỐI, synthetic canonical fort definition at x. Alpha, h. Beta, tỉnh Gamma. Extra detail.",
                     metadata={
                         "data_tier": "semi_private",
                         "kind": "dictionary",
                         "headword": "PHÁO ĐÀI THỦ KHỐI",
-                        "raw_docx_text": "PHÁO ĐÀI THỦ KHỐI, synthetic canonical fort definition.",
+                        "raw_docx_text": "PHÁO ĐÀI THỦ KHỐI, synthetic canonical fort definition at x. Alpha, h. Beta, tỉnh Gamma. Extra detail.",
                         "dictionary_direct_score": 0.0,
                     },
                     data_tier="semi_private",
@@ -3116,6 +3117,7 @@ def test_dictionary_direct_redirect_lookup_keeps_alias_before_canonical_target()
     assert "PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI" in answer
     assert "mục từ tham chiếu" in answer
     assert "trỏ tới **PHÁO ĐÀI THỦ KHỐI**" in answer
+    assert "h. Beta, tỉnh Gamma." in answer
     assert "chưa thấy định nghĩa" not in answer.lower()
     retrieved = result.response["rag"]["retrieved"]
     assert [source["doc_id"] for source in retrieved[:2]] == ["fort-alias", "fort-canonical"]
@@ -3126,6 +3128,25 @@ def test_dictionary_direct_redirect_lookup_keeps_alias_before_canonical_target()
     assert "PHÁO ĐÀI ĐÀO XUYÊN nh PHÁO ĐÀI THỦ KHỐI" in prompt
     assert "Alias/cross-reference note" in prompt
     assert result.response["rag"]["retrieval_metadata"]["dictionary_redirect_lookup_fallback"] is True
+
+
+def test_dictionary_hit_lead_summary_does_not_cut_at_short_abbreviations() -> None:
+    hit = RetrievalHit(
+        doc_id="synthetic",
+        score=1.0,
+        rank=1,
+        title="TERM",
+        text="TERM, synthetic entry located at x. Alpha, h. Beta, tỉnh Gamma. Second sentence.",
+        metadata={
+            "kind": "dictionary",
+            "headword": "TERM",
+            "raw_docx_text": "TERM, synthetic entry located at x. Alpha, h. Beta, tỉnh Gamma. Second sentence.",
+        },
+    )
+
+    summary = _dictionary_hit_lead_summary(hit)
+
+    assert summary == "synthetic entry located at x. Alpha, h. Beta, tỉnh Gamma."
 
 
 def test_dictionary_context_marks_short_redirect_entries_to_avoid_duplicate_definitions() -> None:
