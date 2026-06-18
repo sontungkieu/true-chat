@@ -271,7 +271,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--embed-mimo-env",
         action="store_true",
-        help="Embed MIMO_API_KEY and optional MIMO_BASE_URL from --mimo-env-file into the generated private notebook.",
+        help=(
+            "Embed MIMO_API_KEY, optional MIMO_API_KEY_PAYG, and optional MIMO_BASE_URL "
+            "from --mimo-env-file into the generated private notebook."
+        ),
     )
     parser.add_argument("--mimo-env-file", default=str(DEFAULT_MIMO_ENV_PATH), help="Env file read when --embed-mimo-env is used.")
     parser.add_argument(
@@ -411,6 +414,9 @@ def read_mimo_env_b64(repo_root: Path, value: str | Path) -> str:
     if not mimo_key:
         raise SystemExit(f"MIMO_API_KEY was not found in {path}")
     lines = [f"MIMO_API_KEY={mimo_key}"]
+    mimo_payg_key = values.get("MIMO_API_KEY_PAYG", "").strip()
+    if mimo_payg_key:
+        lines.append(f"MIMO_API_KEY_PAYG={mimo_payg_key}")
     mimo_base_url = values.get("MIMO_BASE_URL", "").strip()
     if mimo_base_url:
         lines.append(f"MIMO_BASE_URL={mimo_base_url}")
@@ -766,6 +772,12 @@ def build_notebook(
                 "    kaggle_secrets = UserSecretsClient()\n"
                 "    mimo_key = kaggle_secrets.get_secret('MIMO_API_KEY')\n"
                 "    lines = ['MIMO_API_KEY=' + mimo_key]\n"
+                "    try:\n"
+                "        mimo_payg_key = kaggle_secrets.get_secret('MIMO_API_KEY_PAYG')\n"
+                "        if mimo_payg_key:\n"
+                "            lines.append('MIMO_API_KEY_PAYG=' + mimo_payg_key)\n"
+                "    except Exception:\n"
+                "        pass\n"
                 "    try:\n"
                 "        mimo_base_url = kaggle_secrets.get_secret('MIMO_BASE_URL')\n"
                 "        if mimo_base_url:\n"

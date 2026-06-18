@@ -482,7 +482,7 @@ scripts/upload_kaggle_rag_proxy_notebook.py \
   --available-retrievers bm25,tfidf,keyword-match,agent,graph-bm25,dictionary-graph,image-digits
 ```
 
-`--dictionary-dataset-source` is written to Kaggle `dataset_sources`, then the notebook copies the attached artifact from `/kaggle/input` into the cloned repo before `rag-bench serve` starts. PB dictionary context is semi-private, so approved external Groq/MiMo generation requires `--allow-external-semi-private`; without it, the runtime privacy guard blocks external SaaS generation. If `--available-retrievers` is omitted while a dictionary dataset is attached, the uploader defaults to the full local UI retriever set above. The generated notebook can also expose MiMo models through Kaggle Secrets named `MIMO_API_KEY` and optional `MIMO_BASE_URL`:
+`--dictionary-dataset-source` is written to Kaggle `dataset_sources`, then the notebook copies the attached artifact from `/kaggle/input` into the cloned repo before `rag-bench serve` starts. PB dictionary context is semi-private, so approved external Groq/MiMo generation requires `--allow-external-semi-private`; without it, the runtime privacy guard blocks external SaaS generation. If `--available-retrievers` is omitted while a dictionary dataset is attached, the uploader defaults to the full local UI retriever set above. The generated notebook can also expose MiMo models through Kaggle Secrets named `MIMO_API_KEY`, optional `MIMO_API_KEY_PAYG` fallback, and optional `MIMO_BASE_URL`:
 
 ```bash
 scripts/upload_kaggle_rag_proxy_notebook.py \
@@ -509,7 +509,7 @@ scripts/upload_kaggle_rag_proxy_notebook.py \
   --mimo-env-file .secrets/.env
 ```
 
-This uploads the provider key values inside the Kaggle notebook source, so use it only for notebooks you plan to delete. Every successful upload is recorded locally in `.secrets/kaggle_notebooks.jsonl` without secret values:
+This uploads the provider key values inside the Kaggle notebook source, including `MIMO_API_KEY_PAYG` when it is present in the env file, so use it only for notebooks you plan to delete. Every successful upload is recorded locally in `.secrets/kaggle_notebooks.jsonl` without secret values:
 
 ```bash
 scripts/upload_kaggle_rag_proxy_notebook.py --list-uploads

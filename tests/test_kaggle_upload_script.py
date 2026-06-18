@@ -83,7 +83,15 @@ def test_build_notebook_can_embed_groq_key_env_payload() -> None:
 def test_read_mimo_env_b64_filters_provider_env(tmp_path: Path) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "OTHER=ignored\nexport MIMO_API_KEY='secret-mimo'\nMIMO_BASE_URL=https://mimo.example/v1\n",
+        "\n".join(
+            [
+                "OTHER=ignored",
+                "export MIMO_API_KEY='secret-mimo'",
+                "MIMO_API_KEY_PAYG=secret-payg",
+                "MIMO_BASE_URL=https://mimo.example/v1",
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -91,6 +99,7 @@ def test_read_mimo_env_b64_filters_provider_env(tmp_path: Path) -> None:
     decoded = upload_script.base64.b64decode(payload).decode("utf-8")
 
     assert "MIMO_API_KEY=secret-mimo" in decoded
+    assert "MIMO_API_KEY_PAYG=secret-payg" in decoded
     assert "MIMO_BASE_URL=https://mimo.example/v1" in decoded
     assert "OTHER" not in decoded
 
