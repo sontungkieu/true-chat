@@ -2802,6 +2802,7 @@
         match: "Match",
         related: "Related",
         expandRelatedDictionary: "Show related entry",
+        expandDictionaryDefinition: "Show definition",
         rewrite: "Rewrite",
         rename: "Rename",
         renameChat: "Rename chat",
@@ -2884,6 +2885,7 @@
         match: "Khớp",
         related: "Liên quan",
         expandRelatedDictionary: "Mở nguồn liên quan",
+        expandDictionaryDefinition: "Mở định nghĩa",
         rewrite: "Viết lại",
         rename: "Đổi tên",
         renameChat: "Đổi tên đoạn chat",
@@ -4150,11 +4152,12 @@
       const sources = message.sources || [];
       const documentSources = textSources(sources);
       const images = imageSources(sources);
+      const collapseDictionaryCards = message.role === "assistant" ? shouldCollapseDictionaryCardsForTurn(message, index) : false;
       bubble.appendChild(head);
       if (message.role === "assistant" && display.thinking.length) {
         bubble.appendChild(renderThinkDetails(display.thinking));
       }
-      const dictionaryAnswer = message.role === "assistant" ? dictionaryAnswerParts(display.answer, documentSources) : null;
+      const dictionaryAnswer = message.role === "assistant" ? dictionaryAnswerParts(display.answer, documentSources, { collapseAll: collapseDictionaryCards }) : null;
       if (dictionaryAnswer) {
         bubble.appendChild(renderDictionaryAnswer(dictionaryAnswer));
         const explanation = dictionaryAnswer.explanation || (message.pending ? "" : display.fallback);
@@ -4217,6 +4220,20 @@
 
       turn.append(avatar, body);
       return turn;
+    }
+
+    function shouldCollapseDictionaryCardsForTurn(message, index) {
+      const request = message?.request || previousUserRequest(index);
+      return String(request?.response_mode || "").trim() !== "dictionary";
+    }
+
+    function previousUserRequest(index) {
+      const messages = activeConversation()?.messages || [];
+      for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+        const candidate = messages[cursor];
+        if (candidate?.role === "user") return candidate.request || null;
+      }
+      return null;
     }
 
     function renderFeedbackNote(feedback) {
@@ -4479,6 +4496,12 @@
     }
 
     function appendInlineText(container, text, sourceByDocId, options = {}) {
+      const exactSourceReference = exactBracketedSourceReference(text, sourceByDocId);
+      if (exactSourceReference) {
+        container.appendChild(document.createTextNode("[" + exactSourceReference.label + "] "));
+        container.appendChild(renderCitation(exactSourceReference.source));
+        return;
+      }
       const sourcePattern = /\[([^\[\]]+)\]/g;
       let cursor = 0;
       let match;
@@ -4495,6 +4518,14 @@
       if (cursor < text.length) {
         appendMarkdownInline(container, text.slice(cursor), Boolean(options.markdown));
       }
+    }
+
+    function exactBracketedSourceReference(text, sourceByDocId) {
+      const match = /^\s*\[([^\[\]]+)\]\s*$/.exec(String(text || ""));
+      if (!match) return null;
+      const label = match[1].trim();
+      const source = sourceByDocId.get(label);
+      return source ? { label, source } : null;
     }
 
     function isDictionaryHeaderCitation(text, start, end) {
@@ -4537,11 +4568,12 @@
       return button;
     }
 
-    function dictionaryAnswerParts(answer, sources) {
+    function dictionaryAnswerParts(answer, sources, options = {}) {
       const dictionarySources = dictionaryInlineSources(answer, sources);
       if (!dictionarySources.length) return null;
       const primarySource = (sources || []).find((source) => isDictionarySource(source) && richBlocks(source).length) || dictionarySources[0];
       const text = String(answer || "").trim();
+      if (hasExplicitAnswerOrSourceSections(text)) return null;
       const marker = /(?:^|\n)\s*(Giải thích|Explanation)\s*:\s*/i.exec(text);
       let explanation = "";
       if (marker) {
@@ -4549,26 +4581,33 @@
       } else if (text && !looksLikeDictionaryRawText(text, primarySource)) {
         explanation = stripDictionaryHeader(text, primarySource).trim();
       }
-      return { sources: dictionarySources, explanation };
+      return { sources: dictionarySources, explanation, collapseAll: Boolean(options.collapseAll) };
+    }
+
+    function hasExplicitAnswerOrSourceSections(text) {
+      const source = String(text || "");
+      return /^\s*#{1,6}\s*(?:câu\s*trả\s*lời|cau\s*tra\s*loi|answer|nguồn|nguon|sources?|references?)\s*:?\s*$/im.test(source);
     }
 
     function renderDictionaryAnswer(parts) {
       const sources = parts.sources || (parts.source ? [parts.source] : []);
+      const options = { collapseAll: Boolean(parts.collapseAll) };
       if (sources.length > 1) {
         const list = document.createElement("div");
         list.className = "dictionary-inline-list";
         for (const source of sources) {
-          list.appendChild(renderDictionaryCard(source));
+          list.appendChild(renderDictionaryCard(source, options));
         }
         return list;
       }
-      return renderDictionaryCard(sources[0]);
+      return renderDictionaryCard(sources[0], options);
     }
 
-    function renderDictionaryCard(source) {
+    function renderDictionaryCard(source, options = {}) {
       const card = document.createElement("section");
       const relevance = dictionaryRelevance(source);
-      card.className = "dictionary-inline" + (relevance === "related" ? " dictionary-inline-related" : "");
+      const collapsed = Boolean(options.collapseAll) || relevance === "related";
+      card.className = "dictionary-inline" + (collapsed ? " dictionary-inline-related" : "");
       const head = document.createElement("div");
       head.className = "dictionary-inline-head";
       const title = document.createElement("div");
@@ -4608,13 +4647,13 @@
       }
       card.append(head);
       if (graphPath) card.appendChild(graphPath);
-      if (relevance === "related") {
+      if (collapsed) {
         const details = document.createElement("details");
         details.className = "dictionary-related-details";
         const summary = document.createElement("summary");
         const label = document.createElement("span");
         label.className = "dictionary-related-summary-label";
-        label.textContent = t("expandRelatedDictionary");
+        label.textContent = relevance === "related" ? t("expandRelatedDictionary") : t("expandDictionaryDefinition");
         summary.appendChild(label);
         details.append(summary, body);
         card.appendChild(details);

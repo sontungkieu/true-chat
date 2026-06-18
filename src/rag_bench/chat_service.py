@@ -17,6 +17,7 @@ from rag_bench.dictionary import (
     DEFAULT_DICTIONARY_SOURCE_DIR,
     DictionaryLoadResult,
     load_dictionary_documents,
+    normalize_spaces,
 )
 from rag_bench.dictionary_agent_tools import dictionary_tool_plan_payload, render_dictionary_tool_plan_prompt
 from rag_bench.dictionary_query_planner import (
@@ -2269,6 +2270,9 @@ def _text_mode_dictionary_fallback_instruction(metadata: dict[str, Any] | None) 
         "- Never refer to internal planned searches, fallback retrieval, source rank, or multiple retrieved entries as "
         "\"first/second/third questions\". If several dictionary entries match one short acronym, present them as "
         "possible dictionary entries or senses for the same user question.\n"
+        "- If a retrieved entry is only a short cross-reference such as \"HEADWORD nh TARGET\", \"HEADWORD xem TARGET\", "
+        "or \"HEADWORD đồng nghĩa với TARGET\", treat it as an alias/redirect to TARGET. Do not list both entries as "
+        "separate definitions when the target entry is also retrieved; merge the alias into the target item.\n"
         "- Do not infer an expansion, alias, or meaning unless the retrieved entries explicitly support it.\n\n"
     )
     if _is_plural_type_category_query_plan(query_plan):
@@ -2385,6 +2389,7 @@ def _dictionary_final_instruction(query_plan: DictionaryQueryPlan | None) -> str
     return (
         "Explain the term in the required response language. Cite dictionary entries with their ids in square brackets. "
         "If a retrieved entry directly matches the target term, do not say the target was not found; summarize the cited entry and state only unsupported details as missing. "
+        "If a retrieved entry is only a short cross-reference such as `HEADWORD nh TARGET`, `HEADWORD xem TARGET`, or `HEADWORD đồng nghĩa với TARGET`, merge it with the target entry instead of listing it as a separate definition. "
         "When listing several entries or senses, use one numbered list and indent each entry's detail bullets under that numbered item. "
         "Do not invent content not supported by the retrieved dictionary entries."
     )
@@ -2735,7 +2740,14 @@ def _format_context(hits: list[RetrievalHit], *, max_context_chars: int) -> str:
     raw_blocks: list[str] = []
     for hit in hits:
         title = f"{hit.title}\n" if hit.title else ""
-        block = f"[{hit.doc_id}]\n{title}{hit.text}".strip()
+        redirect_target = _dictionary_redirect_target(hit)
+        redirect_note = (
+            f"\nAlias/cross-reference note: this entry redirects to {redirect_target}; "
+            "do not list it as a separate definition if the target entry is also retrieved."
+            if redirect_target
+            else ""
+        )
+        block = f"[{hit.doc_id}]\n{title}{hit.text}{redirect_note}".strip()
         if block:
             raw_blocks.append(block)
     if not raw_blocks:
@@ -2875,7 +2887,7 @@ def _format_dictionary_category_fallback_answer(
         return ""
     response_language = _normalize_response_language(language)
     target = target_terms[0]
-    type_hits = _dictionary_direct_type_hits(hits, target_terms)
+    type_hits = _collapse_dictionary_redirect_hits(_dictionary_direct_type_hits(hits, target_terms))
     base_hits = _dictionary_base_category_hits(hits, target_terms)
     citations = _format_source_citations([hit.doc_id for hit in (*type_hits, *base_hits)])
     if not type_hits:
@@ -2912,8 +2924,10 @@ def _format_dictionary_category_fallback_answer(
         ]
         for index, hit in enumerate(listed_hits, 1):
             title = str(hit.title or hit.doc_id).strip()
+            aliases = _dictionary_redirect_aliases_for_hit(hit)
+            alias_suffix = f" (còn được trỏ tới bởi: {', '.join(aliases)})" if aliases else ""
             lines.append(
-                f"{index}. **{title}** [{hit.doc_id}]\n"
+                f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
                 f"   - Đây là mục từ riêng được truy hồi trực tiếp trong nhóm “{target}”."
             )
         if len(type_hits) > len(listed_hits):
@@ -2927,8 +2941,10 @@ def _format_dictionary_category_fallback_answer(
     ]
     for index, hit in enumerate(listed_hits, 1):
         title = str(hit.title or hit.doc_id).strip()
+        aliases = _dictionary_redirect_aliases_for_hit(hit)
+        alias_suffix = f" (also referenced by: {', '.join(aliases)})" if aliases else ""
         lines.append(
-            f"{index}. **{title}** [{hit.doc_id}]\n"
+            f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
             f"   - This is a distinct retrieved dictionary entry in the “{target}” group."
         )
     if len(type_hits) > len(listed_hits):
@@ -2998,10 +3014,74 @@ def _dictionary_base_category_hits(
     return result
 
 
+def _collapse_dictionary_redirect_hits(hits: Sequence[RetrievalHit]) -> list[RetrievalHit]:
+    by_headword_key = {_dictionary_hit_headword_key(hit): hit for hit in hits if _dictionary_hit_headword_key(hit)}
+    aliases_by_target_doc_id: dict[str, list[str]] = {}
+    collapsed: list[RetrievalHit] = []
+    for hit in hits:
+        redirect_target = _dictionary_redirect_target(hit)
+        redirect_target_key = _fold_prompt_text(redirect_target) if redirect_target else ""
+        target_hit = by_headword_key.get(redirect_target_key)
+        if target_hit is not None and target_hit.doc_id != hit.doc_id:
+            alias_title = str(hit.title or (hit.metadata or {}).get("headword") or hit.doc_id).strip()
+            if alias_title:
+                aliases = aliases_by_target_doc_id.setdefault(target_hit.doc_id, [])
+                if alias_title not in aliases:
+                    aliases.append(alias_title)
+            continue
+        collapsed.append(hit)
+    if not aliases_by_target_doc_id:
+        return collapsed
+    updated: list[RetrievalHit] = []
+    for hit in collapsed:
+        aliases = aliases_by_target_doc_id.get(hit.doc_id)
+        if not aliases:
+            updated.append(hit)
+            continue
+        metadata = dict(hit.metadata or {})
+        existing_aliases = [str(alias) for alias in metadata.get("dictionary_redirect_aliases") or [] if str(alias).strip()]
+        for alias in aliases:
+            if alias not in existing_aliases:
+                existing_aliases.append(alias)
+        metadata["dictionary_redirect_aliases"] = existing_aliases
+        updated.append(replace(hit, metadata=metadata))
+    return updated
+
+
+def _dictionary_redirect_aliases_for_hit(hit: RetrievalHit) -> list[str]:
+    metadata = hit.metadata or {}
+    return [str(alias).strip() for alias in metadata.get("dictionary_redirect_aliases") or [] if str(alias).strip()]
+
+
 def _dictionary_hit_headword_key(hit: RetrievalHit) -> str:
     metadata = hit.metadata or {}
     headword = str(metadata.get("headword") or hit.title or "").strip()
     return _fold_prompt_text(headword)
+
+
+def _dictionary_redirect_target(hit: RetrievalHit) -> str:
+    metadata = hit.metadata or {}
+    if str(metadata.get("kind") or "") != "dictionary" and not str(metadata.get("headword") or "").strip():
+        return ""
+    raw_text = normalize_spaces(str(metadata.get("raw_docx_text") or hit.text or ""))
+    if not raw_text:
+        return ""
+    title = normalize_spaces(str(metadata.get("headword") or hit.title or ""))
+    body = raw_text
+    if title and body.casefold().startswith(title.casefold()):
+        body = body[len(title) :].strip(" \t\n\r,:;.-–—")
+    if not body or len(body) > 160:
+        return ""
+    match = re.match(
+        r"(?is)^(?:nh|x\.?|xem(?:\s+thêm)?|đồng\s+nghĩa(?:\s+(?:với|là))?|dong\s+nghia(?:\s+(?:voi|la))?)\s+(.+?)\s*[.;,]*$",
+        body,
+    )
+    if not match:
+        return ""
+    target = normalize_spaces(match.group(1)).strip(" .;,")
+    if not target or len(target) > 100:
+        return ""
+    return target
 
 
 def _format_dictionary_occurrence_fallback_answer(

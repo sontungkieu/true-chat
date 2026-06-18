@@ -2703,9 +2703,25 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
                     data_tier="semi_private",
                 ),
                 RetrievalHit(
+                    doc_id="dict-accompany-alias",
+                    score=2.15,
+                    rank=3,
+                    title="PHÁO ĐI SAU",
+                    text="PHÁO ĐI SAU nh PHÁO ĐI CÙNG",
+                    metadata={
+                        "data_tier": "semi_private",
+                        "kind": "dictionary",
+                        "headword": "PHÁO ĐI SAU",
+                        "raw_docx_text": "PHÁO ĐI SAU nh PHÁO ĐI CÙNG",
+                        "dictionary_match_mode": "category_prefix",
+                        "dictionary_direct_score": 0.95,
+                    },
+                    data_tier="semi_private",
+                ),
+                RetrievalHit(
                     doc_id="dict-antitank",
                     score=2.1,
-                    rank=3,
+                    rank=4,
                     title="PHÁO CHỐNG TĂNG",
                     text="Synthetic direct type entry.",
                     metadata={
@@ -2720,7 +2736,7 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
                 RetrievalHit(
                     doc_id="dict-ground",
                     score=2.0,
-                    rank=4,
+                    rank=5,
                     title="PHÁO MẶT ĐẤT",
                     text="Synthetic direct type entry.",
                     metadata={
@@ -2763,8 +2779,8 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
     dictionary_retriever = DictionaryFallbackRetriever()
     service = RagChatService(
         config=ChatProxyConfig(
-            top_k=5,
-            dictionary_top_k=5,
+            top_k=6,
+            dictionary_top_k=6,
             model_id="rag-test",
             allow_external_semi_private=True,
         ),
@@ -2784,6 +2800,8 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
     assert "pháo đùa" not in answer.lower()
     assert "PHÁO TẦM XA" in answer
     assert "PHÁO ĐI CÙNG" in answer
+    assert "còn được trỏ tới bởi: PHÁO ĐI SAU" in answer
+    assert "2. **PHÁO ĐI SAU**" not in answer
     assert "PHÁO CHỐNG TĂNG" in answer
     assert "PHÁO MẶT ĐẤT" in answer
     assert "GÓC TẦM" not in answer
@@ -2799,6 +2817,42 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
     assert tool_plan["orchestration"] == "deterministic_agent_lite"
     assert "Category/list-query guard" in service.llm.messages[-1]["content"]
     assert "Dictionary tool-orchestration contract" in service.llm.messages[-1]["content"]
+    assert "HEADWORD nh TARGET" in service.llm.messages[-1]["content"]
+
+
+def test_dictionary_context_marks_short_redirect_entries_to_avoid_duplicate_definitions() -> None:
+    context = _format_context(
+        [
+            RetrievalHit(
+                doc_id="dict-canonical",
+                score=1.5,
+                rank=1,
+                title="TERM CANONICAL",
+                text="TERM CANONICAL, synthetic canonical definition.",
+                metadata={"kind": "dictionary", "headword": "TERM CANONICAL", "data_tier": "semi_private"},
+                data_tier="semi_private",
+            ),
+            RetrievalHit(
+                doc_id="dict-redirect",
+                score=1.4,
+                rank=2,
+                title="TERM ALIAS",
+                text="TERM ALIAS nh TERM CANONICAL",
+                metadata={
+                    "kind": "dictionary",
+                    "headword": "TERM ALIAS",
+                    "raw_docx_text": "TERM ALIAS nh TERM CANONICAL",
+                    "data_tier": "semi_private",
+                },
+                data_tier="semi_private",
+            ),
+        ],
+        max_context_chars=2000,
+    )
+
+    assert "Alias/cross-reference note" in context
+    assert "redirects to TERM CANONICAL" in context
+    assert "do not list it as a separate definition" in context
 
 
 def test_text_dictionary_fallback_rejects_weak_lexical_hits_without_highlights() -> None:

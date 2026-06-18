@@ -264,6 +264,10 @@ def test_chat_page() -> None:
     assert "dictionary-inline-list" in response.text
     assert "dictionary-inline-related" in response.text
     assert "dictionary-related-details" in response.text
+    assert "shouldCollapseDictionaryCardsForTurn" in response.text
+    assert "previousUserRequest" in response.text
+    assert "expandDictionaryDefinition" in response.text
+    assert 'request?.response_mode || "").trim() !== "dictionary"' in response.text
     assert "expandRelatedDictionary" in response.text
     assert "flex-wrap: wrap" in response.text
     assert "flex: 1 1 260px" in response.text
@@ -304,6 +308,9 @@ def test_chat_page() -> None:
     assert "dictionaryDisplayText" in response.text
     assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
     assert "dictionaryAnswerParts" in response.text
+    assert "hasExplicitAnswerOrSourceSections" in response.text
+    assert "câu\\s*trả\\s*lời" in response.text
+    assert "nguồn|nguon" in response.text
     assert "positionComposerToolMenu" in response.text
     assert "--composer-menu-left" in response.text
     assert '--composer-menu-bottom' in response.text
@@ -352,6 +359,8 @@ def test_chat_page() -> None:
     assert "sourceInfo.source_entry_id" in response.text
     assert 'text.split(":").pop().trim()' in response.text
     assert "isDictionaryHeaderCitation" in response.text
+    assert "exactBracketedSourceReference" in response.text
+    assert 'document.createTextNode("[" + exactSourceReference.label + "] ")' in response.text
     assert "renderMarkdownBlocks" in response.text
     assert "renderMarkdownList" in response.text
     assert "nextMarkdownListInfo" in response.text
