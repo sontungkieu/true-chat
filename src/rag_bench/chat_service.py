@@ -2992,10 +2992,7 @@ def _format_dictionary_category_fallback_answer(
             title = str(hit.title or hit.doc_id).strip()
             aliases = _dictionary_redirect_aliases_for_hit(hit)
             alias_suffix = f" (còn được trỏ tới bởi: {', '.join(aliases)})" if aliases else ""
-            lines.append(
-                f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
-                f"   - Đây là mục từ riêng được truy hồi trực tiếp trong nhóm “{target}”."
-            )
+            lines.append(f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]")
         if len(type_hits) > len(listed_hits):
             lines.append(f"Còn {len(type_hits) - len(listed_hits)} mục phù hợp trực tiếp khác trong phần nguồn liên quan.")
         return "\n\n".join(lines).strip()
@@ -3008,10 +3005,7 @@ def _format_dictionary_category_fallback_answer(
         title = str(hit.title or hit.doc_id).strip()
         aliases = _dictionary_redirect_aliases_for_hit(hit)
         alias_suffix = f" (also referenced by: {', '.join(aliases)})" if aliases else ""
-        lines.append(
-            f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
-            f"   - This is a distinct retrieved dictionary entry in the “{target}” group."
-        )
+        lines.append(f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]")
     if len(type_hits) > len(listed_hits):
         lines.append(f"{len(type_hits) - len(listed_hits)} additional direct matches are available in the related sources.")
     return "\n\n".join(lines).strip()
@@ -3044,10 +3038,7 @@ def _format_dictionary_plural_phrase_list_fallback_answer(
             title = str(hit.title or hit.doc_id).strip()
             aliases = _dictionary_redirect_aliases_for_hit(hit)
             alias_suffix = f" (còn được trỏ tới bởi: {', '.join(aliases)})" if aliases else ""
-            lines.append(
-                f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
-                f"   - Đây là mục từ riêng được truy hồi trực tiếp trong nhóm “{target}”."
-            )
+            lines.append(f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]")
         if len(phrase_hits) > len(listed_hits):
             lines.append(f"Còn {len(phrase_hits) - len(listed_hits)} mục phù hợp trực tiếp khác trong phần nguồn liên quan.")
         return "\n\n".join(lines).strip()
@@ -3059,10 +3050,7 @@ def _format_dictionary_plural_phrase_list_fallback_answer(
         title = str(hit.title or hit.doc_id).strip()
         aliases = _dictionary_redirect_aliases_for_hit(hit)
         alias_suffix = f" (also referenced by: {', '.join(aliases)})" if aliases else ""
-        lines.append(
-            f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]\n"
-            f"   - This is a distinct retrieved dictionary entry in the “{target}” group."
-        )
+        lines.append(f"{index}. **{title}**{alias_suffix} [{hit.doc_id}]")
     if len(phrase_hits) > len(listed_hits):
         lines.append(f"{len(phrase_hits) - len(listed_hits)} additional direct matches are available in the related sources.")
     return "\n\n".join(lines).strip()

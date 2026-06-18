@@ -310,6 +310,7 @@ def test_chat_page() -> None:
     assert "isDictionaryDisplaySource" in response.text
     assert "dictionaryDisplayText" in response.text
     assert "MAX_INLINE_DICTIONARY_SOURCES" in response.text
+    assert "MAX_INLINE_DICTIONARY_SOURCES = 8" in response.text
     assert "dictionaryAnswerParts" in response.text
     assert "emptyAnswerSectionParts" in response.text
     assert "renderedMessageCopyText" in response.text

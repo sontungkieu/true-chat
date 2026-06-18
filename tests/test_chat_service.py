@@ -2806,6 +2806,7 @@ def test_text_dictionary_fallback_replaces_plural_type_hallucination_with_ground
     assert "PHÁO MẶT ĐẤT" in answer
     assert "GÓC TẦM" not in answer
     assert "không phải bảng phân loại đầy đủ" in answer
+    assert "Đây là mục từ riêng" not in answer
     assert "Tôi không thêm" not in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_category_fallback"] is True
     plan = result.response["rag"]["retrieval_metadata"]["dictionary_fallback_metadata"]["query_plan"]
@@ -2998,6 +2999,7 @@ def test_text_dictionary_fallback_replaces_empty_plural_phrase_answer_with_groun
     assert "PHÁO ĐÀI XUÂN TẢO" in answer
     assert "2. **PHÁO ĐÀI THỔ KHỐI**" not in answer
     assert "QUAN HỆ PHÁO ĐÀI" not in answer
+    assert "Đây là mục từ riêng" not in answer
     assert "Tôi không thêm" not in answer
     assert result.response["rag"]["retrieval_metadata"]["dictionary_fallback"] is True
     assert result.response["rag"]["retrieval_metadata"]["dictionary_plural_phrase_list_fallback"] is True
